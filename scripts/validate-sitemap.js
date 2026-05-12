@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * sitemap.js — Sitemap 检测工具
+ * validate-sitemap.js — Sitemap 检测工具
  *
  * 检测网站是否正确配置了 sitemap：
  *   - robots.txt 是否声明 Sitemap 地址
@@ -11,7 +11,7 @@
  *   - 随机抽样 N 条 URL 做 HEAD 请求，统计状态码分布
  *
  * 用法：
- *   node scripts/sitemap.js <域名或完整URL> [选项]
+ *   node scripts/validate-sitemap.js <域名或完整URL> [选项]
  *
  * 选项：
  *   --sample=N    抽样检查 URL 数量（默认 20，0 = 跳过）
@@ -19,9 +19,9 @@
  *   --verbose     打印所有抽样 URL 的状态码
  *
  * 示例：
- *   node scripts/sitemap.js https://example.com
- *   node scripts/sitemap.js https://example.com --sample=50 --out=reports/example-sitemap
- *   node scripts/sitemap.js https://example.com --sample=0 --verbose
+ *   node scripts/validate-sitemap.js https://example.com
+ *   node scripts/validate-sitemap.js https://example.com --sample=50 --out=reports/example-sitemap
+ *   node scripts/validate-sitemap.js https://example.com --sample=0 --verbose
  */
 
 import axios from 'axios';
@@ -39,7 +39,7 @@ const args = process.argv.slice(2);
 
 if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
   console.log(`
-用法：node scripts/sitemap.js <域名或URL> [选项]
+用法：node scripts/validate-sitemap.js <域名或URL> [选项]
 
 选项：
   --sample=N    抽样检查 URL 数量（默认 20，0 = 跳过）
@@ -47,9 +47,9 @@ if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
   --verbose     打印所有抽样 URL 的状态码
 
 示例：
-  node scripts/sitemap.js https://example.com
-  node scripts/sitemap.js https://example.com --sample=50 --out=reports/example-sitemap
-  node scripts/sitemap.js https://example.com --sample=0
+  node scripts/validate-sitemap.js https://example.com
+  node scripts/validate-sitemap.js https://example.com --sample=50 --out=reports/example-sitemap
+  node scripts/validate-sitemap.js https://example.com --sample=0
 `);
   process.exit(0);
 }

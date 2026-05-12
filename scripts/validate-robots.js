@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * robots.js — robots.txt 检测工具
+ * validate-robots.js — robots.txt 检测工具
  *
  * 检测网站 robots.txt 是否正确配置：
  *   - /robots.txt 是否可访问（200）
@@ -13,16 +13,16 @@
  *   - 主流爬虫（Googlebot / Bingbot）是否被封锁
  *
  * 用法：
- *   node scripts/robots.js <域名或完整URL> [选项]
+ *   node scripts/validate-robots.js <域名或完整URL> [选项]
  *
  * 选项：
  *   --out=<路径>  将报告保存为 .md 文件（不含扩展名）
  *   --verbose     打印解析后的完整规则列表
  *
  * 示例：
- *   node scripts/robots.js https://example.com
- *   node scripts/robots.js example.com --out=reports/example-robots
- *   node scripts/robots.js https://example.com --verbose
+ *   node scripts/validate-robots.js https://example.com
+ *   node scripts/validate-robots.js example.com --out=reports/example-robots
+ *   node scripts/validate-robots.js https://example.com --verbose
  */
 
 import axios from 'axios';
@@ -39,16 +39,16 @@ const args = process.argv.slice(2);
 
 if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
   console.log(`
-用法：node scripts/robots.js <域名或URL> [选项]
+用法：node scripts/validate-robots.js <域名或URL> [选项]
 
 选项：
   --out=<路径>  将报告保存为 .md 文件（不含扩展名）
   --verbose     打印解析后的完整规则列表
 
 示例：
-  node scripts/robots.js https://example.com
-  node scripts/robots.js example.com --out=reports/example-robots
-  node scripts/robots.js https://example.com --verbose
+  node scripts/validate-robots.js https://example.com
+  node scripts/validate-robots.js example.com --out=reports/example-robots
+  node scripts/validate-robots.js https://example.com --verbose
 `);
   process.exit(0);
 }

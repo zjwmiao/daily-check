@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * tdk.js — TDK 检测工具（Title / Description / Keywords）
+ * validate-tdk.js — TDK 检测工具（Title / Description / Keywords）
  *
  * 抓取目标页面，检测 TDK 是否正确配置：
  *   - Title：存在、长度（10–60 字符）、不重复 Description
@@ -11,7 +11,7 @@
  *   - Twitter Card：twitter:card / twitter:title 是否配置
  *
  * 用法：
- *   node scripts/tdk.js <URL> [选项]
+ *   node scripts/validate-tdk.js <URL> [选项]
  *
  * 选项：
  *   --mode=http      纯 HTTP 抓取（默认）
@@ -19,9 +19,9 @@
  *   --out=<路径>     将报告保存为 .md 文件（不含扩展名）
  *
  * 示例：
- *   node scripts/tdk.js https://example.com
- *   node scripts/tdk.js https://example.com --mode=browser
- *   node scripts/tdk.js https://example.com --out=reports/example-tdk
+ *   node scripts/validate-tdk.js https://example.com
+ *   node scripts/validate-tdk.js https://example.com --mode=browser
+ *   node scripts/validate-tdk.js https://example.com --out=reports/example-tdk
  */
 
 import axios from 'axios';
@@ -39,7 +39,7 @@ const args = process.argv.slice(2);
 
 if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
   console.log(`
-用法：node scripts/tdk.js <URL> [选项]
+用法：node scripts/validate-tdk.js <URL> [选项]
 
 选项：
   --mode=http      纯 HTTP 抓取（默认）
@@ -47,9 +47,9 @@ if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
   --out=<路径>     将报告保存为 .md 文件（不含扩展名）
 
 示例：
-  node scripts/tdk.js https://example.com
-  node scripts/tdk.js https://example.com --mode=browser
-  node scripts/tdk.js https://example.com --out=reports/example-tdk
+  node scripts/validate-tdk.js https://example.com
+  node scripts/validate-tdk.js https://example.com --mode=browser
+  node scripts/validate-tdk.js https://example.com --out=reports/example-tdk
 `);
   process.exit(0);
 }

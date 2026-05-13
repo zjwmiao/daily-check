@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(export GITHUB_TOKEN=$\\(grep '^GITHUB_TOKEN' /Users/gzbang/Desktop/Project/10_Common/Code/geo-develop/.env)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f\\\\\"{i['type']:5s} {i['name']}\\\\\"\\) for i in d]\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Title:',d['title']\\); print\\('Labels:',[l['name'] for l in d['labels']]\\); print\\('Body:'\\); print\\(d['body']\\)\")"
+    ]
+  }
+}

@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "crawl": "node scripts/crawl.js"
+    "analyze": "node scripts/analyze-discoverability.js",
+    "fetch-issues": "node scripts/fetch-geo-issues.js",
+    "run-analysis": "node scripts/run-analysis.js",
+    "report": "node scripts/generate-report.js"
   },
   "keywords": [],
   "author": "",

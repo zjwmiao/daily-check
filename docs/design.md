@@ -32,14 +32,14 @@ GEO 效果追踪（geo-workflow）
 1. 开发新页面
     ↓
 2. 配置 SEO 元素（脚本+skills结合）
-   - generate-schema.js（来源：页面内容）
-   - optimize-tdk.js（来源：页面内容）
+   - Schema 配置（来源：页面内容）
+   - TDK 配置（来源：页面内容）
    - 验证 llms.txt 自动包含（来源：页面内容）
    - ...
     ↓
 3. 本地验证
    - 启动 pnpm dev
-   - validate-local.js（Sitemap 遍历）
+   - 本地验证（Sitemap 遍历）
    - 修复 Critical 问题
     ↓
 4. 提交 PR → L1 验证（CI）
@@ -47,7 +47,7 @@ GEO 效果追踪（geo-workflow）
 5. 合并入主分支 → 部署
     ↓
 6. 线上验证
-   - validate-production.js（Sitemap 遍历）
+   - 线上验证（Sitemap 遍历）
    - 确认配置已部署
     ↓
 7. GEO 效果追踪（7-14 天后）
@@ -64,17 +64,17 @@ GEO 效果追踪（geo-workflow）
    - Issue #123: "首页未被 AI 引用"
     ↓
 2. 问题分析（使用分析脚本）
-   - analyze-discoverable.js → 可检索性分析
-   - analyze-trustworthy.js → 可信度分析
-   - analyze-readable.js → 易读性分析
+   - 可检索性分析 → 可检索性分析
+   - 可信度分析 → 可信度分析
+   - 易读性分析 → 易读性分析
    - 归因：Schema 缺失 + TDK Description 过短
     ↓
 3. 问题修复
-   - generate-schema.js（添加 Organization + FAQPage）
-   - optimize-tdk.js（优化 Description）
+   - Schema 配置（添加 Organization + FAQPage）
+   - TDK 配置（优化 Description）
     ↓
 4. 本地验证
-   - validate-local.js
+   - 本地验证
    - Schema、TDK 问题已修复
     ↓
 5. 提交 PR → CI 验证
@@ -106,13 +106,12 @@ GEO 效果追踪（geo-workflow）
 **验证方式**：
 
 - 检查构建产物 `dist/` 是否为纯静态 HTML
-- 使用 crawl.js 抓取，检查是否无需 JS 渲染
+- 通过双模抓取(HTTP vs Browser)对比内容差异(实现见 `scripts/checks/static-render.js`)
 
 ---
 
 ### 4.2 增加 Schema（JSON-LD）
 
-**对应脚本**：`generate-schema.js`
 
 **来源约束**：Schema 内容必须来源于页面本身（标题、描述、FAQ、发布日期等）
 
@@ -132,7 +131,6 @@ GEO 效果追踪（geo-workflow）
 
 ### 4.3 完善 TDK
 
-**对应脚本**：`optimize-tdk.js`
 
 **来源约束**：TDK 内容必须来源于页面本身
 
@@ -150,7 +148,6 @@ GEO 效果追踪（geo-workflow）
 
 ### 4.4 完善 Sitemap
 
-**对应脚本**：`generate-sitemap.js`
 
 **验证项**：
 
@@ -162,7 +159,6 @@ GEO 效果追踪（geo-workflow）
 
 ### 4.5 完善 robots.txt
 
-**对应脚本**：`generate-robots.js`
 
 **标准**：
 
@@ -174,7 +170,6 @@ GEO 效果追踪（geo-workflow）
 
 ### 4.6 完善 llms.txt 和 llms-full.txt
 
-**对应脚本**：`generate-llms-txt.js`
 
 **来源约束**：内容必须来源于页面本身
 
@@ -191,7 +186,6 @@ GEO 效果追踪（geo-workflow）
 
 ### 4.7 语义化页面标签
 
-**对应脚本**：无（开发时手动保证）
 
 **标准**：
 
@@ -204,7 +198,6 @@ GEO 效果追踪（geo-workflow）
 
 ### 4.8 过时页面标记
 
-**对应脚本**：`mark-obsolete.js`
 
 **标准**：
 
@@ -241,30 +234,18 @@ GEO 效果追踪（geo-workflow）
 
 **触发时机**：收到 geo-workflow 的 Issue
 
-**分析流程**：
+**实现**：本期落地的是"可检索性"分支(4 维度,见第十节)。完整三维度作为长期目标保留。流程入口:
 
-```bash
-# 1. 抓取问题页面
-node geo-skills/scripts/crawl.js <URL> --mode=http --out=<issue-id> --format=html
+- `scripts/fetch-geo-issues.js` — 取候选
+- `scripts/run-analysis.js` — 批量跑 4 维度
+- `scripts/generate-report.js` — 出报告
 
-# 2. 三维度分析
-node geo-skills/scripts/analyze-discoverable.js <issue-id>.html --output=<issue-id>-discoverable.json
-node geo-skills/scripts/analyze-trustworthy.js <issue-id>.html --output=<issue-id>-trustworthy.json
-node geo-skills/scripts/analyze-readable.js <issue-id>.html --output=<issue-id>-readable.json
-
-# 3. 综合归因
-node geo-skills/scripts/synthesize-analysis.js \
-  --discoverable=<issue-id>-discoverable.json \
-  --trustworthy=<issue-id>-trustworthy.json \
-  --readable=<issue-id>-readable.json \
-  --output=<issue-id>-analysis.md
-```
+下面 5.3-5.6 保留原始三维度的判定标准与输出结构,作为后续可信度/易读性分支落地时的设计参考。
 
 ---
 
-### 5.3 可检索性分析（analyze-discoverable.js）
+### 5.3 可检索性分析
 
-**分析脚本**：`analyze-discoverable.js`
 
 **分析项**：
 
@@ -291,7 +272,7 @@ node geo-skills/scripts/synthesize-analysis.js \
       "description": "无 Organization Schema",
       "expected": "Organization + FAQPage",
       "actual": "无 JSON-LD",
-      "suggestion": "使用 generate-schema.js 生成"
+      "suggestion": "使用 Schema 配置 生成"
     },
     {
       "category": "tdk",
@@ -299,7 +280,7 @@ node geo-skills/scripts/synthesize-analysis.js \
       "description": "Description 长度不足",
       "expected": "120-160 字符",
       "actual": "85 字符",
-      "suggestion": "使用 optimize-tdk.js 重新生成"
+      "suggestion": "使用 TDK 配置 重新生成"
     }
   ],
   "score": 45
@@ -308,9 +289,8 @@ node geo-skills/scripts/synthesize-analysis.js \
 
 ---
 
-### 5.4 可信度分析（analyze-trustworthy.js）
+### 5.4 可信度分析
 
-**分析脚本**：`analyze-trustworthy.js`
 
 **分析项**：
 
@@ -362,9 +342,8 @@ node geo-skills/scripts/synthesize-analysis.js \
 
 ---
 
-### 5.5 易读性分析（analyze-readable.js）
+### 5.5 易读性分析
 
-**分析脚本**：`analyze-readable.js`
 
 **分析项**：
 
@@ -407,9 +386,8 @@ node geo-skills/scripts/synthesize-analysis.js \
 
 ---
 
-### 5.6 综合归因（synthesize-analysis.js）
+### 5.6 综合归因
 
-**分析脚本**：`synthesize-analysis.js`
 
 **功能**：
 
@@ -435,11 +413,11 @@ GEO 问题归因分析报告 — Issue #123
 
 ❌ [Critical] Schema 缺失
 → 无 Organization + FAQPage JSON-LD
-→ 修复：generate-schema.js
+→ 修复：Schema 配置
 
 ❌ [Critical] Description 过短
 → 85 字符（标准 120-160）
-→ 修复：optimize-tdk.js
+→ 修复：TDK 配置
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 可信度分析（得分: 55）
@@ -467,8 +445,8 @@ GEO 问题归因分析报告 — Issue #123
 
 工程类修复（可自闭环）：
 
-1. generate-schema.js → 添加 Organization + FAQPage
-2. optimize-tdk.js → 优化 Description
+1. Schema 配置 → 添加 Organization + FAQPage
+2. TDK 配置 → 优化 Description
 3. 调整 H1 标题结构
 
 内容类修复（需协作）：
@@ -489,32 +467,18 @@ GEO 问题归因分析报告 — Issue #123
 
 **验证方式**：根据 Sitemap 遍历所有页面
 
-**验证流程**：
+**验证项**(本期已落地的 4 维度对应 `scripts/checks/`,其余 4 维度为未来路线):
 
-```bash
-# 1. 启动开发服务器
-pnpm dev
-
-# 2. 根据 Sitemap 遍历验证
-node geo-skills/scripts/validate-local.js \
-  --sitemap=dist/sitemap.xml \
-  --dev-server=http://localhost:5173 \
-  --mode=browser \
-  --output=geo-audit/local/
-```
-
-**验证脚本（对应开发项）**：
-
-| 开发项     | 验证脚本                | 验证内容                                |
-| ---------- | ----------------------- | --------------------------------------- |
-| 静态化     | `validate-static.js`    | 检查 HTML 是否可无 JS 渲染              |
-| Schema     | `validate-schema.js`    | JSON-LD 有效性、类型匹配                |
-| TDK        | `validate-tdk.js`       | Title/Description/Keywords 长度、关键词 |
-| Sitemap    | `validate-sitemap.js`   | URL 覆盖、lastmod、priority             |
-| robots.txt | `validate-robots.js`    | 格式正确、Allow/Disallow 合理           |
-| llms.txt   | `validate-llms-txt.js`  | 页面覆盖、内容来源正确                  |
-| 语义化     | `validate-semantics.js` | H1 数量、层次、alt 覆盖率               |
-| 过时标记   | `validate-archived.js`  | 标记页面是否正确提示                    |
+| 开发项     | 验证内容                                | 当前实现                                 |
+| ---------- | --------------------------------------- | ---------------------------------------- |
+| 静态化     | 检查 HTML 是否可无 JS 渲染              | ✅ `scripts/checks/static-render.js`     |
+| Schema     | JSON-LD 有效性、类型匹配                | ✅ `scripts/checks/schema.js`            |
+| TDK        | Title/Description/Keywords 长度、关键词 | ✅ `scripts/checks/tdk.js`               |
+| Sitemap    | URL 覆盖、lastmod、priority             | ✅ `scripts/checks/sitemap-inclusion.js` |
+| robots.txt | 格式正确、Allow/Disallow 合理           | ⏳ 暂不实现(ADR-0003)                    |
+| llms.txt   | 页面覆盖、内容来源正确                  | ⏳ 暂不实现(ADR-0003)                    |
+| 语义化     | H1 数量、层次、alt 覆盖率               | ⏳ 未来路线                              |
+| 过时标记   | 标记页面是否正确提示                    | ⏳ 未来路线                              |
 
 **验证结果**：
 
@@ -530,19 +494,7 @@ node geo-skills/scripts/validate-local.js \
 
 **验证方式**：根据 Sitemap 遍历所有页面（HTTP 模式）
 
-**验证流程**：
-
-```bash
-# 根据 Sitemap 遍历验证
-node geo-skills/scripts/validate-production.js \
-  --sitemap=https://www.openeuler.org/sitemap.xml \
-  --mode=http \
-  --output=geo-audit/deployed/
-```
-
-**验证脚本（同本地）**：
-
-- 静态化、Schema、TDK、Sitemap、robots.txt、llms.txt、语义化、过时标记
+**验证流程**：复用 6.1 同一套 `scripts/checks/*`,但抓取改用线上 URL(`fetchHttp`)。
 
 **额外验证项（线上特有）**：
 
@@ -670,75 +622,111 @@ geo-workflow 添加问题 → 填写 official_urls → 采样评分
 
 ## 九、工具脚本清单
 
-### 开发类脚本
-
-| 脚本                   | 功能            | 输入     | 输出                     |
-| ---------------------- | --------------- | -------- | ------------------------ |
-| `generate-schema.js`   | 生成 JSON-LD    | 页面内容 | jsonld/\*.ts             |
-| `optimize-tdk.js`      | 优化 TDK        | 页面内容 | tdks/\*.ts               |
-| `generate-robots.js`   | 生成 robots.txt | 配置规则 | robots.txt               |
-| `generate-llms-txt.js` | 生成 llms.txt   | 页面内容 | llms.txt / llms-full.txt |
-| `mark-obsolete.js`     | 标记过时页面    | 页面列表 | frontmatter 更新         |
-
-### 分析类脚本
-
-| 脚本                      | 功能          | 输入        | 输出              |
-| ------------------------- | ------------- | ----------- | ----------------- |
-| `crawl.js`                | 抓取页面 HTML | URL         | crawled/\*.html   |
-| `analyze-discoverable.js` | 可检索性分析  | HTML        | discoverable.json |
-| `analyze-trustworthy.js`  | 可信度分析    | HTML        | trustworthy.json  |
-| `analyze-readable.js`     | 易读性分析    | HTML        | readable.json     |
-| `synthesize-analysis.js`  | 综合归因分析  | 三维度 JSON | analysis.md       |
-
-### 验证类脚本
-
-| 脚本                     | 功能            | 输入                 | 输出               |
-| ------------------------ | --------------- | -------------------- | ------------------ |
-| `validate-local.js`      | 本地全量验证    | Sitemap + dev server | validation reports |
-| `validate-production.js` | 线上全量验证    | Sitemap (URL)        | validation reports |
-| `validate-static.js`     | 验证静态化      | HTML 文件            | report             |
-| `validate-schema.js`     | 验证 Schema     | HTML + jsonld/\*.ts  | report             |
-| `validate-tdk.js`        | 验证 TDK        | HTML + tdks/\*.ts    | report             |
-| `validate-sitemap.js`    | 验证 Sitemap    | sitemap.xml          | report             |
-| `validate-robots.js`     | 验证 robots.txt | robots.txt           | report             |
-| `validate-llms-txt.js`   | 验证 llms.txt   | llms.txt + pages     | report             |
-| `validate-semantics.js`  | 验证语义化      | HTML                 | report             |
-| `validate-archived.js`   | 验证过时标记    | HTML                 | report             |
+实际落地的脚本与产物清单见 [第十节 10.5 - 10.7](#105-关键脚本scripts)。
 
 ---
 
-## 十、自动化（待对接Gitcode）
+## 十、自动化(geo-develop 协调仓 + portal CI)
 
-### CI 集成（本地验证自动化）
+### 10.1 总体拓扑
 
-**文件**：`openEuler-portal/.gitcode/workflows/geo-validation.yml`
-
-```yaml
-on: [pull_request]
-jobs:
-  local-validation:
-    steps:
-      - pnpm dev &（启动开发服务器）
-      - node geo-skills/scripts/validate-local.js
-      - 生成验证报告
-      - Critical 问题 → fail PR
+```text
+geo-workflow (GitHub) ──评估── 产出 P0/P1 issue + question.json
+       │
+       ▼
+geo-develop (GitHub) ── 用户开 [GEO优化] issue
+       │
+       │ /analyze 评论 ──▶ geo-analyze.yml
+       │                   ├─ fetch-geo-issues.js (取 P0 候选)
+       │                   ├─ run-analysis.js     (4 维度分析)
+       │                   ├─ generate-report.js  (报告评论)
+       │                   └─ open-portal-issues.js (atomgit 开 issue)
+       │
+       │ /fix 评论 ─────▶ geo-fix.yml
+       │                   ├─ plan-fix-runs.js     (按 community 拆分)
+       │                   ├─ execute-fix-runs.js  (clone+opencode+PR)
+       │                   └─ comment-fix-summary.js (回评)
+       │
+       ▼
+openEuler-portal / mindspore-portal (AtomGit) ── 收 issue + PR
 ```
 
-### CI 集成（线上验证自动化）
+### 10.2 触发与解析约定
 
-**文件**：`openEuler-portal/.gitcode/workflows/production-validation.yml`
+| 输入                          | 行为                                                                |
+| ----------------------------- | ------------------------------------------------------------------- |
+| Issue title `[GEO优化]`       | 遍历 geo-workflow 所有 P0 issue(openEuler/MindSpore 范围内)         |
+| Issue title `[GEO优化]#42`    | 仅分析 geo-workflow 的 issue #42                                    |
+| Issue comment `/analyze`      | 触发 `.github/workflows/geo-analyze.yml`                            |
+| Issue comment `/fix`          | 触发 `.github/workflows/geo-fix.yml`(前提:已有 analyze 制品)      |
 
-```yaml
-on:
-  push:
-    branches: [main]
-jobs:
-  production-validation:
-    steps:
-      - 等待部署完成
-      - node geo-skills/scripts/validate-production.js
-      - 生成验证报告
-      - 保存到 geo-audit/deployed/
+### 10.3 分析阶段(/analyze)产物
+
+```text
+geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
+  ├─ candidates.json     ← fetch-geo-issues.js 输出
+  ├─ analysis.json       ← run-analysis.js 输出 (4 维度结果)
+  ├─ report.md           ← generate-report.js 输出 (评论正文)
+  └─ portal-issues.json  ← open-portal-issues.js 输出 (atomgit issue 记录)
 ```
+
+产物 commit 到 geo-develop main 分支(ADR-0007),同时上传为 GitHub artifact(90d 保留)。
+
+### 10.4 修复阶段(/fix)产物
+
+```text
+geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
+  ├─ fix-plan.json       ← plan-fix-runs.js 输出 (per-community 拆分)
+  ├─ fix-context-*.json  ← 给 opencode agent 的上下文
+  └─ fix-results.json    ← execute-fix-runs.js 输出 (PR url + agent 输出)
+```
+
+### 10.5 关键脚本(scripts/)
+
+| 脚本                            | 角色                                                  |
+| ------------------------------- | ----------------------------------------------------- |
+| `fetch-geo-issues.js`           | 从 geo-workflow 拉取 P0 issue + question.json         |
+| `analyze-discoverability.js`    | 单 URL → 4 维度 JSON(CLI + 库函数 analyzeUrl)        |
+| `run-analysis.js`               | 批量 URL 分析,聚合到 analysis.json                    |
+| `generate-report.js`            | analysis.json → Markdown 评论                         |
+| `open-portal-issues.js`         | 调用 atomgit API,逐 community 在 portal 仓开 issue    |
+| `plan-fix-runs.js`              | analysis.json → 按 community+geo-issue 拆分修复任务   |
+| `execute-fix-runs.js`           | clone portal → opencode → push → atomgit PR            |
+| `comment-fix-summary.js`        | 回评到触发 issue + geo-workflow 原 issue              |
+| `checks/{static-render,schema,tdk,sitemap-inclusion}.js` | 单维度判定逻辑                       |
+| `lib/{html-fetch,atomgit-api,community-map}.js`          | 共用工具                              |
+
+### 10.6 GitHub 资产
+
+| 路径                                                | 角色                                       |
+| --------------------------------------------------- | ------------------------------------------ |
+| `.github/workflows/geo-analyze.yml`                | /analyze 工作流                            |
+| `.github/workflows/geo-fix.yml`                    | /fix 工作流                                |
+| `.github/actions/atomgit-create-issue/`            | composite action,封装 AtomGit Issue API    |
+| `.github/actions/atomgit-create-pr/`               | composite action,封装 push + PR           |
+| `.github/actions/run-agent/`(沿用)                | opencode + glm5 调用器                     |
+| `.github/agents/geo-fix-prompt.md`                 | opencode 的修复 prompt(严格白名单约束)   |
+
+### 10.7 Secrets / Env
+
+| 名称              | 用途                                                |
+| ----------------- | --------------------------------------------------- |
+| `GITHUB_TOKEN`    | 内置,跨 geo-develop / geo-workflow API 与评论       |
+| `ATOMGIT_TOKEN`   | 自定义 secret,用于 AtomGit issue / PR / push        |
+| `ATOMGIT_API_BASE`| 可选,默认 `https://api.atomgit.com`                |
+| `AI_MODEL`        | 可选,默认 `alibaba-cn/glm-5`                       |
+| `GEO_SKIP_BROWSER`| 可选 repo variable,设 `true` 跳过 Browser 抓取     |
+
+### 10.8 决策记录
+
+详见 `docs/decisions.md` ADR-0001 ~ ADR-0007。重要权衡:
+
+- 协调仓为 geo-develop(ADR-0001),而非 geo-workflow
+- 数据走 GitHub Contents API,不 clone(ADR-0002)
+- 仅 4 维度,放弃 robots.txt/llms.txt(ADR-0003)
+- /analyze 自动开 portal issue(ADR-0004)
+- /fix 用 opencode+glm5(ADR-0005)
+- atomgit-create-pr 独立 action(ADR-0006)
+- 制品入仓便于审计(ADR-0007)
 
 ---

@@ -2,6 +2,9 @@
 
 import fs from 'fs';
 import path from 'path';
+import { getCommunity } from './lib/community-map.js';
+
+export const PAYLOAD_MARKER = 'geo-analysis-payload v1';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -61,6 +64,69 @@ function renderIssue(issue) {
     }
   }
   return lines.join('\n');
+}
+
+export function buildFixPayload(analysis, triggerIssue) {
+  const issues = [];
+  for (const issue of analysis.issues) {
+    const community = getCommunity(issue.community);
+    if (!community) continue;
+    const questions = [];
+    for (const q of issue.questions) {
+      const urls = [];
+      for (const u of q.urls) {
+        if (!u.ok) continue;
+        const problems = (u.problems || [])
+          .filter((p) => p.severity === 'critical' || p.severity === 'important')
+          .map((p) => ({
+            severity: p.severity,
+            dimension: p.dimension || p.category,
+            category: p.category,
+            description: p.description,
+            suggestion: p.suggestion,
+            expected: p.expected,
+            actual: p.actual,
+          }));
+        if (problems.length === 0) continue;
+        urls.push({ url: u.url, final_url: u.final_url, problems });
+      }
+      if (urls.length === 0) continue;
+      questions.push({ id: q.id, question: q.question, official_urls: urls });
+    }
+    if (questions.length === 0) continue;
+    issues.push({
+      community: issue.community,
+      geo_issue_number: issue.geo_issue_number,
+      geo_issue_url: issue.geo_issue_url,
+      geo_issue_title: issue.geo_issue_title,
+      severity: issue.severity,
+      portal: { owner: community.portal_owner, repo: community.portal_repo, default_branch: community.portal_default_branch },
+      questions,
+    });
+  }
+  return {
+    version: 1,
+    run_at: analysis.run_at,
+    trigger_issue: triggerIssue || null,
+    issues,
+  };
+}
+
+function renderPayloadBlock(payload) {
+  const json = JSON.stringify(payload, null, 2);
+  return [
+    '',
+    `<details>`,
+    `<summary>📦 ${PAYLOAD_MARKER}(供 /fix 自动消费,请勿编辑)</summary>`,
+    '',
+    '```json',
+    json,
+    '```',
+    '',
+    '</details>',
+    '',
+    `<!-- ${PAYLOAD_MARKER} -->`,
+  ].join('\n');
 }
 
 function aggregate(analysis) {
@@ -125,6 +191,9 @@ async function main() {
 
   lines.push(`> 评论 \`/fix\` 触发自动修复(将在对应 portal 仓提 PR)`);
 
+  const payload = buildFixPayload(analysis, args['trigger-issue']);
+  lines.push(renderPayloadBlock(payload));
+
   const out = lines.filter((l) => l !== undefined).join('\n');
   if (args.output) {
     fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
@@ -135,7 +204,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`❌ ${err.message}`);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(`❌ ${err.message}`);
+    process.exit(1);
+  });
+}

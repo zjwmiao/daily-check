@@ -91,8 +91,22 @@
   - README + design.md secret 表加一行
   - ADR-0011
 
+### Round 9 — /fix 信号源解耦文件系统,改走 issue 评论
+
+- 请求: 用户反馈 force push 导致中间文件丢失,/fix 看到的是老 analysis,跑出 `0 run(s) executed`。要求不依赖 fix-plan.json 等文件,把修复方案回评到 issue。
+- 结论: 重设计 /fix 数据流 — /analyze 在 `report.md` 末尾内嵌精简 `geo-analysis-payload v1` JSON 块,/fix 从 issue 评论里抓最新带 marker 的 payload。文件系统状态只作审计副本,不再是输入信号。ADR-0012 取代 ADR-0007 在 /fix 路径上的角色。本地端到端验证 1 issue / 2 questions / 5 URLs / 7 problems 闭环通。
+- 产出:
+  - `scripts/generate-report.js`:导出 `PAYLOAD_MARKER` + `buildFixPayload()`,末尾追加 `<details>` 折叠 JSON 块
+  - 新建 `scripts/fetch-fix-payload.js`:GitHub API 拉 issue 评论 → 找最新 marker → 抽 JSON
+  - `scripts/execute-fix-runs.js`:`--plan` → `--payload`,内联 `planRunsFromPayload()`
+  - 删除 `scripts/plan-fix-runs.js`
+  - `.github/workflows/geo-bot.yml` fix job:`Locate analysis` + `Plan fix runs` → `Prepare run dir` + `Fetch fix payload from issue comments`
+  - `docs/design.md` 10.3-10.5 重写,10.8 列全 12 条 ADR
+  - ADR-0012 写入 decisions.md
+
 ## 未完成 / 待办
 
-- [ ] 在测试 issue 上跑 /fix 验证 opencode prompt 真实表现 + cache 命中行为
+- [ ] 用户在 issue 重新评论 /analyze 生成新 payload,再 /fix 验证全链路
+- [ ] 在测试 issue 上验证 opencode prompt 真实表现 + cache 命中行为
 - [ ] (后续 ADR)归档策略 — geo-runs/ 长期累积后的清理
 - [ ] (后续) 同 portal 并发 fix 时收窄 concurrency group

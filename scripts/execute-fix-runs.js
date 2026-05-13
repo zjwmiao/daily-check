@@ -3,7 +3,43 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync, spawnSync } from 'node:child_process';
-import { createPullRequest, listPullRequests, addIssueComment } from './lib/atomgit-api.js';
+import { createPullRequest, listPullRequests } from './lib/atomgit-api.js';
+
+function planRunsFromPayload(payload) {
+  const runs = [];
+  for (const issue of payload.issues || []) {
+    const flatProblems = [];
+    for (const q of issue.questions || []) {
+      for (const u of q.official_urls || []) {
+        for (const p of u.problems || []) {
+          flatProblems.push({
+            question_id: q.id,
+            question_text: q.question,
+            url: u.url,
+            ...p,
+          });
+        }
+      }
+    }
+    if (flatProblems.length === 0) {
+      runs.push({ ...issue, skip: true, skip_reason: 'no critical/important problems' });
+      continue;
+    }
+    runs.push({
+      community: issue.community,
+      geo_issue_number: issue.geo_issue_number,
+      geo_issue_url: issue.geo_issue_url,
+      geo_issue_title: issue.geo_issue_title,
+      portal_owner: issue.portal.owner,
+      portal_repo: issue.portal.repo,
+      portal_base_branch: issue.portal.default_branch || 'master',
+      branch_name: `geo/fix-${issue.community.toLowerCase()}-${issue.geo_issue_number}`,
+      problems: flatProblems,
+      issue_payload: issue,
+    });
+  }
+  return runs;
+}
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -151,20 +187,28 @@ async function pushAndPr(run, workDir) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.plan || !args.output) {
-    console.error('Usage: --plan=fix-plan.json --output=fix-results.json');
+  if (!args.payload || !args.output) {
+    console.error('Usage: --payload=fix-payload.json --output=fix-results.json');
     process.exit(1);
   }
-  const plan = JSON.parse(fs.readFileSync(args.plan, 'utf-8'));
+  const payload = JSON.parse(fs.readFileSync(args.payload, 'utf-8'));
   const agentFile = process.env.AGENT_FILE;
   if (!agentFile || !fs.existsSync(agentFile)) {
     throw new Error(`AGENT_FILE not found: ${agentFile}`);
   }
 
+  const runs = planRunsFromPayload(payload);
+  console.error(`📋 planned ${runs.length} run(s) (${runs.filter((r) => r.skip).length} skipped)`);
+
   const results = [];
-  for (const run of plan.runs) {
+  for (const run of runs) {
     if (run.skip) {
-      results.push({ ...run, status: 'skipped' });
+      results.push({
+        community: run.community,
+        geo_issue_number: run.geo_issue_number,
+        status: 'skipped',
+        skip_reason: run.skip_reason,
+      });
       continue;
     }
 
@@ -200,19 +244,6 @@ async function main() {
 
       const prRes = await pushAndPr(run, workDir);
       Object.assign(result, prRes);
-
-      if (run.portal_issue_url && prRes.pr_url) {
-        try {
-          await addIssueComment({
-            owner: run.portal_owner,
-            repo: run.portal_repo,
-            issue_number: run.portal_issue_number,
-            body: `🛠 已提交修复 PR: ${prRes.pr_url}`,
-          });
-        } catch (err) {
-          result.portal_comment_error = err.message;
-        }
-      }
 
       result.status = prRes.has_changes ? 'pr_created' : 'no_changes';
     } catch (err) {

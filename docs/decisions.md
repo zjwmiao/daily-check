@@ -179,3 +179,22 @@
   - 每次 fix 复用 cache 时:`remote set-url`(刷新 token)→ `fetch --depth=1 origin <base>` → `checkout -B <base> origin/<base>` → `reset --hard` → `clean -fdx` → 删除非 base 分支
   - 任一步失败 → 删 cache → fresh clone(自愈)
   - 同 portal 并发 fix 会冲突 — 当前用 issue 级 concurrency,未来若多 issue 并发同 portal 需收窄 concurrency group
+
+## ADR-0012: /fix 信号源切换为 issue 评论内嵌 payload,不依赖文件系统
+
+- 日期: 2026-05-13
+- 状态: 已采纳(修正 ADR-0007 — 制品入仓仍做但仅为审计,不再是 /fix 输入)
+- 上下文: 之前 `/fix` 通过 `ls geo-runs/{issue}/*/analysis.json | sort -r | head -1` 找最新分析。实际跑出来发现:用户对 main 分支做过 force push,中间 commit 的 `geo-runs/.../analysis.json` 被回滚,/fix checkout 后只看到老的空 analysis,planner 产出 0 个 run,execute 直接 `0 run(s) executed`。文件系统状态不可靠。
+- 选项:
+  - A. 加强 push 流程的可靠性(锁、原子提交)— 仍然脆弱
+  - B. 把 fix 输入信号搬到 issue 评论(GitHub 持久化、force push 影响不到)
+  - C. 改用 artifact / 外部 storage
+- 决定: B
+- 理由: issue 评论是 GitHub 第一公民,只要 issue 不删评论就在;评论与 /analyze 触发是 1:1 关系,语义自然;不需引入额外 storage。C 受 90 天保留期限制。
+- 后果:
+  - `generate-report.js` 在 `report.md` 末尾内嵌 `geo-analysis-payload v1` 精简 JSON(裹在 `<details>` 折叠块,只含 /fix 需要的字段:per-issue/question/url/problems,体积小)
+  - 新增 `scripts/fetch-fix-payload.js`:扫 issue 评论,从最新带 marker 的评论里抓 JSON 块
+  - 删除 `scripts/plan-fix-runs.js`:planning 逻辑内联到 `execute-fix-runs.js`(`planRunsFromPayload`)
+  - `execute-fix-runs.js` 参数从 `--plan` 改为 `--payload`
+  - `geo-bot.yml` fix job 把"Locate latest analysis" + "Plan fix runs" 两步合并为 "Fetch fix payload from issue comments"
+  - geo-runs/ 入仓继续保留(ADR-0007 不变,但只作审计副本)

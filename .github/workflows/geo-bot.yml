@@ -162,22 +162,23 @@ jobs:
         shell: bash
         run: pnpm install --frozen-lockfile
 
-      - name: Locate latest analysis
-        id: locate
+      - name: Prepare run dir
+        id: prepare
         shell: bash
         run: |
-          BASE="geo-runs/${{ github.event.issue.number }}"
-          if [ ! -d "$BASE" ]; then
-            echo "❌ no analysis found at $BASE — please run /analyze first"
-            exit 1
-          fi
-          RUN_DIR=$(ls -1d "$BASE"/*/ 2>/dev/null | sort -r | head -1 | sed 's:/*$::')
-          if [ -z "$RUN_DIR" ] || [ ! -f "$RUN_DIR/analysis.json" ]; then
-            echo "❌ no analysis.json in $BASE/*"
-            exit 1
-          fi
+          RUN_DIR="geo-runs/${{ github.event.issue.number }}/fix-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$RUN_DIR"
           echo "run_dir=$RUN_DIR" >> $GITHUB_OUTPUT
-          echo "Found: $RUN_DIR"
+
+      - name: Fetch fix payload from issue comments
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/fetch-fix-payload.js \
+            --repo=${{ github.repository }} \
+            --issue=${{ github.event.issue.number }} \
+            --output=${{ steps.prepare.outputs.run_dir }}/fix-payload.json
 
       - name: Ack on issue
         env:
@@ -188,19 +189,7 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
-            -d "$(jq -nc --arg b "🛠 开始修复 (analysis: \`${{ steps.locate.outputs.run_dir }}\`)..." '{body:$b}')"
-
-      - name: Plan fix runs (per community + per geo-issue)
-        id: plan
-        shell: bash
-        env:
-          ANALYSIS: ${{ steps.locate.outputs.run_dir }}/analysis.json
-        run: |
-          node scripts/plan-fix-runs.js \
-            --input=$ANALYSIS \
-            --run-dir=${{ steps.locate.outputs.run_dir }} \
-            --output=${{ steps.locate.outputs.run_dir }}/fix-plan.json
-          echo "plan_file=${{ steps.locate.outputs.run_dir }}/fix-plan.json" >> $GITHUB_OUTPUT
+            -d "$(jq -nc --arg b "🛠 开始修复 (payload: \`${{ steps.prepare.outputs.run_dir }}/fix-payload.json\`)..." '{body:$b}')"
 
       - name: Execute fix runs
         shell: bash
@@ -209,19 +198,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TRIGGER_REPO: ${{ github.repository }}
           TRIGGER_ISSUE: ${{ github.event.issue.number }}
-          RUN_DIR: ${{ steps.locate.outputs.run_dir }}
+          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
           AGENT_FILE: ${{ github.workspace }}/.github/agents/geo-fix-prompt.md
         run: |
           node scripts/execute-fix-runs.js \
-            --plan=${{ steps.plan.outputs.plan_file }} \
-            --output=${{ steps.locate.outputs.run_dir }}/fix-results.json
+            --payload=${{ steps.prepare.outputs.run_dir }}/fix-payload.json \
+            --output=${{ steps.prepare.outputs.run_dir }}/fix-results.json
 
-      - name: Commit fix-results
+      - name: Commit fix artifacts
         shell: bash
         run: |
           git config user.name "geo-develop-bot"
           git config user.email "geo-develop-bot@noreply.local"
-          git add ${{ steps.locate.outputs.run_dir }}/
+          git add ${{ steps.prepare.outputs.run_dir }}/
           git diff --cached --quiet || git commit -m "chore(geo-runs): fix results for #${{ github.event.issue.number }}"
           git push origin HEAD:${{ github.event.repository.default_branch }} || true
 
@@ -231,6 +220,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node scripts/comment-fix-summary.js \
-            --results=${{ steps.locate.outputs.run_dir }}/fix-results.json \
+            --results=${{ steps.prepare.outputs.run_dir }}/fix-results.json \
             --trigger-repo=${{ github.repository }} \
             --trigger-issue=${{ github.event.issue.number }}

@@ -666,18 +666,18 @@ openEuler-portal / mindspore-portal (AtomGit) ── 收 issue + PR
 geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
   ├─ candidates.json     ← fetch-geo-issues.js 输出
   ├─ analysis.json       ← run-analysis.js 输出 (4 维度结果)
-  ├─ report.md           ← generate-report.js 输出 (评论正文)
+  ├─ report.md           ← generate-report.js 输出 (评论正文 + 内嵌 fix-payload)
   └─ portal-issues.json  ← open-portal-issues.js 输出 (atomgit issue 记录)
 ```
 
-产物 commit 到 geo-develop main 分支(ADR-0007),同时上传为 GitHub artifact(90d 保留)。
+`report.md` 末尾内嵌折叠的 `geo-analysis-payload v1` JSON 块,作为 /fix 的**真正信号源**(产物落盘只为审计,不作为 /fix 输入,见 ADR-0012)。产物 commit 到 geo-develop main 分支(ADR-0007),同时上传为 GitHub artifact(90d 保留)。
 
 ### 10.4 修复阶段(/fix)产物
 
 ```text
-geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
-  ├─ fix-plan.json       ← plan-fix-runs.js 输出 (per-community 拆分)
-  ├─ fix-context-*.json  ← 给 opencode agent 的上下文
+geo-runs/{issue_number}/fix-{YYYYMMDDTHHmmssZ}/
+  ├─ fix-payload.json    ← fetch-fix-payload.js 从 issue 评论抽取的 payload
+  ├─ fix-context-*.json  ← 给 opencode agent 的上下文(per community)
   └─ fix-results.json    ← execute-fix-runs.js 输出 (PR url + agent 输出)
 ```
 
@@ -688,10 +688,10 @@ geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
 | `fetch-geo-issues.js`           | 从 geo-workflow 拉取 P0 issue + question.json         |
 | `analyze-discoverability.js`    | 单 URL → 4 维度 JSON(CLI + 库函数 analyzeUrl)        |
 | `run-analysis.js`               | 批量 URL 分析,聚合到 analysis.json                    |
-| `generate-report.js`            | analysis.json → Markdown 评论                         |
+| `generate-report.js`            | analysis.json → Markdown 评论(末尾内嵌 fix-payload)  |
 | `open-portal-issues.js`         | 调用 atomgit API,逐 community 在 portal 仓开 issue    |
-| `plan-fix-runs.js`              | analysis.json → 按 community+geo-issue 拆分修复任务   |
-| `execute-fix-runs.js`           | clone portal → opencode → push → atomgit PR            |
+| `fetch-fix-payload.js`          | 扫 issue 评论,提取最新带 marker 的 fix-payload JSON   |
+| `execute-fix-runs.js`           | 读 payload → 内联 plan → clone portal → opencode → PR  |
 | `comment-fix-summary.js`        | 回评到触发 issue + geo-workflow 原 issue              |
 | `checks/{static-render,schema,tdk,sitemap-inclusion}.js` | 单维度判定逻辑                       |
 | `lib/{html-fetch,atomgit-api,community-map}.js`          | 共用工具                              |
@@ -720,14 +720,19 @@ geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
 
 ### 10.8 决策记录
 
-详见 `docs/decisions.md` ADR-0001 ~ ADR-0007。重要权衡:
+详见 `docs/decisions.md`。重要权衡:
 
-- 协调仓为 geo-develop(ADR-0001),而非 geo-workflow
+- 协调仓为 geo-develop(ADR-0001)
 - 数据走 GitHub Contents API,不 clone(ADR-0002)
 - 仅 4 维度,放弃 robots.txt/llms.txt(ADR-0003)
 - /analyze 自动开 portal issue(ADR-0004)
 - /fix 用 opencode+glm5(ADR-0005)
 - atomgit-create-pr 独立 action(ADR-0006)
 - 制品入仓便于审计(ADR-0007)
+- 删除旧脚本与三方 skills(ADR-0008)
+- 合并为单 workflow 多 job(ADR-0009)
+- geo-workflow 是 private 仓,需 `GEO_GITHUB_TOKEN`(ADR-0010)
+- portal 仓持久缓存(ADR-0011)
+- /fix 信号源:issue 评论内嵌 payload,不依赖文件系统(ADR-0012)
 
 ---

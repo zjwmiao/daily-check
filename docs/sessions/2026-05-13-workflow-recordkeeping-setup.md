@@ -81,8 +81,18 @@
   - README + design.md secret 表更新
 - **用户需在 repo settings 加 secret `GEO_GITHUB_TOKEN`**(可复用 .env 里 PAT),否则下次 /analyze 仍会失败但会快速报错
 
+### Round 8 — portal 仓 clone 性能优化
+
+- 请求: 用户指出每次 /fix 全量 clone portal 仓耗时长。
+- 结论: self-hosted runner 文件系统持久,改"fresh clone 每次"为"cache + fetch+reset 复用"。失败 fallback fresh clone。记 ADR-0011。
+- 产出:
+  - `scripts/execute-fix-runs.js` `clonePortal()` 重写:命中 cache 走 `fetch+reset+clean+删 stale 分支`,失败/缺失 fresh clone;main() 适配 `const workDir = clonePortal(run)` 新签名
+  - 配置:`GEO_PORTAL_CACHE_DIR` env 可覆盖,默认 `~/.cache/geo-bot/portals/`
+  - README + design.md secret 表加一行
+  - ADR-0011
+
 ## 未完成 / 待办
 
-- [ ] 用户配置 `GEO_GITHUB_TOKEN` secret,再跑一次 /analyze 验证
-- [ ] 在测试 issue 上跑 /fix 验证 opencode prompt 真实表现
+- [ ] 在测试 issue 上跑 /fix 验证 opencode prompt 真实表现 + cache 命中行为
 - [ ] (后续 ADR)归档策略 — geo-runs/ 长期累积后的清理
+- [ ] (后续) 同 portal 并发 fix 时收窄 concurrency group

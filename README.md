@@ -99,6 +99,7 @@ docs/
 | `ATOMGIT_API_BASE`       | 可选,默认 `https://api.atomgit.com`                              |
 | `AI_MODEL`               | 可选,opencode 模型 id,默认 `alibaba-cn/glm-5`                    |
 | `GEO_SKIP_BROWSER`       | 可选 repo variable,设 `true` 跳过 playwright 抓取                |
+| `GEO_PORTAL_CACHE_DIR`   | 可选 env,portal 仓持久缓存根目录,默认 `~/.cache/geo-bot/portals`  |
 
 ## 设计参考
 

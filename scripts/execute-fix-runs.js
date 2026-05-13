@@ -20,14 +20,60 @@ function sh(cmd, opts = {}) {
   return execSync(cmd, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', ...opts });
 }
 
-function clonePortal(run, workDir) {
+function tryRun(cmd, opts) {
+  try {
+    sh(cmd, opts);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function portalCacheDir(run) {
+  const base =
+    process.env.GEO_PORTAL_CACHE_DIR ||
+    path.join(process.env.HOME || '/tmp', '.cache/geo-bot/portals');
+  return path.join(base, `${run.portal_owner}-${run.portal_repo}`);
+}
+
+function clonePortal(run) {
   const token = process.env.ATOMGIT_TOKEN;
   if (!token) throw new Error('ATOMGIT_TOKEN missing');
   const url = `https://oauth2:${token}@atomgit.com/${run.portal_owner}/${run.portal_repo}.git`;
-  fs.rmSync(workDir, { recursive: true, force: true });
-  sh(`git clone --depth=1 --branch=${run.portal_base_branch} ${url} ${workDir}`);
+  const workDir = portalCacheDir(run);
+  const base = run.portal_base_branch;
+
+  fs.mkdirSync(path.dirname(workDir), { recursive: true });
+
+  const hasCache = fs.existsSync(path.join(workDir, '.git'));
+  if (hasCache) {
+    const ok =
+      tryRun(`git remote set-url origin ${url}`, { cwd: workDir }) &&
+      tryRun(`git fetch --depth=1 origin ${base}`, { cwd: workDir }) &&
+      tryRun(`git checkout -B ${base} origin/${base}`, { cwd: workDir }) &&
+      tryRun(`git reset --hard origin/${base}`, { cwd: workDir }) &&
+      tryRun(`git clean -fdx`, { cwd: workDir });
+    if (ok) {
+      const leftovers = sh(`git for-each-ref --format=%(refname:short) refs/heads/`, { cwd: workDir })
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((b) => b && b !== base);
+      for (const b of leftovers) tryRun(`git branch -D ${b}`, { cwd: workDir });
+      console.error(`♻️  cache hit: ${workDir}`);
+    } else {
+      console.error(`⚠️  cache corrupt, re-cloning: ${workDir}`);
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  }
+
+  if (!fs.existsSync(path.join(workDir, '.git'))) {
+    sh(`git clone --depth=1 --branch=${base} ${url} ${workDir}`);
+    console.error(`📥  cloned fresh: ${workDir}`);
+  }
+
   sh(`git config user.name "geo-develop-bot"`, { cwd: workDir });
   sh(`git config user.email "geo-develop-bot@noreply.local"`, { cwd: workDir });
+  return workDir;
 }
 
 function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
@@ -122,11 +168,10 @@ async function main() {
       continue;
     }
 
-    const workDir = `/tmp/geo-fix/${run.community.toLowerCase()}-${run.geo_issue_number}`;
     const result = { community: run.community, geo_issue_number: run.geo_issue_number };
 
     try {
-      clonePortal(run, workDir);
+      const workDir = clonePortal(run);
 
       const ctxDir = path.dirname(path.resolve(args.output));
       const contextFile = path.join(ctxDir, `fix-context-${run.community}-${run.geo_issue_number}.json`);

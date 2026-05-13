@@ -1,6 +1,6 @@
 # 决策日志 (ADR)
 
-> 记录关键技术/产品决策。每条独立编号,不可删除,只能用新条目"取代"旧条目。
+> 记录关键技术/产品决策。每条独立编号,不可删除,只能用新条目"取代"旧条目。新决策**追加到文件末尾**,保持编号升序。
 
 ## 模板
 
@@ -20,7 +20,7 @@
 
 ---
 
-<!-- 新决策追加到下方 -->
+<!-- 新决策追加到文件末尾,保持升序 -->
 
 ## ADR-0001: geo-develop 作为协调仓,以 issue 评论作触发器
 
@@ -99,21 +99,36 @@
 - 理由: 双平台 if/else 会污染既有路径,提高回归风险;新 action 单一职责,可独立演进。
 - 后果: 维护两套 action,但 API 调用层只是 curl 包装,代码量小。
 
-## ADR-0010: geo-workflow 是 private 仓,需独立 PAT secret
+## ADR-0007: 分析制品存 geo-runs/{issue}/,推回本仓
 
 - 日期: 2026-05-13
-- 状态: 已采纳(修正 ADR-0002)
-- 上下文: 首次远端 /analyze 跑出 0 candidates。日志显示对 `api.github.com/repos/opensourceways/geo-workflow/contents/...` 返回 **404**。本地用 .env 里的 PAT 同样请求返回 200。差异来自 token:workflow 用的 `secrets.GITHUB_TOKEN` 是 ephemeral install token,scope 严格限定在当前 repo(geo-develop),对其他 repo(geo-workflow)无权;而 geo-workflow 是 **private**(visibility=private),匿名也访问不了。
+- 状态: 已采纳
+- 上下文: /fix 需要读取 /analyze 的产物;若仅靠 GitHub artifact,90 天过期且 job 间传递繁琐。
 - 选项:
-  - A. 把 geo-workflow 改为 public — 涉及组织策略,不一定可行
-  - B. 在 geo-develop 加 secret `GEO_GITHUB_TOKEN`(PAT,有 geo-workflow read 权限),fetch-geo-issues 步骤用它
-  - C. 用 GitHub App 安装到双 repo(更长期但更复杂)
+  - A. 仅 GitHub artifact
+  - B. 提交 `geo-runs/{issue}/` 到 geo-develop 仓 main 分支
+  - C. 用专门的 storage(S3/COS)
 - 决定: B
-- 理由: 最小改动,只需用户在 secret 里加一项;PAT 可定期轮换;不依赖组织策略。
+- 理由: 全链路可审计;/fix 可直接 checkout 读取;artifact 仍并行上传作短期保险。
 - 后果:
-  - workflow "Fetch geo-workflow candidates" 步骤 env 改为 `GEO_GITHUB_TOKEN`,缺则报错退出
-  - README + design.md 更新 secret 表(标注必填)
-  - 用户需在 repo secrets 加 `GEO_GITHUB_TOKEN`(可直接复用 .env 里的 GITHUB_TOKEN PAT)
+  - geo-develop 仓会持续累积 geo-runs/ 目录,需要定期归档(后续 ADR)
+  - 工作流需要 push 权限(默认 GITHUB_TOKEN 已有)
+
+## ADR-0008: 删除旧脚本与三方 SEO skills
+
+- 日期: 2026-05-13
+- 状态: 已采纳
+- 上下文: 仓库历史上引入了 `aaron-he-zhu/seo-geo-claude-skills` 的 22 个 skills(`.claude/skills/` + `.agents/skills/` 镜像 + `.claude/commands/`)以及 6 个独立 CLI 脚本(`analyze.js` / `crawl.js` / `utils.js` / `validate-{robots,sitemap,tdk}.js`)。新工作流落地后均已被 `scripts/lib/` + `scripts/checks/` + workflow 替代,长期保留增加心智负担且 README 已引用不存在的功能。
+- 选项:
+  - A. 全部保留作"工具箱"备用
+  - B. 仅删旧脚本,保留 skills 给 Claude Code 兜底用
+  - C. 全删(脚本 + skills + lock + commands + 镜像)
+- 决定: C
+- 理由: 新工作流自包含,审计与维护更直接;skills 可随时通过 marketplace 重装,不必锁在仓库内;`.agents/skills` 与 `.claude/skills` 内容一致,纯冗余。
+- 后果:
+  - `package.json` 同步去掉 `"crawl"` npm script
+  - README 与 design.md 中所有指向已删脚本的引用必须更新
+  - 后续如需个别 skill,改在用户级 `~/.claude/skills/` 安装,不再入仓
 
 ## ADR-0009: 合并 geo-{analyze,fix}.yml 为单文件 geo-bot.yml 多 job
 
@@ -132,33 +147,35 @@
   - README + design.md 引用更新为 `geo-bot.yml#analyze` / `#fix`
   - 历史 Actions run 名称会变(`GEO Analyze` / `GEO Fix` → `GEO Bot`)
 
-## ADR-0008: 删除旧脚本与三方 SEO skills
+## ADR-0010: geo-workflow 是 private 仓,需独立 PAT secret
 
 - 日期: 2026-05-13
-- 状态: 已采纳
-- 上下文: 仓库历史上引入了 `aaron-he-zhu/seo-geo-claude-skills` 的 22 个 skills(`.claude/skills/` + `.agents/skills/` 镜像 + `.claude/commands/`)以及 6 个独立 CLI 脚本(`analyze.js` / `crawl.js` / `utils.js` / `validate-{robots,sitemap,tdk}.js`)。新工作流落地后均已被 `scripts/lib/` + `scripts/checks/` + workflow 替代,长期保留增加心智负担且 README 已引用不存在的功能。
+- 状态: 已采纳(修正 ADR-0002)
+- 上下文: 首次远端 /analyze 跑出 0 candidates。日志显示对 `api.github.com/repos/opensourceways/geo-workflow/contents/...` 返回 **404**。本地用 .env 里的 PAT 同样请求返回 200。差异来自 token:workflow 用的 `secrets.GITHUB_TOKEN` 是 ephemeral install token,scope 严格限定在当前 repo(geo-develop),对其他 repo(geo-workflow)无权;而 geo-workflow 是 **private**(visibility=private),匿名也访问不了。
 - 选项:
-  - A. 全部保留作"工具箱"备用
-  - B. 仅删旧脚本,保留 skills 给 Claude Code 兜底用
-  - C. 全删(脚本 + skills + lock + commands + 镜像)
-- 决定: C
-- 理由: 新工作流自包含,审计与维护更直接;skills 可随时通过 marketplace 重装,不必锁在仓库内;`.agents/skills` 与 `.claude/skills` 内容一致,纯冗余。
-- 后果:
-  - `package.json` 同步去掉 `"crawl"` npm script
-  - README 与 design.md 中所有指向已删脚本的引用必须更新
-  - 后续如需个别 skill,改在用户级 `~/.claude/skills/` 安装,不再入仓
-
-## ADR-0007: 分析制品存 geo-runs/{issue}/,推回本仓
-
-- 日期: 2026-05-13
-- 状态: 已采纳
-- 上下文: /fix 需要读取 /analyze 的产物;若仅靠 GitHub artifact,90 天过期且 job 间传递繁琐。
-- 选项:
-  - A. 仅 GitHub artifact
-  - B. 提交 `geo-runs/{issue}/` 到 geo-develop 仓 main 分支
-  - C. 用专门的 storage(S3/COS)
+  - A. 把 geo-workflow 改为 public — 涉及组织策略,不一定可行
+  - B. 在 geo-develop 加 secret `GEO_GITHUB_TOKEN`(PAT,有 geo-workflow read 权限),fetch-geo-issues 步骤用它
+  - C. 用 GitHub App 安装到双 repo(更长期但更复杂)
 - 决定: B
-- 理由: 全链路可审计;/fix 可直接 checkout 读取;artifact 仍并行上传作短期保险。
+- 理由: 最小改动,只需用户在 secret 里加一项;PAT 可定期轮换;不依赖组织策略。
 - 后果:
-  - geo-develop 仓会持续累积 geo-runs/ 目录,需要定期归档(后续 ADR)
-  - 工作流需要 push 权限(默认 GITHUB_TOKEN 已有)
+  - workflow "Fetch geo-workflow candidates" 步骤 env 改为 `GEO_GITHUB_TOKEN`,缺则报错退出
+  - README + design.md 更新 secret 表(标注必填)
+  - 用户需在 repo secrets 加 `GEO_GITHUB_TOKEN`(可直接复用 .env 里的 GITHUB_TOKEN PAT)
+
+## ADR-0011: portal 仓持久化缓存,不每次 fresh clone
+
+- 日期: 2026-05-13
+- 状态: 已采纳
+- 上下文: `/fix` 每次都对 portal 仓(openEuler-portal / mindspore-portal)做 `git clone --depth=1`,虽然浅克隆已最小化,但首次抓取仍要建立连接 + 下载 tarball + 写盘,在大仓上耗时显著。self-hosted runner 文件系统持久,clone 副本可以复用。
+- 选项:
+  - A. 每次 fresh clone(现状)
+  - B. 持久缓存 + `fetch+reset+clean` 复用
+  - C. bare 仓 + git worktree per fix run
+- 决定: B
+- 理由: 最直观,改动局限在 `clonePortal` 一个函数;`fetch --depth=1 origin <base>` + `reset --hard` 几秒内完成;失败自动 fallback 到 fresh clone。C 性能更优但要管理 bare repo + worktree lifecycle,引入额外失败面。
+- 后果:
+  - 缓存位置默认 `~/.cache/geo-bot/portals/{owner}-{repo}/`,可通过 `GEO_PORTAL_CACHE_DIR` 覆盖
+  - 每次 fix 复用 cache 时:`remote set-url`(刷新 token)→ `fetch --depth=1 origin <base>` → `checkout -B <base> origin/<base>` → `reset --hard` → `clean -fdx` → 删除非 base 分支
+  - 任一步失败 → 删 cache → fresh clone(自愈)
+  - 同 portal 并发 fix 会冲突 — 当前用 issue 级 concurrency,未来若多 issue 并发同 portal 需收窄 concurrency group

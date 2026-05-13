@@ -49,8 +49,17 @@
   - `docs/design.md` 通过 sed 批量替换 + 5 处 Edit 清理,所有 dead script 引用消失;新增第 9 节指针;第 4/5/6 节保留原则的同时标注当前实现状态
   - `docs/decisions.md` 追加 ADR-0008(理由 + 影响)
 
+### Round 5 — Workflow 简化 + Secret 配置
+
+- 请求: (1) 用户指出 workflow 不应该加 `setup-node`,self-hosted runner 已预装 Node/pnpm/opencode;(2) 询问 secrets 是否配置;(3) 用户自己在 GitHub UI 配好了 `ATOMGIT_TOKEN`。
+- 结论: 两个 workflow 移除 `actions/setup-node@v4`,只保留 `pnpm install --frozen-lockfile`。本机 API 验证 repo `opensourceways/geo-develop` 已有 1 个 secret(`ATOMGIT_TOKEN`,updated 2026-05-13T09:22:34Z)。Runner 预装假设固化为长期记忆。
+- 产出:
+  - `.github/workflows/geo-analyze.yml` / `geo-fix.yml` 去掉 setup-node
+  - 新增记忆 `feedback_runner_environment.md` + 更新 MEMORY.md
+  - `/tmp/` 清理(临时 libsodium 安装)
+
 ## 未完成 / 待办
 
-- [ ] 在远端 self-hosted runner 上端到端跑一遍 /analyze 验证(确认 AtomGit API base 路径 + secret 命名)
+- [ ] 在远端 self-hosted runner 上端到端跑一遍 /analyze 验证(确认 AtomGit API base 路径 + secret 注入是否正常)
 - [ ] 在测试 issue 上跑 /fix 验证 opencode prompt 真实表现
 - [ ] (后续 ADR)归档策略 — geo-runs/ 长期累积后的清理

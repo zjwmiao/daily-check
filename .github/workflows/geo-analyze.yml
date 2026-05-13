@@ -26,20 +26,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Install deps
         shell: bash
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            corepack enable
-            pnpm install --frozen-lockfile
-          else
-            npm ci || npm install
-          fi
+        run: pnpm install --frozen-lockfile
 
       - name: Parse target from issue title
         id: parse

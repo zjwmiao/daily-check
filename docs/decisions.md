@@ -198,3 +198,24 @@
   - `execute-fix-runs.js` 参数从 `--plan` 改为 `--payload`
   - `geo-bot.yml` fix job 把"Locate latest analysis" + "Plan fix runs" 两步合并为 "Fetch fix payload from issue comments"
   - geo-runs/ 入仓继续保留(ADR-0007 不变,但只作审计副本)
+
+## ADR-0013: AtomGit/GitCode API 路径 `/api/v5/` 前缀 + Issue 接口 owner-scoped
+
+- 日期: 2026-05-13
+- 状态: 已采纳(细化 ADR-0006 的 atomgit 调用约定)
+- 上下文: 首次远端 /analyze 在 "Open portal issues" 步骤报 `createIssue failed: 404 "<html>...openresty"`(nginx 404 兜底页)。本地用 `Bearer <token>` curl 实测确认:
+  - 所有 atomgit/gitcode API endpoint 必须带 `/api/v5/` 前缀(我之前的 `https://api.atomgit.com/repos/...` 直接 404)
+  - **Issue 接口是 owner-scoped**:`POST /api/v5/repos/{owner}/issues`(不是 GitHub 风格 `/repos/{owner}/{repo}/issues`),`repo` 字段放 body 里
+  - PR / comments / refs 接口跟 GitHub 风格一致(repo 在路径)
+  - Auth header 必须 `Bearer`(不接受 GitHub 风格的 `token <pat>`)
+  - 响应里 `number` 字段是字符串而非数字
+- 选项:
+  - A. 在仍出错时手工降级到 web 界面
+  - B. 修代码 + 落 ADR 锁定 API 约定
+- 决定: B
+- 理由: 这是正确性问题,不是性能/UX。
+- 后果:
+  - `scripts/lib/atomgit-api.js`:加 `API_PREFIX = '/api/v5'` 常量,createIssue 改 owner-scoped 路径 + body 加 `repo`,labels 改逗号字符串
+  - `.github/actions/atomgit-create-issue/index.js` 同上
+  - `.github/actions/atomgit-create-pr/index.js`:所有路径加 `${API_PREFIX}`
+  - 探针 issue `openeuler/openEuler-portal#109` 已创建用于验证,需手工关闭

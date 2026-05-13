@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 
 const BASE = process.env.ATOMGIT_API_BASE || 'https://api.atomgit.com';
+const API_PREFIX = '/api/v5';
 
 function sh(cmd, opts = {}) {
   return execSync(cmd, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', ...opts }).trim();
@@ -75,13 +76,13 @@ async function main() {
   }
   sh(`git push -f origin ${branch}`);
 
-  const existing = await api('GET', `/repos/${owner}/${repo}/pulls?head=${owner}:${branch}&state=open`);
+  const existing = await api('GET', `${API_PREFIX}/repos/${owner}/${repo}/pulls?head=${owner}:${branch}&state=open`);
   let pr;
   if (Array.isArray(existing) && existing.length > 0) {
     pr = existing[0];
     console.log(`ℹ️ PR exists: ${pr.html_url || pr.url}`);
   } else {
-    pr = await api('POST', `/repos/${owner}/${repo}/pulls`, {
+    pr = await api('POST', `${API_PREFIX}/repos/${owner}/${repo}/pulls`, {
       title,
       body,
       head: branch,

@@ -104,8 +104,20 @@
   - `docs/design.md` 10.3-10.5 重写,10.8 列全 12 条 ADR
   - ADR-0012 写入 decisions.md
 
+### Round 10 — AtomGit API 路径修正
+
+- 请求: 用户反馈"往 portal 仓库创建 issue 失败",并提供了官方 docs 链接(post-api-v-5-repos-owner-issues 和 post-api-v-5-repos-owner-repo-pulls)。
+- 结论: docs 页面是 JS 渲染 curl 抓不到字段,但路径名本身已经说明问题 — 必须 `/api/v5/` 前缀。本地 curl 实测确认:Auth=`Bearer`、Issue 是 owner-scoped(repo 放 body)、PR 是 GitHub-style 路径、`number` 返回字符串。实测创建探针 issue `openEuler-portal#109` 成功(待人工关闭)。
+- 产出:
+  - `scripts/lib/atomgit-api.js`:`API_PREFIX = '/api/v5'`,createIssue 改 `POST /api/v5/repos/{owner}/issues` + body 加 `repo` 字段,labels 改逗号字符串
+  - `.github/actions/atomgit-create-issue/index.js`:同上
+  - `.github/actions/atomgit-create-pr/index.js`:所有路径加 `${API_PREFIX}`
+  - `docs/decisions.md` ADR-0013(按升序追加到末尾,这次没再 prepend 错位)
+  - `docs/design.md` 10.8 加 ADR-0013 一行
+
 ## 未完成 / 待办
 
+- [ ] 关闭探针 issue `openeuler/openEuler-portal#109`(手工 web 关闭即可)
 - [ ] 用户在 issue 重新评论 /analyze 生成新 payload,再 /fix 验证全链路
 - [ ] 在测试 issue 上验证 opencode prompt 真实表现 + cache 命中行为
 - [ ] (后续 ADR)归档策略 — geo-runs/ 长期累积后的清理

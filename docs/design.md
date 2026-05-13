@@ -734,5 +734,6 @@ geo-runs/{issue_number}/fix-{YYYYMMDDTHHmmssZ}/
 - geo-workflow 是 private 仓,需 `GEO_GITHUB_TOKEN`(ADR-0010)
 - portal 仓持久缓存(ADR-0011)
 - /fix 信号源:issue 评论内嵌 payload,不依赖文件系统(ADR-0012)
+- AtomGit API 路径 `/api/v5/` 前缀,Issue 接口 owner-scoped(ADR-0013)
 
 ---

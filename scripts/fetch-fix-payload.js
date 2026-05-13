@@ -54,6 +54,11 @@ function extractPayload(body) {
   }
 }
 
+function log(msg) {
+  const ts = new Date().toISOString().slice(11, 19);
+  console.error(`[${ts}] ${msg}`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const repo = args.repo;
@@ -63,30 +68,43 @@ async function main() {
     process.exit(1);
   }
 
+  log(`▶️  fetching comments from ${repo}#${issue}`);
+  const t0 = Date.now();
   const comments = await fetchAllComments(repo, issue);
+  log(`📥 ${comments.length} comment(s) fetched in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
   comments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   let payload = null;
   let sourceCommentId = null;
+  let sourceCreatedAt = null;
   for (const c of comments) {
     const p = extractPayload(c.body);
     if (p) {
       payload = p;
       sourceCommentId = c.id;
+      sourceCreatedAt = c.created_at;
       break;
     }
   }
 
   if (!payload) {
-    console.error(`❌ no comment with marker "${PAYLOAD_MARKER}" found on ${repo}#${issue}`);
+    log(`❌ no comment with marker "${PAYLOAD_MARKER}" found — 请先 /analyze 生成 payload 评论`);
     process.exit(2);
   }
+
+  const issuesCount = (payload.issues || []).length;
+  const urlsCount = (payload.issues || []).reduce(
+    (s, i) => s + (i.questions || []).reduce((q, x) => q + (x.official_urls || []).length, 0),
+    0
+  );
+  log(`✅ payload from comment ${sourceCommentId} (${sourceCreatedAt}): ${issuesCount} issue(s), ${urlsCount} URL(s)`);
 
   const json = JSON.stringify(payload, null, 2);
   if (args.output) {
     fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
     fs.writeFileSync(args.output, json);
-    console.error(`✅ payload from comment ${sourceCommentId} (${payload.issues.length} issue(s)) → ${args.output}`);
+    log(`📝 saved to ${args.output} (${json.length} bytes)`);
   } else {
     console.log(json);
   }

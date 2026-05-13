@@ -8,6 +8,14 @@ permissions:
   contents: write
   issues: write
 
+# 整 workflow 默认配置(可被 repo variables 覆盖)
+env:
+  AI_MODEL: ${{ vars.AI_MODEL || 'alibaba-cn/glm-5' }}
+  AI_AGENT: ${{ vars.AI_AGENT || 'build' }}
+  # 关键:CI 无 TTY,opencode build agent 任何读写都会触发交互确认 → 永久 hang
+  # 必须 --dangerously-skip-permissions 跳过(同 openEuler-portal-mirror 仓约定)
+  AI_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}
+
 jobs:
   analyze:
     if: |
@@ -15,6 +23,7 @@ jobs:
       startsWith(github.event.issue.title, '[GEO优化]') &&
       startsWith(github.event.comment.body, '/analyze')
     runs-on: portal-x86
+    timeout-minutes: 15
     concurrency:
       group: geo-bot-analyze-${{ github.event.issue.number }}
       cancel-in-progress: false
@@ -137,6 +146,7 @@ jobs:
       startsWith(github.event.issue.title, '[GEO优化]') &&
       startsWith(github.event.comment.body, '/fix')
     runs-on: portal-x86
+    timeout-minutes: 30
     concurrency:
       group: geo-bot-fix-${{ github.event.issue.number }}
       cancel-in-progress: false

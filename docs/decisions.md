@@ -264,3 +264,19 @@
   - **comment-fix-summary 增强**:把每个 run 的 opencode 修改清单(`output.md` 抓取的前 3500 字符)用 `<details>` 折叠块嵌入评论,作为决策轨迹
   - 新增 /fix `Upload fix artifact` step(已加),90d 内可下载 fix-payload/results/context 等
   - README + design.md 10.3-10.4 重写
+
+## ADR-0016: opencode 必须带 `--dangerously-skip-permissions`,否则 CI hang
+
+- 日期: 2026-05-14
+- 状态: 已采纳(取代 ADR-0011 的"timeout 兜底就够"假设)
+- 上下文: GEO Bot run #16 在 opencode 输出 "Let me first explore..." 后 hang 17 小时。对比参考仓 `openEuler-portal-mirror/.github/workflows/self-edit-workflow.yml`,关键差异是它有 `AI_EXTRA_ARGS: --dangerously-skip-permissions`(workflow 顶层 env,L18)。opencode 的 `build` agent 在做读写/exec 时会触发权限交互确认,CI 环境无 TTY → opencode 永久等待用户输入 → workflow 标 in_progress 但实际死锁。我之前的 `OPENCODE_TIMEOUT_MS` + 进程组 SIGKILL 是兜底手段,治标不治本。
+- 选项:
+  - A. 维持仅靠 timeout 兜底(每次 hang 都被强杀,但 LLM token 已浪费几分钟)
+  - B. 让 opencode 跳过权限交互(`--dangerously-skip-permissions` 一次性放行)
+  - C. 给 opencode 注入一个 fake TTY 让它自答 yes(复杂、易出错)
+- 决定: B
+- 理由: 参考仓已经验证 B 在同套 opencode/glm5 环境下能跑通。LLM 在 CI 里本来就该是"全自动",权限交互是开发态特性,生产场景跳过合理。
+- 后果:
+  - `.github/workflows/geo-bot.yml` 顶层 `env:` 加 `AI_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}`(同参考仓约定);同时加 `AI_MODEL` + `AI_AGENT` 默认,从 vars 可覆盖
+  - `scripts/execute-fix-runs.js` 默认值从 `''` 改为 `--dangerously-skip-permissions`(双重兜底,避免 workflow 配漏时仍然 hang)
+  - workflow `analyze` job 加 `timeout-minutes: 15`,`fix` job 加 `timeout-minutes: 30`,GH 层硬墙

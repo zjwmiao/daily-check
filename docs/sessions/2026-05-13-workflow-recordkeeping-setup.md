@@ -167,6 +167,24 @@
   - `README.md`:`/fix` 段明确"自动复用最近一次 `/analyze` 评论 payload,无需重 /analyze"
   - ADR-0015 写入 decisions.md(升序末尾)
 
+### Round 16 — opencode hang 真根因:缺 `--dangerously-skip-permissions`
+
+- 请求: 用户让我参考 `openEuler-portal-mirror` 仓为啥它的 opencode 跑得快。
+- 结论: 对比发现参考仓 workflow 顶层 env 有 `AI_EXTRA_ARGS: --dangerously-skip-permissions`,我这边漏了。opencode `build` agent 在 CI 无 TTY 环境下,任何文件读写都会触发权限交互 → 永久 hang 等用户输入。这是 17 小时挂死的真根因,Round 15 的 SIGKILL 只是兜底。
+- 产出:
+  - `.github/workflows/geo-bot.yml` 顶层加 `env: AI_MODEL/AI_AGENT/AI_EXTRA_ARGS`(后者默认 `--dangerously-skip-permissions`,同参考仓);两 job 加 `timeout-minutes`(analyze 15、fix 30)硬墙
+  - `scripts/execute-fix-runs.js` 默认 `AI_EXTRA_ARGS ?? '--dangerously-skip-permissions'`,双重兜底
+  - ADR-0016 写入
+
+### Round 15 — opencode 超时杀不掉子进程
+
+- 请求: 用户发现一个 GEO Bot run #16 在 opencode 输出 "Let me first explore the repository..." 后挂了 17 小时,远超 20min timeout。
+- 结论: `spawnSync` 的 `timeout` 默认 SIGTERM,opencode 拉起的 LLM/工具子进程不响应 SIGTERM 就会 zombie。换成异步 `spawn({detached:true})` + 自己 `setTimeout` 触发 `process.kill(-child.pid, 'SIGKILL')` 杀整个进程组。默认 timeout 从 20min 收紧到 10min。runOpencode 改成返回 Promise,调用方 `await`。
+- 产出:
+  - `scripts/execute-fix-runs.js`:`spawnSync` → `spawn`,Promise 化,进程组 SIGKILL 强杀,默认 timeout 10min(可通过 `OPENCODE_TIMEOUT_MS` 覆盖)
+  - 帮用户 API cancel 了 run 25810327388
+  - (用户表示挂死 run 自己手工杀掉即可)
+
 ## 未完成 / 待办
 
 - [ ] 关闭探针 issue `openeuler/openEuler-portal#109 #110 #111`(手工 web 关闭)

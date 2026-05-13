@@ -2,7 +2,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { createPullRequest, updatePullRequest, listPullRequests } from './lib/atomgit-api.js';
 
 // 用 env 控制 git 作者/提交者身份,不污染 repo 级 git config
@@ -135,36 +135,64 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
   const opencode = process.env.OPENCODE_BIN || 'opencode';
   const model = process.env.AI_MODEL || 'alibaba-cn/glm-5';
   const agent = process.env.AI_AGENT || 'build';
-  const extra = process.env.AI_EXTRA_ARGS || '';
-  const timeoutMs = Number(process.env.OPENCODE_TIMEOUT_MS || 20 * 60 * 1000); // 默认 20min
+  // 默认带 --dangerously-skip-permissions:opencode 的 build agent 在 CI 无 TTY 环境下,
+  // 任何文件读写都会触发交互确认 → 永远 hang。参考 openEuler-portal-mirror 仓的实现。
+  const extra = process.env.AI_EXTRA_ARGS ?? '--dangerously-skip-permissions';
+  // 默认 10min(从原来的 20min 收紧);卡死时通过强杀进程组确保不再 zombie
+  const timeoutMs = Number(process.env.OPENCODE_TIMEOUT_MS || 10 * 60 * 1000);
 
   const prompt = `${fs.readFileSync(agentFile, 'utf-8')}\n\n## 上下文\n\n${fs.readFileSync(contextFile, 'utf-8')}\n\n请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
 
   log(`  🤖 starting opencode (model=${model}, agent=${agent}, timeout=${timeoutMs / 1000}s)`);
   log(`     prompt size: ${prompt.length} chars`);
   const t0 = Date.now();
-  const res = spawnSync(
-    opencode,
-    ['run', '-', '--model', model, '--agent', agent, ...(extra ? extra.split(' ') : [])],
-    {
-      input: prompt,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'inherit', 'inherit'],
-      cwd: workDir,
-      timeout: timeoutMs,
-    }
-  );
-  const dur = ((Date.now() - t0) / 1000).toFixed(1);
-  if (res.error && res.error.code === 'ETIMEDOUT') {
-    log(`  ❌ opencode TIMEOUT after ${dur}s (limit: ${timeoutMs / 1000}s)`);
-    return false;
-  }
-  if (res.error) {
-    log(`  ❌ opencode spawn error: ${res.error.message}`);
-    return false;
-  }
-  log(`  ✅ opencode exit=${res.status} in ${dur}s`);
-  return res.status === 0;
+
+  return new Promise((resolve) => {
+    let timedOut = false;
+    const child = spawn(
+      opencode,
+      ['run', '-', '--model', model, '--agent', agent, ...(extra ? extra.split(' ').filter(Boolean) : [])],
+      {
+        stdio: ['pipe', 'inherit', 'inherit'],
+        cwd: workDir,
+        detached: true, // 开独立进程组,timeout 时能 kill 整个组(含 opencode 拉起的子进程)
+      }
+    );
+    // 喂 prompt 到 stdin
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      log(`  ⏱  opencode 超时 ${timeoutMs / 1000}s,SIGKILL 整个进程组(pid=-${child.pid})`);
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch (err) {
+        log(`     kill 失败: ${err.message}`);
+        try { child.kill('SIGKILL'); } catch {}
+      }
+    }, timeoutMs);
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      log(`  ❌ opencode spawn error: ${err.message}`);
+      resolve(false);
+    });
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      const dur = ((Date.now() - t0) / 1000).toFixed(1);
+      if (timedOut) {
+        log(`  ❌ opencode TIMEOUT after ${dur}s (limit: ${timeoutMs / 1000}s)`);
+        resolve(false);
+      } else if (signal) {
+        log(`  ❌ opencode killed by signal=${signal} after ${dur}s`);
+        resolve(false);
+      } else {
+        log(`  ✅ opencode exit=${code} in ${dur}s`);
+        resolve(code === 0);
+      }
+    });
+  });
 }
 
 async function pushAndPr(run, workDir) {
@@ -312,7 +340,7 @@ async function main() {
 
       log('  [3/4] runOpencode');
       const outputMd = path.join(workDir, 'output.md');
-      const ok = runOpencode(run, workDir, agentFile, contextFile, outputMd);
+      const ok = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
       result.agent_ok = ok;
       if (fs.existsSync(outputMd)) {
         result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);

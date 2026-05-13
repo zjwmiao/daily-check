@@ -1,0 +1,46 @@
+name: 'AtomGit Create Issue'
+description: '在 AtomGit 仓库上创建 Issue'
+
+inputs:
+  owner:
+    description: 'AtomGit 仓库 owner'
+    required: true
+  repo:
+    description: 'AtomGit 仓库名'
+    required: true
+  title:
+    description: 'Issue 标题'
+    required: true
+  body:
+    description: 'Issue 正文(支持 Markdown)'
+    required: false
+    default: ''
+  labels:
+    description: '逗号分隔的 label 列表'
+    required: false
+    default: ''
+  atomgit_token:
+    description: 'AtomGit token(必填)'
+    required: true
+
+outputs:
+  issue_url:
+    description: '创建的 Issue URL'
+    value: ${{ steps.create.outputs.issue_url }}
+  issue_number:
+    description: '创建的 Issue 编号'
+    value: ${{ steps.create.outputs.issue_number }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: create
+      shell: bash
+      env:
+        INPUT_OWNER: ${{ inputs.owner }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_TITLE: ${{ inputs.title }}
+        INPUT_BODY: ${{ inputs.body }}
+        INPUT_LABELS: ${{ inputs.labels }}
+        ATOMGIT_TOKEN: ${{ inputs.atomgit_token }}
+      run: node "$GITHUB_ACTION_PATH/index.js"

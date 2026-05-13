@@ -216,6 +216,18 @@
   - runner >> 10min → 真是 runner 慢,需更长 timeout / 换 model id / 排查 runner 网络
   - runner 永远 hang → 跟 workflow 一致,问题在 runner 环境,需手工 debug
 
+**本地实测数据(我 Mac 跑 probe)**:
+
+| 阶段 | 耗时 |
+| --- | --- |
+| Clone openEuler-portal --depth=1(12367 文件) | 104s |
+| opencode 跑修复(Glob/Grep/Read×3/Edit/Write output.md) | 210s |
+| 总计 | **5.2 min,exit=0** |
+
+agent 产出可用 diff(为 vulnerability-reporting 加 sitemap priority 0.7)+ output.md 924 bytes。
+
+**所以**:同一代码 + 同一 prompt + 同一真实 portal 仓,Mac 5 分钟完成,runner 10 分钟卡死一句话不动 = 100% **runner 环境层面问题**(网络/代理/防火墙到 glm5 API、或 portal-x86 机器卡住),跟 prompt/代码/timeout 都无关。timeout 25min 够覆盖正常路径 + 余量。
+
 ## 未完成 / 待办
 
 - [ ] **用户在 runner 上跑 `scripts/debug/runner-probe.sh`,看真实耗时**

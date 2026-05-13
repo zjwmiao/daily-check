@@ -164,6 +164,23 @@ jobs:
           mkdir -p "$RUN_DIR"
           echo "run_dir=$RUN_DIR" >> $GITHUB_OUTPUT
 
+      - name: Verify opencode (smoke test)
+        shell: bash
+        timeout-minutes: 2
+        run: |
+          echo "=== opencode 环境 ==="
+          which opencode
+          opencode --version
+          echo ""
+          echo "=== ping 测试(60s 内必须出 PONG)==="
+          T0=$(date +%s)
+          echo '你是测试模式。请只回复 "PONG收到",不要做任何其他事。' \
+            | opencode run - \
+                --model "${AI_MODEL:-alibaba-cn/glm-5}" \
+                --agent "${AI_AGENT:-build}" \
+                ${AI_EXTRA_ARGS:---dangerously-skip-permissions}
+          echo "=== ping 耗时 $(($(date +%s)-T0))s ==="
+
       - name: Fetch fix payload from issue comments
         shell: bash
         env:

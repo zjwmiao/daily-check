@@ -132,9 +132,33 @@
   - `.github/actions/atomgit-create-pr/index.js`:进程级 env 替代 `git config`
   - `docs/decisions.md` ADR-0014(升序末尾)
 
+### Round 12 — 真实跑出来的 3 个坑
+
+- 请求: 用户贴出 fix-results.json 里 `git for-each-ref` shell syntax error,和 `400 "apig token has not permission"` 没回评的情况。
+- 结论(根因 + 修):
+  1. `git for-each-ref --format=%(refname:short)` 经 `/bin/sh -c` 被当 subshell,加单引号 `'%(refname:short)'` 解决。
+  2. 实测**带 `labels` 字段的 createIssue 被 atomgit/apig 网关拦截**返 400 + 误导文案 "apig token has not permission",**去掉 labels 立即 200**(同 token、同 URL)。删 `open-portal-issues.js` 里 `labels: ['geo-improvement']`。
+  3. `open-portal-issues.js` 把每个 issue 的错误进 records 但 main exit 0,导致 workflow step 成功、`if: failure()` 不触发、错误不回评。改为"有错且 0 成功"时 throw。
+- 产出:
+  - `scripts/execute-fix-runs.js` 修引号 bug
+  - `scripts/open-portal-issues.js` 去 labels + main 末尾 fail-loud
+  - ADR-0014 追加 3 条 Round 12 坑笔记
+- 探针 issue 多了:`openeuler/openEuler-portal#109 #110 #111` 都是 GEO test 探针,需手工批量关掉
+
+### Round 13 — strict 失败贯穿全部脚本和 workflow
+
+- 请求: 用户指出 Round 12 修了 open-portal-issues 但是整个 workflow 还是 success 标识,需要更彻底的失败可感知化。
+- 结论: 4 个脚本里"per-item 错误塞 records 但 exit 0"的反模式都改成"任一错就 throw"。workflow 里 `git push ... \|\| true` 也去掉。这样有任何环节失败,GH Actions 顶层就是红的,`if:failure()` 步骤自然触发回评。
+- 产出:
+  - `scripts/run-analysis.js`:统计 errored URL,> 0 即 throw 并打印前 5 条详情
+  - `scripts/execute-fix-runs.js`:summary 加 ok/skipped/error 统计,error > 0 即 throw
+  - `scripts/open-portal-issues.js`:从"all-fail throw"收紧为"any-fail throw"
+  - `.github/workflows/geo-bot.yml`:`Commit portal-issues record` + `Commit fix artifacts` 去掉 `\|\| true`,改 `if ! git diff --cached --quiet; then ... fi`,push 失败必报错
+  - ADR-0014 追加 Round 13 二次补丁笔记
+
 ## 未完成 / 待办
 
-- [ ] 关闭探针 issue `openeuler/openEuler-portal#109`(手工 web 关闭即可)
+- [ ] 关闭探针 issue `openeuler/openEuler-portal#109 #110 #111`(手工 web 关闭)
 - [ ] 用户在 issue 重新评论 /analyze 生成新 payload,再 /fix 验证全链路
 - [ ] 在测试 issue 上验证 opencode prompt 真实表现 + cache 命中行为
 - [ ] (后续 ADR)归档策略 — geo-runs/ 长期累积后的清理

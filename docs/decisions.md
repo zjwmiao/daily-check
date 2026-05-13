@@ -237,3 +237,12 @@
   4. **去重**:atomgit-api 新增 `findIssueByTitlePrefix` + `updateIssue` + `updatePullRequest`;`open-portal-issues.js` 先按 `[GEO] {community} #{N}:` 前缀查,有则 PATCH 更新,无则 POST 创建;`execute-fix-runs.js` `pushAndPr` 已存在 PR 走 update 路径
   5. **干掉 `git config`**:`execute-fix-runs.js` 入口设 `GIT_AUTHOR_NAME/EMAIL` + `GIT_COMMITTER_NAME/EMAIL` env;`.github/workflows/geo-bot.yml` commit 步骤改 step 级 env;`.github/actions/atomgit-create-pr/index.js` 同改;不再触碰 repo 级 git config
 - 验证: curl 实测 atomgit 全部 endpoint(create/list/update issue、list/create/update PR、add comment、get ref),发现 PATCH issue 字段是 `body`(GitHub 风格)而非 `description`,即时修正 lib 代码。
+- 后续坑(Round 12 修):
+  - `git for-each-ref --format=%(refname:short)`:sh 把 `(` 当 subshell → 必须加单引号 `'%(refname:short)'`。
+  - **labels 字段是雷区**:atomgit/apig 网关对 createIssue 带 `labels` 字段的请求返回 `400 "CH.00000403 apig token has not permission to request url"`(误报为 token 权限问题,实测**只要不传 labels 就 200**)。`open-portal-issues.js` 已删 `labels: ['geo-improvement']`。
+  - `open-portal-issues.js` 之前所有 portal 都失败时仍 exit 0(workflow 步骤显示成功,`if: failure()` 不触发,错误评论吞掉)→ 已改为有错且 0 成功时 throw。
+- 二次补丁(Round 13)— 把"strict 失败"贯彻到全部脚本:
+  - `run-analysis.js`:任一 URL 抓取/分析失败(非 scope_skipped)→ throw
+  - `execute-fix-runs.js`:任一 run status=error → throw
+  - `open-portal-issues.js`:从"全失败才 throw"收紧为"有任一错就 throw"
+  - workflow `Commit portal-issues record` / `Commit fix artifacts`:去掉 `git push ... \|\| true`,push 失败必须可见

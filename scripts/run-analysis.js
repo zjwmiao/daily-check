@@ -78,15 +78,36 @@ async function main() {
     out.issues.push(issueOut);
   }
 
+  // 统计错误(scope_skipped 不算错)
+  const errored = [];
+  for (const issue of out.issues) {
+    for (const q of issue.questions) {
+      for (const u of q.urls) {
+        if (!u.ok && !u.scope_skipped) {
+          errored.push({ community: issue.community, geo_issue: issue.geo_issue_number, q: q.id, url: u.url, error: u.error });
+        }
+      }
+    }
+  }
+
   out.summary = {
     issue_count: out.issues.length,
     url_count: total,
     analyzed,
+    errored: errored.length,
   };
 
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
   fs.writeFileSync(args.output, JSON.stringify(out, null, 2));
-  console.error(`✅ ${analyzed}/${total} URL(s) analyzed → ${args.output}`);
+  console.error(`✅ ${analyzed}/${total} URL(s) analyzed (${errored.length} errored) → ${args.output}`);
+
+  // strict: 任一 URL 抓取/分析失败 → 让 workflow step 失败
+  if (errored.length > 0) {
+    const summary = errored.slice(0, 5).map((e) => `${e.community}#${e.geo_issue}/${e.q} ${e.url}: ${e.error}`).join('\n');
+    throw new Error(
+      `run-analysis 有 ${errored.length} 个 URL 失败(已写入 analysis.json,继续看上下文需打开制品):\n${summary}${errored.length > 5 ? `\n... 还有 ${errored.length - 5} 条` : ''}`
+    );
+  }
 }
 
 main().catch((err) => {

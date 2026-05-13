@@ -110,7 +110,7 @@ function clonePortal(run) {
     log('     - git clean -fdx');
     const okClean = okReset && tryRun(`git clean -fdx`, { cwd: workDir });
     if (okClean) {
-      const leftovers = sh(`git for-each-ref --format=%(refname:short) refs/heads/`, { cwd: workDir })
+      const leftovers = sh(`git for-each-ref --format='%(refname:short)' refs/heads/`, { cwd: workDir })
         .split('\n')
         .map((s) => s.trim())
         .filter((b) => b && b !== base);
@@ -335,7 +335,21 @@ async function main() {
 
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
   fs.writeFileSync(args.output, JSON.stringify({ run_at: new Date().toISOString(), results }, null, 2));
-  log(`🏁 all done: ${results.length} run(s), total ${((Date.now() - T0) / 1000).toFixed(1)}s → ${args.output}`);
+  const errored = results.filter((r) => r.status === 'error');
+  const ok = results.filter((r) => r.status === 'pr_created' || r.status === 'no_changes');
+  const skipped = results.filter((r) => r.status === 'skipped');
+  log(
+    `🏁 all done: ${results.length} run(s) [ok=${ok.length} skipped=${skipped.length} error=${errored.length}], total ${(
+      (Date.now() - T0) /
+      1000
+    ).toFixed(1)}s → ${args.output}`
+  );
+
+  // strict: 任一 run 出错 → throw,让 workflow step 失败、if:failure 回评
+  if (errored.length > 0) {
+    const summary = errored.map((e) => `${e.community}#${e.geo_issue_number}: ${e.error}`).join('\n');
+    throw new Error(`execute-fix-runs 有 ${errored.length} 个 run 失败:\n${summary}`);
+  }
 }
 
 main().catch((err) => {

@@ -124,12 +124,12 @@ async function main() {
         if (!result) result = existing;
       } else {
         log(`✨ no existing issue, creating new`);
+        // 注意:不传 labels — atomgit/apig 对 labels 字段有奇怪的权限拦截(实测 200→400,误报为 token 无权限)
         result = await createIssue({
           owner: community.portal_owner,
           repo: community.portal_repo,
           title,
           body,
-          labels: ['geo-improvement'],
         });
         action = 'created';
       }
@@ -160,7 +160,17 @@ async function main() {
   if (args.output) {
     fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
     fs.writeFileSync(args.output, JSON.stringify({ run_at: new Date().toISOString(), records }, null, 2));
-    console.error(`✅ Saved portal-issues record: ${args.output}`);
+    log(`📝 saved portal-issues record: ${args.output}`);
+  }
+
+  // strict: 任一 portal issue 处理失败 → throw,让 workflow step 失败、if:failure 回评
+  const errored = records.filter((r) => r.error);
+  if (errored.length > 0) {
+    throw new Error(
+      `open-portal-issues 有 ${errored.length}/${records.length} 失败:\n${errored
+        .map((r) => `  - ${r.community}#${r.geo_issue_number}: ${r.error}`)
+        .join('\n')}`
+    );
   }
 }
 

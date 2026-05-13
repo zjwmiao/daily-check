@@ -1,0 +1,458 @@
+{
+  "run_at": "2026-05-13T12:18:32.063Z",
+  "source": "candidates.json",
+  "skip_browser": false,
+  "issues": [
+    {
+      "community": "openEuler",
+      "geo_issue_number": 21,
+      "geo_issue_url": "https://github.com/opensourceways/geo-workflow/issues/21",
+      "geo_issue_title": "安全漏洞修复与 CVE 报告流程页面未被 AI 平台引用",
+      "severity": "P0",
+      "status": "not_cited",
+      "citation_rate": 0,
+      "questions": [
+        {
+          "id": "q_016",
+          "question": "openEuler 22.03 LTS SP2 上如何修复 CVE-2024-1086 内核提权漏洞？",
+          "notes": "",
+          "urls": [
+            {
+              "url": "https://forum.openeuler.org/t/topic/4537",
+              "final_url": "https://forum.openeuler.org/t/topic/4537",
+              "community": "openEuler",
+              "ok": true,
+              "checks": {
+                "static_render": {
+                  "dimension": "static_render",
+                  "mode": "http-fallback",
+                  "http": {
+                    "h1_count": 2,
+                    "h2_count": 0,
+                    "paragraph_count": 3,
+                    "body_length": 3222,
+                    "has_h1": true,
+                    "first_h1": "cve-2024-1086引发的内核升级"
+                  },
+                  "browser_error": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell\n╔═════════════════════════════════════════════════════════════════════════╗\n║ Looks like Playwright Test or Playwright was just installed or updated. ║\n║ Please run the following command to download new browsers:              ║\n║                                                                         ║\n║     npx playwright install                                              ║\n║                                                                         ║\n║ <3 Playwright Team                                                      ║\n╚═════════════════════════════════════════════════════════════════════════╝",
+                  "problems": [],
+                  "pass": true,
+                  "note": "browser 抓取失败,仅 HTTP 信号"
+                },
+                "schema": {
+                  "dimension": "schema",
+                  "block_count": 1,
+                  "valid_count": 1,
+                  "types": [
+                    "QAPage"
+                  ],
+                  "blocks": [
+                    {
+                      "index": 0,
+                      "types": [
+                        "QAPage"
+                      ],
+                      "valid": true
+                    }
+                  ],
+                  "problems": [],
+                  "pass": true
+                },
+                "tdk": {
+                  "dimension": "tdk",
+                  "title": "cve-2024-1086引发的内核升级 - Kernel - openEuler 论坛",
+                  "description": "由于出现cve-2024-1086漏洞原因，需要升级openeuler的kernel内核。 \n查看内核命令uname -r ,最后发现yum update 即可。 \n  \n \n过程如下： \n论坛内帖子: 22.03 LTS SP2 版本要怎&hellip;",
+                  "keywords": null,
+                  "title_length": 44,
+                  "description_length": 128,
+                  "problems": [
+                    {
+                      "category": "tdk.keywords",
+                      "severity": "minor",
+                      "description": "Keywords 缺失"
+                    }
+                  ],
+                  "pass": true
+                },
+                "sitemap_inclusion": {
+                  "dimension": "sitemap_inclusion",
+                  "sitemap_url": "https://www.openeuler.org/sitemap.xml",
+                  "sitemap_total_urls": 1861,
+                  "target_url": "https://forum.openeuler.org/t/topic/4537",
+                  "included": false,
+                  "problems": [
+                    {
+                      "category": "sitemap.not_included",
+                      "severity": "critical",
+                      "description": "URL 未被 sitemap 收录",
+                      "suggestion": "将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod",
+                      "target_url": "https://forum.openeuler.org/t/topic/4537"
+                    }
+                  ],
+                  "pass": false
+                }
+              },
+              "problems": [
+                {
+                  "category": "tdk.keywords",
+                  "severity": "minor",
+                  "description": "Keywords 缺失",
+                  "dimension": "tdk"
+                },
+                {
+                  "category": "sitemap.not_included",
+                  "severity": "critical",
+                  "description": "URL 未被 sitemap 收录",
+                  "suggestion": "将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod",
+                  "target_url": "https://forum.openeuler.org/t/topic/4537",
+                  "dimension": "sitemap_inclusion"
+                }
+              ],
+              "summary": {
+                "total": 2,
+                "critical": 1,
+                "important": 0,
+                "minor": 1
+              },
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "q_080",
+          "question": "如何向 openEuler 安全委员会（security@openeuler.org）报告 CVE 安全漏洞？漏洞披露流程是什么？",
+          "notes": "",
+          "urls": [
+            {
+              "url": "https://www.openeuler.org/zh/security/vulnerability-reporting/",
+              "final_url": "https://www.openeuler.org/zh/security/vulnerability-reporting/",
+              "community": "openEuler",
+              "ok": true,
+              "checks": {
+                "static_render": {
+                  "dimension": "static_render",
+                  "mode": "http-fallback",
+                  "http": {
+                    "h1_count": 0,
+                    "h2_count": 15,
+                    "paragraph_count": 33,
+                    "body_length": 115001,
+                    "has_h1": false,
+                    "first_h1": null
+                  },
+                  "browser_error": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell\n╔═════════════════════════════════════════════════════════════════════════╗\n║ Looks like Playwright Test or Playwright was just installed or updated. ║\n║ Please run the following command to download new browsers:              ║\n║                                                                         ║\n║     npx playwright install                                              ║\n║                                                                         ║\n║ <3 Playwright Team                                                      ║\n╚═════════════════════════════════════════════════════════════════════════╝",
+                  "problems": [],
+                  "pass": true,
+                  "note": "browser 抓取失败,仅 HTTP 信号"
+                },
+                "schema": {
+                  "dimension": "schema",
+                  "block_count": 1,
+                  "valid_count": 1,
+                  "types": [
+                    "WebPage",
+                    "FAQPage"
+                  ],
+                  "blocks": [
+                    {
+                      "index": 0,
+                      "types": [
+                        "WebPage",
+                        "FAQPage"
+                      ],
+                      "valid": true
+                    }
+                  ],
+                  "problems": [],
+                  "pass": true
+                },
+                "tdk": {
+                  "dimension": "tdk",
+                  "title": "openEuler漏洞管理 | openEuler安全中心 | openEuler社区",
+                  "description": "openEuler安全委员会负责接收、调查和披露社区的安全漏洞。我们鼓励漏洞研究人员和行业组织主动将openEuler社区的疑似安全漏洞报告给安全委员会。我们会快速的响应、分析和解决上报的安全问题或安全漏洞。欢迎访问openEuler官网。",
+                  "keywords": "openEuler安全,安全公告,CVE,漏洞管理,openEuler漏洞,openEuler社区官网",
+                  "title_length": 43,
+                  "description_length": 120,
+                  "problems": [],
+                  "pass": true
+                },
+                "sitemap_inclusion": {
+                  "dimension": "sitemap_inclusion",
+                  "sitemap_url": "https://www.openeuler.org/sitemap.xml",
+                  "sitemap_total_urls": 1861,
+                  "target_url": "https://www.openeuler.org/zh/security/vulnerability-reporting",
+                  "included": true,
+                  "problems": [],
+                  "pass": true
+                }
+              },
+              "problems": [],
+              "summary": {
+                "total": 0,
+                "critical": 0,
+                "important": 0,
+                "minor": 0
+              },
+              "pass": true
+            },
+            {
+              "url": "https://www.openeuler.org/en/security/vulnerability-reporting/",
+              "final_url": "https://www.openeuler.org/en/security/vulnerability-reporting/",
+              "community": "openEuler",
+              "ok": true,
+              "checks": {
+                "static_render": {
+                  "dimension": "static_render",
+                  "mode": "http-fallback",
+                  "http": {
+                    "h1_count": 0,
+                    "h2_count": 7,
+                    "paragraph_count": 17,
+                    "body_length": 119896,
+                    "has_h1": false,
+                    "first_h1": null
+                  },
+                  "browser_error": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell\n╔═════════════════════════════════════════════════════════════════════════╗\n║ Looks like Playwright Test or Playwright was just installed or updated. ║\n║ Please run the following command to download new browsers:              ║\n║                                                                         ║\n║     npx playwright install                                              ║\n║                                                                         ║\n║ <3 Playwright Team                                                      ║\n╚═════════════════════════════════════════════════════════════════════════╝",
+                  "problems": [],
+                  "pass": true,
+                  "note": "browser 抓取失败,仅 HTTP 信号"
+                },
+                "schema": {
+                  "dimension": "schema",
+                  "block_count": 1,
+                  "valid_count": 1,
+                  "types": [
+                    "WebPage",
+                    "Organization"
+                  ],
+                  "blocks": [
+                    {
+                      "index": 0,
+                      "types": [
+                        "WebPage",
+                        "Organization"
+                      ],
+                      "valid": true
+                    }
+                  ],
+                  "problems": [],
+                  "pass": true
+                },
+                "tdk": {
+                  "dimension": "tdk",
+                  "title": "Vulnerability Management | openEuler",
+                  "description": "Check how openEuler protects your OS from threats with robust vulnerability management.",
+                  "keywords": "vulnerability, CVE, Linux os, open source",
+                  "title_length": 36,
+                  "description_length": 87,
+                  "problems": [],
+                  "pass": true
+                },
+                "sitemap_inclusion": {
+                  "dimension": "sitemap_inclusion",
+                  "sitemap_url": "https://www.openeuler.org/sitemap.xml",
+                  "sitemap_total_urls": 1861,
+                  "target_url": "https://www.openeuler.org/en/security/vulnerability-reporting",
+                  "included": true,
+                  "problems": [],
+                  "pass": true
+                }
+              },
+              "problems": [],
+              "summary": {
+                "total": 0,
+                "critical": 0,
+                "important": 0,
+                "minor": 0
+              },
+              "pass": true
+            },
+            {
+              "url": "https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting/",
+              "final_url": "https://www.openeuler.org/zh/security/vulnerability-reporting/",
+              "community": "openEuler",
+              "ok": true,
+              "checks": {
+                "static_render": {
+                  "dimension": "static_render",
+                  "mode": "http-fallback",
+                  "http": {
+                    "h1_count": 0,
+                    "h2_count": 15,
+                    "paragraph_count": 33,
+                    "body_length": 115001,
+                    "has_h1": false,
+                    "first_h1": null
+                  },
+                  "browser_error": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell\n╔═════════════════════════════════════════════════════════════════════════╗\n║ Looks like Playwright Test or Playwright was just installed or updated. ║\n║ Please run the following command to download new browsers:              ║\n║                                                                         ║\n║     npx playwright install                                              ║\n║                                                                         ║\n║ <3 Playwright Team                                                      ║\n╚═════════════════════════════════════════════════════════════════════════╝",
+                  "problems": [],
+                  "pass": true,
+                  "note": "browser 抓取失败,仅 HTTP 信号"
+                },
+                "schema": {
+                  "dimension": "schema",
+                  "block_count": 1,
+                  "valid_count": 1,
+                  "types": [
+                    "WebPage",
+                    "FAQPage"
+                  ],
+                  "blocks": [
+                    {
+                      "index": 0,
+                      "types": [
+                        "WebPage",
+                        "FAQPage"
+                      ],
+                      "valid": true
+                    }
+                  ],
+                  "problems": [],
+                  "pass": true
+                },
+                "tdk": {
+                  "dimension": "tdk",
+                  "title": "openEuler漏洞管理 | openEuler安全中心 | openEuler社区",
+                  "description": "openEuler安全委员会负责接收、调查和披露社区的安全漏洞。我们鼓励漏洞研究人员和行业组织主动将openEuler社区的疑似安全漏洞报告给安全委员会。我们会快速的响应、分析和解决上报的安全问题或安全漏洞。欢迎访问openEuler官网。",
+                  "keywords": "openEuler安全,安全公告,CVE,漏洞管理,openEuler漏洞,openEuler社区官网",
+                  "title_length": 43,
+                  "description_length": 120,
+                  "problems": [],
+                  "pass": true
+                },
+                "sitemap_inclusion": {
+                  "dimension": "sitemap_inclusion",
+                  "sitemap_url": "https://www.openeuler.org/sitemap.xml",
+                  "sitemap_total_urls": 1861,
+                  "target_url": "https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting",
+                  "included": false,
+                  "problems": [
+                    {
+                      "category": "sitemap.not_included",
+                      "severity": "critical",
+                      "description": "URL 未被 sitemap 收录",
+                      "suggestion": "将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod",
+                      "target_url": "https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting"
+                    }
+                  ],
+                  "pass": false
+                }
+              },
+              "problems": [
+                {
+                  "category": "sitemap.not_included",
+                  "severity": "critical",
+                  "description": "URL 未被 sitemap 收录",
+                  "suggestion": "将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod",
+                  "target_url": "https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting",
+                  "dimension": "sitemap_inclusion"
+                }
+              ],
+              "summary": {
+                "total": 1,
+                "critical": 1,
+                "important": 0,
+                "minor": 0
+              },
+              "pass": false
+            },
+            {
+              "url": "https://www.openeuler.openatom.cn/en/security/vulnerability-reporting/",
+              "final_url": "https://www.openeuler.org/en/security/vulnerability-reporting/",
+              "community": "openEuler",
+              "ok": true,
+              "checks": {
+                "static_render": {
+                  "dimension": "static_render",
+                  "mode": "http-fallback",
+                  "http": {
+                    "h1_count": 0,
+                    "h2_count": 7,
+                    "paragraph_count": 17,
+                    "body_length": 119896,
+                    "has_h1": false,
+                    "first_h1": null
+                  },
+                  "browser_error": "browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell\n╔═════════════════════════════════════════════════════════════════════════╗\n║ Looks like Playwright Test or Playwright was just installed or updated. ║\n║ Please run the following command to download new browsers:              ║\n║                                                                         ║\n║     npx playwright install                                              ║\n║                                                                         ║\n║ <3 Playwright Team                                                      ║\n╚═════════════════════════════════════════════════════════════════════════╝",
+                  "problems": [],
+                  "pass": true,
+                  "note": "browser 抓取失败,仅 HTTP 信号"
+                },
+                "schema": {
+                  "dimension": "schema",
+                  "block_count": 1,
+                  "valid_count": 1,
+                  "types": [
+                    "WebPage",
+                    "Organization"
+                  ],
+                  "blocks": [
+                    {
+                      "index": 0,
+                      "types": [
+                        "WebPage",
+                        "Organization"
+                      ],
+                      "valid": true
+                    }
+                  ],
+                  "problems": [],
+                  "pass": true
+                },
+                "tdk": {
+                  "dimension": "tdk",
+                  "title": "Vulnerability Management | openEuler",
+                  "description": "Check how openEuler protects your OS from threats with robust vulnerability management.",
+                  "keywords": "vulnerability, CVE, Linux os, open source",
+                  "title_length": 36,
+                  "description_length": 87,
+                  "problems": [],
+                  "pass": true
+                },
+                "sitemap_inclusion": {
+                  "dimension": "sitemap_inclusion",
+                  "sitemap_url": "https://www.openeuler.org/sitemap.xml",
+                  "sitemap_total_urls": 1861,
+                  "target_url": "https://www.openeuler.openatom.cn/en/security/vulnerability-reporting",
+                  "included": false,
+                  "problems": [
+                    {
+                      "category": "sitemap.not_included",
+                      "severity": "critical",
+                      "description": "URL 未被 sitemap 收录",
+                      "suggestion": "将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod",
+                      "target_url": "https://www.openeuler.openatom.cn/en/security/vulnerability-reporting"
+                    }
+                  ],
+                  "pass": false
+                }
+              },
+              "problems": [
+                {
+                  "category": "sitemap.not_included",
+                  "severity": "critical",
+                  "description": "URL 未被 sitemap 收录",
+                  "suggestion": "将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod",
+                  "target_url": "https://www.openeuler.openatom.cn/en/security/vulnerability-reporting",
+                  "dimension": "sitemap_inclusion"
+                }
+              ],
+              "summary": {
+                "total": 1,
+                "critical": 1,
+                "important": 0,
+                "minor": 0
+              },
+              "pass": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "issue_count": 1,
+    "url_count": 5,
+    "analyzed": 5
+  }
+}

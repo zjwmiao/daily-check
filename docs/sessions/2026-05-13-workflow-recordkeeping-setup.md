@@ -19,7 +19,7 @@
 ### Round 2 — 工作流定义 + 计划批准
 
 - 请求: 用户给出 GEO 自动化工作流完整需求 — 基于 GitHub Action,以 `[GEO优化]` issue + `/analyze` `/fix` 评论触发,覆盖"分析 → portal issue → 修复 → PR"全链路,关联仓库 geo-workflow(GitHub)、openEuler-portal/mindspore-portal(AtomGit)。
-- 结论: 通过 AskUserQuestion 锁定 4 个关键决策 — 首期只覆盖 openEuler+MindSpore、4 维度(静态化/Schema/TDK/Sitemap)、/analyze 自动开 portal issue、self-hosted runner。计划文件落到 `~/.claude/plans/steady-splashing-teacup.md`,用户已批准。共记录 7 条 ADR。
+- 结论: 通过 AskUserQuestion 锁定 4 个关键决策 — 首期只覆盖 openEuler+MindSpore、4 维度(静态化/Schema/TDK/Sitemap)、/analyze 自动开 portal issue、portal-x86 runner。计划文件落到 `~/.claude/plans/steady-splashing-teacup.md`,用户已批准。共记录 7 条 ADR。
 - 产出:
   - 探索完成:`scripts/`(crawl/analyze/validate-tdk/sitemap/robots)、`.github/actions/{create-pr,run-agent}`、`docs/design.md`、`.env`(双 token)、geo-workflow 数据结构(issue-map.json + questions.json)
   - `docs/decisions.md` 追加 ADR-0001 ~ ADR-0007
@@ -51,7 +51,7 @@
 
 ### Round 5 — Workflow 简化 + Secret 配置
 
-- 请求: (1) 用户指出 workflow 不应该加 `setup-node`,self-hosted runner 已预装 Node/pnpm/opencode;(2) 询问 secrets 是否配置;(3) 用户自己在 GitHub UI 配好了 `ATOMGIT_TOKEN`。
+- 请求: (1) 用户指出 workflow 不应该加 `setup-node`,portal-x86 runner 已预装 Node/pnpm/opencode;(2) 询问 secrets 是否配置;(3) 用户自己在 GitHub UI 配好了 `ATOMGIT_TOKEN`。
 - 结论: 两个 workflow 移除 `actions/setup-node@v4`,只保留 `pnpm install --frozen-lockfile`。本机 API 验证 repo `opensourceways/geo-develop` 已有 1 个 secret(`ATOMGIT_TOKEN`,updated 2026-05-13T09:22:34Z)。Runner 预装假设固化为长期记忆。
 - 产出:
   - `.github/workflows/geo-analyze.yml` / `geo-fix.yml` 去掉 setup-node
@@ -60,6 +60,6 @@
 
 ## 未完成 / 待办
 
-- [ ] 在远端 self-hosted runner 上端到端跑一遍 /analyze 验证(确认 AtomGit API base 路径 + secret 注入是否正常)
+- [ ] 在远端 portal-x86 runner 上端到端跑一遍 /analyze 验证(确认 AtomGit API base 路径 + secret 注入是否正常)
 - [ ] 在测试 issue 上跑 /fix 验证 opencode prompt 真实表现
 - [ ] (后续 ADR)归档策略 — geo-runs/ 长期累积后的清理

@@ -110,4 +110,4 @@ docs/
 - 首期只覆盖 **openEuler + MindSpore**;新增社区需在 `scripts/lib/community-map.js` 补条目
 - 只分析 4 个开发维度(robots.txt / llms.txt 暂不做,见 ADR-0003)
 - 只处理 P0 类 issue(有 `official_urls`),P1 内容空白类跳过
-- 运行在 self-hosted runner(opencode + glm5 已就位)
+- 运行在 portal-x86 runner(opencode + glm5 已就位)

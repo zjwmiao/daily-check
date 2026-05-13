@@ -18,7 +18,7 @@ jobs:
       !github.event.issue.pull_request &&
       startsWith(github.event.issue.title, '[GEO优化]') &&
       startsWith(github.event.comment.body, '/analyze')
-    runs-on: self-hosted
+    runs-on: portal-x86
     steps:
       - name: Checkout geo-develop
         uses: actions/checkout@v4

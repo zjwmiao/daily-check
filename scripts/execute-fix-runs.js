@@ -3,7 +3,13 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync, spawnSync } from 'node:child_process';
-import { createPullRequest, listPullRequests } from './lib/atomgit-api.js';
+import { createPullRequest, updatePullRequest, listPullRequests } from './lib/atomgit-api.js';
+
+// 用 env 控制 git 作者/提交者身份,不污染 repo 级 git config
+process.env.GIT_AUTHOR_NAME = process.env.GIT_AUTHOR_NAME || 'geo-develop-bot';
+process.env.GIT_AUTHOR_EMAIL = process.env.GIT_AUTHOR_EMAIL || 'geo-develop-bot@noreply.local';
+process.env.GIT_COMMITTER_NAME = process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME;
+process.env.GIT_COMMITTER_EMAIL = process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL;
 
 const T0 = Date.now();
 function log(msg) {
@@ -122,9 +128,6 @@ function clonePortal(run) {
     sh(`git clone --depth=1 --branch=${base} ${url} ${workDir}`);
     log(`  ✅ cloned in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   }
-
-  sh(`git config user.name "geo-develop-bot"`, { cwd: workDir });
-  sh(`git config user.email "geo-develop-bot@noreply.local"`, { cwd: workDir });
   return workDir;
 }
 
@@ -183,53 +186,64 @@ async function pushAndPr(run, workDir) {
 
   log('  🔍 list existing PRs');
   const head = `${run.portal_owner}:${run.branch_name}`;
+  const triggerRepo = process.env.TRIGGER_REPO;
+  const triggerIssue = process.env.TRIGGER_ISSUE;
+  const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;
+  const prBody = [
+    `## 自动化 GEO 修复`,
+    ``,
+    `- 关联 geo-workflow issue: ${run.geo_issue_url}`,
+    `- 触发 issue: https://github.com/${triggerRepo}/issues/${triggerIssue}`,
+    run.portal_issue_url ? `- portal issue: ${run.portal_issue_url}` : '',
+    ``,
+    `### 问题清单(critical + important)`,
+    ``,
+    ...run.problems.map((p) => `- [${p.severity}] ${p.dimension || p.category} @ ${p.url}: ${p.description}`),
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
+
   let pr;
-  try {
-    const existing = await listPullRequests({
-      owner: run.portal_owner,
-      repo: run.portal_repo,
-      head,
-      state: 'open',
-    });
-    if (Array.isArray(existing) && existing.length > 0) {
-      pr = existing[0];
-      log(`  ♻️  existing PR: ${pr.html_url || pr.url}`);
+  let action;
+  const existing = await listPullRequests({
+    owner: run.portal_owner,
+    repo: run.portal_repo,
+    head,
+    state: 'open',
+  });
+  if (Array.isArray(existing) && existing.length > 0) {
+    pr = existing[0];
+    log(`  ♻️  PR existed (#${pr.number}), updating title/body`);
+    try {
+      const updated = await updatePullRequest({
+        owner: run.portal_owner,
+        repo: run.portal_repo,
+        number: pr.number,
+        title: prTitle,
+        body: prBody,
+      });
+      if (updated) pr = updated;
+      action = 'updated';
+    } catch (err) {
+      log(`  ⚠ updatePullRequest failed, reusing existing: ${err.message}`);
+      action = 'reused';
     }
-  } catch (err) {
-    log(`  ⚠ list PR failed (will try create): ${err.message}`);
-  }
-
-  if (!pr) {
+  } else {
     log('  ✨ creating new PR');
-    const triggerRepo = process.env.TRIGGER_REPO;
-    const triggerIssue = process.env.TRIGGER_ISSUE;
-    const body = [
-      `## 自动化 GEO 修复`,
-      ``,
-      `- 关联 geo-workflow issue: ${run.geo_issue_url}`,
-      `- 触发 issue: https://github.com/${triggerRepo}/issues/${triggerIssue}`,
-      run.portal_issue_url ? `- portal issue: ${run.portal_issue_url}` : '',
-      ``,
-      `### 问题清单(critical + important)`,
-      ``,
-      ...run.problems.map((p) => `- [${p.severity}] ${p.dimension || p.category} @ ${p.url}: ${p.description}`),
-    ]
-      .filter((l) => l !== '')
-      .join('\n');
-
     pr = await createPullRequest({
       owner: run.portal_owner,
       repo: run.portal_repo,
-      title: `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`,
-      body,
+      title: prTitle,
+      body: prBody,
       head: run.branch_name,
       base: run.portal_base_branch,
     });
-    log(`  ✅ PR created: ${pr.html_url || pr.url}`);
+    action = 'created';
   }
-
-  const prUrl = pr.html_url || pr.url || `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/pulls/${pr.number}`;
-  return { has_changes: true, pr_url: prUrl, pr_number: pr.number };
+  const prUrl =
+    pr.html_url || pr.url || `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/pulls/${pr.number}`;
+  log(`  ✅ PR ${action}: ${prUrl}`);
+  return { has_changes: true, pr_url: prUrl, pr_number: pr.number, pr_action: action };
 }
 
 async function main() {

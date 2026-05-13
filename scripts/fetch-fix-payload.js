@@ -29,12 +29,31 @@ function gh() {
   });
 }
 
+async function retry(fn, { label, max = 3, baseDelayMs = 1000 } = {}) {
+  let lastErr;
+  for (let i = 0; i < max; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = err.response?.status;
+      const retryable = !status || status >= 500 || status === 429;
+      if (!retryable || i === max - 1) throw err;
+      const delay = baseDelayMs * Math.pow(2, i);
+      log(`⚠ ${label} 重试(${i + 1}/${max}, ${status || 'network'}): ${err.message.slice(0, 120)}`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 async function fetchAllComments(repo, issue) {
   const out = [];
   let page = 1;
   while (true) {
-    const res = await gh().get(
-      `https://api.github.com/repos/${repo}/issues/${issue}/comments?per_page=100&page=${page}`
+    const res = await retry(
+      () => gh().get(`https://api.github.com/repos/${repo}/issues/${issue}/comments?per_page=100&page=${page}`),
+      { label: `comments page ${page}` }
     );
     out.push(...res.data);
     if (res.data.length < 100) break;

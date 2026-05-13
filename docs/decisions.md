@@ -219,3 +219,21 @@
   - `.github/actions/atomgit-create-issue/index.js` 同上
   - `.github/actions/atomgit-create-pr/index.js`:所有路径加 `${API_PREFIX}`
   - 探针 issue `openeuler/openEuler-portal#109` 已创建用于验证,需手工关闭
+
+## ADR-0014: 5 项可靠性优化(retry/失败可见/官网过滤/去重/git env)
+
+- 日期: 2026-05-13
+- 状态: 已采纳
+- 上下文: 用户读完流程后指出 5 个问题:(1) 缺重试 + 进度可见;(2) 拉不到数据时不报错只返 0 个结果;(3) 把 forum/discuss 站点也当官网分析;(4) 重复触发会重复建 issue/PR;(5) 在 portal 仓 `git config user.name` 是冗余。
+- 选项:
+  - A. 逐项分散修(本 ADR 做的)
+  - B. 等出现真实失败再补
+- 决定: A(预防性,远端 runner 调试代价高)
+- 理由: 这 5 条都是首次跑通后必然遇到的脆弱点,集中一次处理而不是 5 次 debug 来回。
+- 后果(每项对应改动):
+  1. **Retry + 可见进度**:`scripts/lib/atomgit-api.js` 全部 endpoint 包 `retry()`(网络 / 5xx / 429,指数退避 3 次);`fetch-geo-issues.js` / `fetch-fix-payload.js` 同款 retry;每次重试打印 `⚠ 重试(N/M, status, ...)`
+  2. **失败显式**:`fetch-geo-issues.js` 任一 community 报错 / target issue 找不到 → 直接 throw,workflow step fail;`geo-bot.yml` 两 job 末加 `if: failure()` 步骤回评 ``❌ /analyze 失败,详见 {run url}`` 到触发 issue
+  3. **只看官网域**:`community-map.js` `site_hosts` 改严格相等(不含子域通配);新增 `isOfficialHost()`;`run-analysis.js` 非官网 URL 标 `scope_skipped`,不进 problems 也不进 fix-payload;report 渲染 `⏭ 跳过(非官网域)`
+  4. **去重**:atomgit-api 新增 `findIssueByTitlePrefix` + `updateIssue` + `updatePullRequest`;`open-portal-issues.js` 先按 `[GEO] {community} #{N}:` 前缀查,有则 PATCH 更新,无则 POST 创建;`execute-fix-runs.js` `pushAndPr` 已存在 PR 走 update 路径
+  5. **干掉 `git config`**:`execute-fix-runs.js` 入口设 `GIT_AUTHOR_NAME/EMAIL` + `GIT_COMMITTER_NAME/EMAIL` env;`.github/workflows/geo-bot.yml` commit 步骤改 step 级 env;`.github/actions/atomgit-create-pr/index.js` 同改;不再触碰 repo 级 git config
+- 验证: curl 实测 atomgit 全部 endpoint(create/list/update issue、list/create/update PR、add comment、get ref),发现 PATCH issue 字段是 `body`(GitHub 风格)而非 `description`,即时修正 lib 代码。

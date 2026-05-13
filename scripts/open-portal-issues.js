@@ -3,7 +3,12 @@
 import fs from 'fs';
 import path from 'path';
 import { getCommunity } from './lib/community-map.js';
-import { createIssue } from './lib/atomgit-api.js';
+import { createIssue, updateIssue, findIssueByTitlePrefix } from './lib/atomgit-api.js';
+
+function log(msg) {
+  const ts = new Date().toISOString().slice(11, 19);
+  console.error(`[${ts}] ${msg}`);
+}
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -79,11 +84,13 @@ async function main() {
       console.error(`⚠ skip unsupported community: ${issue.community}`);
       continue;
     }
-    const title = `[GEO] ${issue.community} #${issue.geo_issue_number}: ${issue.geo_issue_title}`;
+    // 题头前缀唯一标识(community + 原 issue 号),用于去重
+    const titlePrefix = `[GEO] ${issue.community} #${issue.geo_issue_number}:`;
+    const title = `${titlePrefix} ${issue.geo_issue_title}`;
     const body = buildBody(issue, triggerRepo, triggerIssue, runDir);
 
     if (dryRun) {
-      console.log(`[dry-run] would create issue on ${community.portal_owner}/${community.portal_repo}: ${title}`);
+      log(`[dry-run] would create/update on ${community.portal_owner}/${community.portal_repo}: ${title}`);
       records.push({
         community: issue.community,
         geo_issue_number: issue.geo_issue_number,
@@ -96,15 +103,41 @@ async function main() {
     }
 
     try {
-      const result = await createIssue({
+      log(`🔍 find existing issue by prefix: "${titlePrefix}" on ${community.portal_owner}/${community.portal_repo}`);
+      const existing = await findIssueByTitlePrefix({
         owner: community.portal_owner,
         repo: community.portal_repo,
-        title,
-        body,
-        labels: ['geo-improvement'],
+        prefix: titlePrefix,
       });
-      const url = result.html_url || result.url || `https://atomgit.com/${community.portal_owner}/${community.portal_repo}/issues/${result.number}`;
-      console.log(`✅ portal issue: ${url}`);
+
+      let result, action;
+      if (existing) {
+        log(`♻️  found existing #${existing.number}, updating body`);
+        result = await updateIssue({
+          owner: community.portal_owner,
+          repo: community.portal_repo,
+          issue_number: existing.number,
+          title,
+          body,
+        });
+        action = 'updated';
+        if (!result) result = existing;
+      } else {
+        log(`✨ no existing issue, creating new`);
+        result = await createIssue({
+          owner: community.portal_owner,
+          repo: community.portal_repo,
+          title,
+          body,
+          labels: ['geo-improvement'],
+        });
+        action = 'created';
+      }
+      const url =
+        result.html_url ||
+        result.url ||
+        `https://atomgit.com/${community.portal_owner}/${community.portal_repo}/issues/${result.number}`;
+      log(`✅ portal issue ${action}: ${url}`);
       records.push({
         community: issue.community,
         geo_issue_number: issue.geo_issue_number,
@@ -112,9 +145,10 @@ async function main() {
         portal_repo: community.portal_repo,
         portal_issue_url: url,
         portal_issue_number: result.number,
+        action,
       });
     } catch (err) {
-      console.error(`❌ ${issue.community} #${issue.geo_issue_number}: ${err.message}`);
+      log(`❌ ${issue.community} #${issue.geo_issue_number}: ${err.message}`);
       records.push({
         community: issue.community,
         geo_issue_number: issue.geo_issue_number,

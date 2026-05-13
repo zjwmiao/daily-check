@@ -735,5 +735,6 @@ geo-runs/{issue_number}/fix-{YYYYMMDDTHHmmssZ}/
 - portal 仓持久缓存(ADR-0011)
 - /fix 信号源:issue 评论内嵌 payload,不依赖文件系统(ADR-0012)
 - AtomGit API 路径 `/api/v5/` 前缀,Issue 接口 owner-scoped(ADR-0013)
+- 5 项可靠性优化:retry / 失败显式 / 官网过滤 / 去重 / git env(ADR-0014)
 
 ---

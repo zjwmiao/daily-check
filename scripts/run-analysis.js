@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import { analyzeUrl } from './analyze-discoverability.js';
+import { isOfficialHost } from './lib/community-map.js';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -49,7 +50,21 @@ async function main() {
       };
       for (const url of q.official_urls) {
         total++;
-        process.stderr.write(`[${analyzed + 1}/${total}+] ${issue.community} #${issue.geo_issue_number} ${q.id} ${url}\n`);
+        if (!isOfficialHost(issue.community, url)) {
+          process.stderr.write(`[${analyzed}/${total}] ⏭ scope-skip(非官网): ${issue.community} ${url}\n`);
+          qOut.urls.push({
+            url,
+            ok: true,
+            scope_skipped: true,
+            scope_skipped_reason: 'non-official host (e.g. forum/discuss/news)',
+            checks: {},
+            problems: [],
+            summary: { total: 0, critical: 0, important: 0, minor: 0 },
+            pass: true,
+          });
+          continue;
+        }
+        process.stderr.write(`[${analyzed + 1}/${total}] ${issue.community} #${issue.geo_issue_number} ${q.id} ${url}\n`);
         try {
           const analysis = await analyzeUrl(url, { skipBrowser, communityHint: issue.community });
           qOut.urls.push(analysis);

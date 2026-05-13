@@ -21,6 +21,11 @@ function parseArgs(argv) {
   return out;
 }
 
+function log(msg) {
+  const ts = new Date().toISOString().slice(11, 19);
+  console.error(`[${ts}] ${msg}`);
+}
+
 function gh() {
   const token = process.env.GITHUB_TOKEN;
   return axios.create({
@@ -33,10 +38,36 @@ function gh() {
   });
 }
 
+async function retry(fn, { label, max = 3, baseDelayMs = 1000 } = {}) {
+  let lastErr;
+  for (let i = 0; i < max; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = err.response?.status;
+      const retryable = !status || status >= 500 || status === 429;
+      if (!retryable || i === max - 1) {
+        log(`❌ ${label} 终止(尝试 ${i + 1}/${max}, status=${status || 'network'}): ${err.message}`);
+        throw err;
+      }
+      const delay = baseDelayMs * Math.pow(2, i);
+      log(`⚠ ${label} 重试(${i + 1}/${max} 失败 ${status || 'network'}, ${delay}ms 后再试): ${err.message.slice(0, 120)}`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 async function fetchJsonFile(community, filename) {
-  const res = await gh().get(`${GH_API}/repos/${GEO_REPO}/contents/assessments/${community}/${filename}`);
-  const content = Buffer.from(res.data.content, 'base64').toString('utf-8');
-  return JSON.parse(content);
+  return retry(
+    async () => {
+      const res = await gh().get(`${GH_API}/repos/${GEO_REPO}/contents/assessments/${community}/${filename}`);
+      const content = Buffer.from(res.data.content, 'base64').toString('utf-8');
+      return JSON.parse(content);
+    },
+    { label: `fetch ${community}/${filename}` }
+  );
 }
 
 async function fetchQuestionsJson(community) {
@@ -50,8 +81,13 @@ async function fetchIssueMap(community) {
 }
 
 async function fetchIssue(issueNumber) {
-  const res = await gh().get(`${GH_API}/repos/${GEO_REPO}/issues/${issueNumber}`);
-  return res.data;
+  return retry(
+    async () => {
+      const res = await gh().get(`${GH_API}/repos/${GEO_REPO}/issues/${issueNumber}`);
+      return res.data;
+    },
+    { label: `fetch issue #${issueNumber}` }
+  );
 }
 
 function extractQuestionIdsFromBody(body) {
@@ -142,17 +178,36 @@ async function main() {
   const issue = args.issue || 'all';
 
   const allIssues = [];
+  const errors = [];
   for (const community of communities) {
     if (!SUPPORTED_COMMUNITIES.includes(community)) {
-      console.error(`⚠ skip unsupported community: ${community}`);
+      log(`⚠ skip unsupported community: ${community}`);
       continue;
     }
     try {
+      log(`▶ scanning ${community}...`);
       const found = await buildIssueForCommunity(community, issue);
+      log(`  found ${found.length} P0 issue(s) in ${community}`);
       allIssues.push(...found);
     } catch (err) {
-      console.error(`❌ ${community}: ${err.message}`);
+      errors.push({ community, error: err.message });
+      log(`❌ ${community} 拉取失败: ${err.message}`);
     }
+  }
+
+  // 失败的硬条件:任一 community 报错 → 整个步骤失败,让 workflow 走 if:failure 分支
+  if (errors.length > 0) {
+    throw new Error(
+      `fetch-geo-issues 失败: ${errors.length}/${communities.length} community 报错 — ${errors
+        .map((e) => `${e.community}: ${e.error}`)
+        .join('; ')}`
+    );
+  }
+  // target 指定但没找到任何匹配 → 也算失败
+  if (issue !== 'all' && allIssues.length === 0) {
+    throw new Error(
+      `geo-workflow issue #${issue} 未在任一 community(${communities.join(', ')})的 issue-map / 关联问题中找到`
+    );
   }
 
   const result = {

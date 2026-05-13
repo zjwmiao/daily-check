@@ -115,6 +115,23 @@
   - `docs/decisions.md` ADR-0013(按升序追加到末尾,这次没再 prepend 错位)
   - `docs/design.md` 10.8 加 ADR-0013 一行
 
+### Round 11 — 5 项可靠性优化 + atomgit API 全量回测
+
+- 请求: 用户读完流程后提的 5 点:(1) 加重试/打印,(2) 失败显式报错+回评(不要静默返 0),(3) 只看官网域(过滤 forum/discuss),(4) issue/PR 不重复创建要更新,(5) 干掉 `git config user.name`。
+- 结论: 逐项修完。curl 全量回测 atomgit API,新发现 PATCH issue 字段是 `body`(GitHub 风格)而非 owner-scoped create 的 `description`,代码同步修正。ADR-0014 记录。
+- 产出:
+  - `scripts/lib/atomgit-api.js`:全 endpoint 加 `retry(fn, {label, max:3, backoff})`;新增 `findIssueByTitlePrefix` / `updateIssue` / `updatePullRequest`;PATCH issue 字段定为 `body`
+  - `scripts/lib/community-map.js`:`site_hosts` 严格相等;`isOfficialHost(community, url)` 导出
+  - `scripts/run-analysis.js`:非官网 URL 标 `scope_skipped: true`,不进 analyze 也不进 fix-payload
+  - `scripts/fetch-geo-issues.js`:retry 包装;任一 community 报错/target 找不到 → throw
+  - `scripts/fetch-fix-payload.js`:retry 包装
+  - `scripts/open-portal-issues.js`:title 前缀 `[GEO] {community} #{N}:` 查 → update 或 create
+  - `scripts/execute-fix-runs.js`:进程级 GIT_AUTHOR/COMMITTER env;`pushAndPr` 已有 PR 走 `updatePullRequest`
+  - `scripts/generate-report.js`:渲染 `scope_skipped` URL
+  - `.github/workflows/geo-bot.yml`:两 job 删 `git config` 改 step 级 env;末尾各加 `if: failure()` 回评步骤
+  - `.github/actions/atomgit-create-pr/index.js`:进程级 env 替代 `git config`
+  - `docs/decisions.md` ADR-0014(升序末尾)
+
 ## 未完成 / 待办
 
 - [ ] 关闭探针 issue `openeuler/openEuler-portal#109`(手工 web 关闭即可)

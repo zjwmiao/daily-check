@@ -32,6 +32,9 @@ function renderUrl(urlAnalysis) {
   if (!urlAnalysis.ok) {
     return `**${urlAnalysis.url}**\n\n❌ ${urlAnalysis.error || '抓取失败'}`;
   }
+  if (urlAnalysis.scope_skipped) {
+    return `**${urlAnalysis.url}**  ⏭ 跳过(非官网域,${urlAnalysis.scope_skipped_reason})`;
+  }
   const c = urlAnalysis.checks;
   const score = `🔴 ${urlAnalysis.summary.critical} / 🟡 ${urlAnalysis.summary.important} / ⚪ ${urlAnalysis.summary.minor}`;
   return [

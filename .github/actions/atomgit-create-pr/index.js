@@ -57,8 +57,11 @@ async function main() {
     return;
   }
 
-  sh(`git config user.name "${gitUserName}"`);
-  sh(`git config user.email "${gitUserEmail}"`);
+  // 用环境变量传 git 身份,不修改 repo 级 git config
+  process.env.GIT_AUTHOR_NAME = gitUserName;
+  process.env.GIT_AUTHOR_EMAIL = gitUserEmail;
+  process.env.GIT_COMMITTER_NAME = gitUserName;
+  process.env.GIT_COMMITTER_EMAIL = gitUserEmail;
   try {
     sh(`git checkout -b ${branch}`);
   } catch {

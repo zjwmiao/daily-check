@@ -1,0 +1,41 @@
+{
+  "run_at": "2026-05-13T15:37:00.404Z",
+  "target": "21",
+  "communities": [
+    "openEuler",
+    "MindSpore"
+  ],
+  "issue_count": 1,
+  "issues": [
+    {
+      "community": "openEuler",
+      "geo_issue_number": 21,
+      "geo_issue_url": "https://github.com/opensourceways/geo-workflow/issues/21",
+      "geo_issue_title": "安全漏洞修复与 CVE 报告流程页面未被 AI 平台引用",
+      "severity": "P0",
+      "status": "not_cited",
+      "citation_rate": 0,
+      "questions": [
+        {
+          "id": "q_016",
+          "question": "openEuler 22.03 LTS SP2 上如何修复 CVE-2024-1086 内核提权漏洞？",
+          "official_urls": [
+            "https://forum.openeuler.org/t/topic/4537"
+          ],
+          "notes": ""
+        },
+        {
+          "id": "q_080",
+          "question": "如何向 openEuler 安全委员会（security@openeuler.org）报告 CVE 安全漏洞？漏洞披露流程是什么？",
+          "official_urls": [
+            "https://www.openeuler.org/zh/security/vulnerability-reporting/",
+            "https://www.openeuler.org/en/security/vulnerability-reporting/",
+            "https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting/",
+            "https://www.openeuler.openatom.cn/en/security/vulnerability-reporting/"
+          ],
+          "notes": ""
+        }
+      ]
+    }
+  ]
+}

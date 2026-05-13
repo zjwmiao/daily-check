@@ -1,0 +1,241 @@
+name: 'Create Pull Request'
+description: '自动创建 Pull Request，支持普通仓库和子模块仓库'
+
+inputs:
+  repository:
+    description: '仓库名称（owner/repo 或 repo）'
+    required: false
+    default: ''
+  issue_number:
+    description: 'Issue 编号'
+    required: true
+  issue_title:
+    description: 'Issue 标题'
+    required: true
+  issue_url:
+    description: 'Issue URL'
+    required: true
+  branch_base:
+    description: '目标分支（默认 main）'
+    required: false
+    default: 'main'
+
+
+outputs:
+  pr_url:
+    description: '创建的 PR URL'
+    value: ${{ steps.create_pr.outputs.pr_url }}
+  has_changes:
+    description: '是否有文件变更'
+    value: ${{ steps.check_changes.outputs.has_changes }}
+  submodule_pr_urls:
+    description: '子模块 PR URLs（如果有）'
+    value: ${{ steps.handle_submodules.outputs.pr_urls }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check for changes
+      id: check_changes
+      shell: bash
+      run: |
+        REPO_NAME="${{ inputs.repository }}"
+        if [ -z "$REPO_NAME" ]; then
+          REPO_NAME="${{ github.repository }}"
+        fi
+        
+        ISSUE_NUM="${{ inputs.issue_number }}"
+        BRANCH_NAME="feature/issue-${ISSUE_NUM}"
+        
+        git add -A
+        CHANGES=$(git status --porcelain)
+        
+        # 检查远程分支是否存在
+        REMOTE_BRANCH_EXISTS=$(git show-ref --verify --quiet "refs/remotes/origin/$BRANCH_NAME" && echo "true" || echo "false")
+        
+        if [ -z "$CHANGES" ] && [ "$REMOTE_BRANCH_EXISTS" == "false" ]; then
+          echo "⚠️ 没有文件变更且远程分支不存在"
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "branch_exists=false" >> $GITHUB_OUTPUT
+          gh issue comment $ISSUE_NUM --body "⚠️ 开发完成，但未发现代码变更。可能设计已在现有代码中实现，或需要手动调整。"
+        elif [ -z "$CHANGES" ] && [ "$REMOTE_BRANCH_EXISTS" == "true" ]; then
+          echo "⚠️ 没有新的文件变更，但远程分支已存在"
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "branch_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "✅ 发现文件变更："
+          echo "$CHANGES"
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          echo "branch_exists=true" >> $GITHUB_OUTPUT
+          
+          # 检查是否有子模块变更
+          SUBMODULE_CHANGES=$(echo "$CHANGES" | grep '^ M ' || true)
+          if [ -n "$SUBMODULE_CHANGES" ]; then
+            echo "has_submodule_changes=true" >> $GITHUB_OUTPUT
+            echo "子模块变更："
+            echo "$SUBMODULE_CHANGES"
+          else
+            echo "has_submodule_changes=false" >> $GITHUB_OUTPUT
+          fi
+        fi
+
+    - name: Handle submodule changes
+      id: handle_submodules
+      if: steps.check_changes.outputs.has_submodule_changes == 'true'
+      shell: bash
+      run: |
+        ISSUE_NUM="${{ inputs.issue_number }}"
+        ISSUE_TITLE="${{ inputs.issue_title }}"
+        BRANCH_BASE="${{ inputs.branch_base }}"
+        PR_URLS=""
+        
+        # 获取所有子模块路径
+        SUBMODULES=$(git config --file .gitmodules --get-regexp path | awk '{print $2}')
+        
+        for SUBMODULE_PATH in $SUBMODULES; do
+          cd "$SUBMODULE_PATH"
+          
+          # 检查该子模块是否有变更
+          SUB_CHANGES=$(git status --porcelain)
+          if [ -n "$SUB_CHANGES" ]; then
+            echo "子模块 $SUBMODULE_PATH 有变更"
+            
+            # 创建分支名
+            BRANCH_NAME="feature/issue-${ISSUE_NUM}"
+            
+            # 获取子模块远程仓库信息
+            SUB_REMOTE_URL=$(git remote get-url origin)
+            SUB_REPO=$(echo "$SUB_REMOTE_URL" | sed 's|.*github.com[:/]||' | sed 's|.git$||')
+            
+            # 检查分支是否存在
+            if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+              git checkout "$BRANCH_NAME"
+            elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH_NAME"; then
+              git checkout -b "$BRANCH_NAME" "origin/$BRANCH_NAME"
+            else
+              git checkout -b "$BRANCH_NAME"
+            fi
+            
+            # 提交变更
+            git add -A
+            git commit -m "feat: implement issue #${ISSUE_NUM} - ${ISSUE_TITLE}"
+            
+            # 推送分支（强制推送）
+            git push -f origin "$BRANCH_NAME"
+            
+            # 检查 PR 是否已存在
+            SUB_PR_EXISTS=$(gh pr list --repo "$SUB_REPO" --head "$BRANCH_NAME" --state open --json number --jq 'length')
+            
+            if [ "$SUB_PR_EXISTS" -gt 0 ]; then
+              SUB_PR_URL=$(gh pr list --repo "$SUB_REPO" --head "$BRANCH_NAME" --state open --json url --jq '.[0].url')
+              echo "✅ 子模块 $SUBMODULE_PATH PR 已更新：$SUB_PR_URL"
+            else
+              SUB_PR_URL=$(gh pr create --repo "$SUB_REPO" \
+                --title "feat: #${ISSUE_NUM} ${ISSUE_TITLE}" \
+                --body "Fixes ${{ inputs.issue_url }}" \
+                --base "$BRANCH_BASE" \
+                --head "$BRANCH_NAME")
+              echo "✅ 子模块 $SUBMODULE_PATH PR 已创建：$SUB_PR_URL"
+            fi
+            
+            PR_URLS="${PR_URLS}${SUBMODULE_PATH}:${SUB_PR_URL}\n"
+            
+            cd -
+          fi
+        done
+        
+        echo "pr_urls=$PR_URLS" >> $GITHUB_OUTPUT
+
+    - name: Create main PR
+      id: create_pr
+      if: steps.check_changes.outputs.has_changes == 'true' || steps.check_changes.outputs.branch_exists == 'true'
+      shell: bash
+      run: |
+        NL=$'\n'
+        ISSUE_NUM="${{ inputs.issue_number }}"
+        ISSUE_TITLE="${{ inputs.issue_title }}"
+        ISSUE_URL="${{ inputs.issue_url }}"
+        BRANCH_BASE="${{ inputs.branch_base }}"
+        
+        # 构建分支名
+        BRANCH_NAME="feature/issue-${ISSUE_NUM}"
+        
+        # 构建提交消息
+        COMMIT_MSG="feat: implement issue #${ISSUE_NUM} - ${ISSUE_TITLE}"
+
+        # 构建PR描述
+        PR_BODY="## 描述${NL}来自 issue #${ISSUE_NUM}${NL}${NL}## 相关 Issue${NL}resolve ${ISSUE_URL}${NL}${NL}## 变更类型${NL}- [ ] Bug 修复${NL}- [ ] 新功能${NL}- [ ] 代码重构${NL}- [ ] 文档更新${NL}- [ ] 样式改进${NL}- [ ] 性能优化${NL}- [ ] 测试相关${NL}- [ ] 其他"
+        
+        # 如果有子模块PR，添加链接
+        if [ "${{ steps.handle_submodules.outputs.pr_urls }}" != "" ]; then
+          PR_BODY="${PR_BODY}${NL}${NL}## 子模块 PR${NL}${{ steps.handle_submodules.outputs.pr_urls }}"
+        fi
+        
+        # 检查分支是否已切换（由 workflow 切换）
+        CURRENT_BRANCH=$(git branch --show-current)
+        
+        if [ "$CURRENT_BRANCH" != "$BRANCH_NAME" ]; then
+          # 如果还没有切换到目标分支，检查并创建/切换
+          if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+            echo "📝 切换到已存在的分支 $BRANCH_NAME"
+            git checkout "$BRANCH_NAME"
+            git pull origin "$BRANCH_NAME" || true
+          elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH_NAME"; then
+            echo "📝 检出远程分支 $BRANCH_NAME"
+            git checkout -b "$BRANCH_NAME" "origin/$BRANCH_NAME"
+            git pull origin "$BRANCH_NAME" || true
+          else
+            echo "✨ 创建新分支 $BRANCH_NAME"
+            git checkout -b "$BRANCH_NAME"
+          fi
+        else
+          echo "✅ 已在目标分支 $BRANCH_NAME 上"
+          git pull origin "$BRANCH_NAME" || true
+        fi
+        
+        # 如果有新的变更，提交并推送
+        if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
+          git add -A
+          git commit -m "$COMMIT_MSG"
+          git push -f origin "$BRANCH_NAME"
+        fi
+        
+        # 检查 PR 是否已存在
+        PR_EXISTS=$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq 'length')
+        
+        if [ "$PR_EXISTS" -gt 0 ]; then
+          # PR 已存在，获取现有 PR URL
+          PR_URL=$(gh pr list --head "$BRANCH_NAME" --state open --json url --jq '.[0].url')
+          echo "✅ PR 已存在：$PR_URL"
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          
+          # 根据是否有新变更来设置不同的消息
+          if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
+            COMMENT_BODY="✅ 开发已重新完成！现有 Pull Request 已更新：${PR_URL}"
+          else
+            COMMENT_BODY="✅ Pull Request 已存在：${PR_URL}"
+          fi
+        else
+          # 创建新 PR
+          PR_URL=$(gh pr create \
+            --title "feat: #${ISSUE_NUM} ${ISSUE_TITLE}" \
+            --body "$PR_BODY" \
+            --base "$BRANCH_BASE" \
+            --head "$BRANCH_NAME")
+          
+          echo "✅ PR 已创建：$PR_URL"
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          
+          # 根据是否有新变更来设置不同的消息
+          if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
+            COMMENT_BODY="✅ 开发完成！Pull Request 已创建：${PR_URL}"
+          else
+            COMMENT_BODY="✅ Pull Request 已为现有分支创建：${PR_URL}"
+          fi
+        fi
+        
+        if [ "${{ steps.handle_submodules.outputs.pr_urls }}" != "" ]; then
+          COMMENT_BODY="${COMMENT_BODY}${NL}子模块 PR：${NL}${{ steps.handle_submodules.outputs.pr_urls }}"
+        fi
+        
+        gh issue comment $ISSUE_NUM --body "$COMMENT_BODY"

@@ -1,0 +1,141 @@
+# .github/actions/run-agent/action.yml
+name: 'Run AI Agent via OpenCode'
+description: '通用 Agent 调用器，使用 opencode 客户端'
+
+inputs:
+  agent_file:
+    description: 'Agent 提示词文件路径'
+    required: true
+  issue_number:
+    description: '目标 Issue 编号'
+    required: true
+  repository:
+    description: '仓库名称（格式：owner/repo 或 repo）'
+    required: false
+    default: ''
+  context_json:
+    description: '上下文 JSON (Issue 完整信息)'
+    required: true
+  instruction:
+    description: '额外任务指令'
+    required: false
+    default: ''
+  output_filename:
+    description: '输出文档文件名（不含路径）'
+    required: false
+    default: 'output.md'
+
+outputs:
+  result:
+    description: 'AI 返回的文本结果'
+    value: ${{ steps.run.outputs.result }}
+  output_file:
+    description: '保存结果的文件路径'
+    value: ${{ steps.run.outputs.output_file }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Configure OpenCode authentication
+      shell: bash
+      run: |
+        echo "Runner: $(whoami) @ $(hostname)"
+        echo "OpenCode: $(which opencode) v$(opencode --version)"
+
+    - name: Load agent prompt
+      id: load
+      shell: bash
+      run: |
+        PROMPT=$(cat ${{ inputs.agent_file }})
+        echo "PROMPT<<EOF" >> $GITHUB_ENV
+        echo "$PROMPT" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+
+    - name: Verify OpenCode configuration
+      shell: bash
+      run: |
+        echo "=== Verifying OpenCode Setup ==="
+        echo "Available models: $(opencode models | grep -E 'alibaba-cn/(glm|deepseek)' | wc -l) alibaba-cn models"
+        
+        # 显示可用模型（前 10 个）
+        echo "=== Sample Available Models ==="
+        opencode models | head -10
+
+
+    - name: Execute OpenCode
+      id: run
+      shell: bash
+      run: |
+        # 构建基于仓库和issue的工作目录
+        REPO_NAME="${{ inputs.repository }}"
+        ISSUE_NUM="${{ inputs.issue_number }}"
+        
+        # 如果未提供 repository，尝试从环境变量获取
+        if [ -z "$REPO_NAME" ]; then
+          REPO_NAME="${{ github.repository }}"
+        fi
+        
+        # 提取仓库名称（去掉 owner/ 前缀）
+        REPO_SHORT=$(echo "$REPO_NAME" | sed 's|.*/||')
+        
+        # 构建工作目录：/tmp/opencode/<repo>-<issue_id>/
+        WORK_DIR="/tmp/opencode/${REPO_SHORT}-${ISSUE_NUM}"
+        mkdir -p "$WORK_DIR"
+        
+        # 构建完整输入文件
+        INPUT_FILE="$WORK_DIR/opencode_input.txt"
+        
+        # 输出文档文件路径（agent 会将结果写入此文件）
+        OUTPUT_FILE="$WORK_DIR/${{ inputs.output_filename }}"
+        
+        # 写入 prompt 内容
+        echo "$PROMPT" > "$INPUT_FILE"
+        echo "" >> "$INPUT_FILE"
+        echo "上下文：" >> "$INPUT_FILE"
+        printf '%s\n' '${{ inputs.context_json }}' >> "$INPUT_FILE"
+        echo "" >> "$INPUT_FILE"
+        echo "指令：" >> "$INPUT_FILE"
+        printf '%s\n' '${{ inputs.instruction }}' >> "$INPUT_FILE"
+        
+        # 显示输入文件内容（调试）
+        echo "=== Input file preview ==="
+        head -20 "$INPUT_FILE"
+        echo "=== End preview ==="
+        
+        # 执行 opencode（agent 会将结果写入指定文件）
+        cat "$INPUT_FILE" | opencode run - \
+          --model "${{ env.AI_MODEL || 'alibaba-cn/glm-5' }}" \
+          --agent "${{ env.AI_AGENT || 'build' }}" \
+          ${{ env.AI_EXTRA_ARGS }}
+        
+        # 输出文件路径供后续步骤使用
+        echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+        echo "work_dir=$WORK_DIR" >> $GITHUB_OUTPUT
+
+    - name: Post result as issue comment
+      shell: bash
+      run: |
+        REPO_NAME="${{ inputs.repository }}"
+        ISSUE_NUM="${{ inputs.issue_number }}"
+        
+        # 如果未提供 repository，尝试从环境变量获取
+        if [ -z "$REPO_NAME" ]; then
+          REPO_NAME="${{ github.repository }}"
+        fi
+        
+        # 提取仓库名称（去掉 owner/ 前缀）
+        REPO_SHORT=$(echo "$REPO_NAME" | sed 's|.*/||')
+        
+        # 构建工作目录
+        WORK_DIR="/tmp/opencode/${REPO_SHORT}-${ISSUE_NUM}"
+        OUTPUT_FILE="$WORK_DIR/${{ inputs.output_filename }}"
+        
+        # 检查文件是否存在
+        if [ ! -f "$OUTPUT_FILE" ]; then
+          echo "⚠️ 输出文件不存在: $OUTPUT_FILE"
+          echo "跳过发布评论步骤"
+          exit 0
+        fi
+        
+        # 直接从文件读取并发布评论
+        gh issue comment ${{ inputs.issue_number }} --body-file "$OUTPUT_FILE"

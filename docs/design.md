@@ -662,24 +662,19 @@ openEuler-portal / mindspore-portal (AtomGit) ── 收 issue + PR
 
 ### 10.3 分析阶段(/analyze)产物
 
-```text
-geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
-  ├─ candidates.json     ← fetch-geo-issues.js 输出
-  ├─ analysis.json       ← run-analysis.js 输出 (4 维度结果)
-  ├─ report.md           ← generate-report.js 输出 (评论正文 + 内嵌 fix-payload)
-  └─ portal-issues.json  ← open-portal-issues.js 输出 (atomgit issue 记录)
-```
+workflow 在 `geo-runs/{issue}/{ts}/` 临时写入 candidates.json / analysis.json / report.md / portal-issues.json,**不入仓**(ADR-0015)。仅:
 
-`report.md` 末尾内嵌折叠的 `geo-analysis-payload v1` JSON 块,作为 /fix 的**真正信号源**(产物落盘只为审计,不作为 /fix 输入,见 ADR-0012)。产物 commit 到 geo-develop main 分支(ADR-0007),同时上传为 GitHub artifact(90d 保留)。
+- `report.md` 作为评论正文 POST 到触发 issue,末尾内嵌 `geo-analysis-payload v1` JSON 折叠块 — 这是 /fix 的**唯一信号源**(ADR-0012)
+- 整个 run dir 上传为 GitHub Actions artifact(90d 保留,可下载调试)
 
 ### 10.4 修复阶段(/fix)产物
 
-```text
-geo-runs/{issue_number}/fix-{YYYYMMDDTHHmmssZ}/
-  ├─ fix-payload.json    ← fetch-fix-payload.js 从 issue 评论抽取的 payload
-  ├─ fix-context-*.json  ← 给 opencode agent 的上下文(per community)
-  └─ fix-results.json    ← execute-fix-runs.js 输出 (PR url + agent 输出)
-```
+workflow 在 `geo-runs/{issue}/fix-{ts}/` 临时写入 fix-payload.json / fix-context-*.json / fix-results.json,**不入仓**。仅:
+
+- fix-results 里每个 run 的 `agent_output`(opencode 修改清单)由 `comment-fix-summary.js` 渲染为 `<details>` 折叠块,嵌入回评的修复总结评论 — 决策轨迹直接体现在 issue
+- 整个 run dir 上传为 artifact(90d)
+
+> `/fix` **自动复用同一 issue 下最近一次 `/analyze` 评论里的 payload**(`fetch-fix-payload.js` 按 created_at desc 取第一个带 marker 的评论);一次 /analyze 可对应多次 /fix。
 
 ### 10.5 关键脚本(scripts/)
 
@@ -736,5 +731,6 @@ geo-runs/{issue_number}/fix-{YYYYMMDDTHHmmssZ}/
 - /fix 信号源:issue 评论内嵌 payload,不依赖文件系统(ADR-0012)
 - AtomGit API 路径 `/api/v5/` 前缀,Issue 接口 owner-scoped(ADR-0013)
 - 5 项可靠性优化:retry / 失败显式 / 官网过滤 / 去重 / git env(ADR-0014)
+- geo-runs 不入仓,靠 issue 评论 + artifact 追踪(ADR-0015,取代 ADR-0007)
 
 ---

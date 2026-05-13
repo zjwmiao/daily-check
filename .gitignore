@@ -75,6 +75,10 @@ web_modules/
 # Claude Code 个人本地设置(权限/偏好,不入仓)
 .claude/settings.local.json
 
+# /analyze + /fix 运行制品 — 仅本机 + GitHub Actions artifact 短期保留,不入仓
+# 决策与修复点在 issue 评论里即可追踪(ADR-0015)
+geo-runs/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

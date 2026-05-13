@@ -30,7 +30,7 @@ async function commentOnGithub(repo, issueNumber, body) {
   );
 }
 
-function buildTriggerComment(results) {
+function buildTriggerComment(results, runUrl) {
   const lines = [
     `## 🛠 修复结果`,
     '',
@@ -39,10 +39,35 @@ function buildTriggerComment(results) {
   ];
   for (const r of results) {
     const pr = r.pr_url ? `[${r.pr_number}](${r.pr_url})` : '-';
-    lines.push(`| ${r.community} | #${r.geo_issue_number} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${pr} |`);
+    const action = r.pr_action ? ` (${r.pr_action})` : '';
+    lines.push(
+      `| ${r.community} | #${r.geo_issue_number} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${pr}${action} |`
+    );
   }
   lines.push('');
-  lines.push('详细 agent 输出见 `geo-runs/{issue}/fix-results.json`');
+
+  // 每个成功的 run 把 agent 修改清单(opencode 写的 output.md)展开,作为决策轨迹
+  for (const r of results) {
+    if (!r.agent_output) continue;
+    const trimmed = r.agent_output.trim();
+    if (!trimmed) continue;
+    lines.push('');
+    lines.push(`<details>`);
+    lines.push(
+      `<summary>📝 ${r.community} #${r.geo_issue_number} — opencode 修改清单 (${r.pr_action || r.status})</summary>`
+    );
+    lines.push('');
+    lines.push('```text');
+    lines.push(trimmed.slice(0, 3500)); // 留出注释 + summary 框的空间,GH 评论限 65k
+    lines.push('```');
+    lines.push('');
+    lines.push('</details>');
+  }
+
+  if (runUrl) {
+    lines.push('');
+    lines.push(`<sub>详细日志见 [GitHub Actions run](${runUrl}),原始制品在 workflow artifact(90 天保留)</sub>`);
+  }
   return lines.join('\n');
 }
 
@@ -54,8 +79,12 @@ async function main() {
   }
   const data = JSON.parse(fs.readFileSync(args.results, 'utf-8'));
   const results = data.results || [];
+  const runUrl =
+    process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+      ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      : null;
 
-  await commentOnGithub(args['trigger-repo'], args['trigger-issue'], buildTriggerComment(results));
+  await commentOnGithub(args['trigger-repo'], args['trigger-issue'], buildTriggerComment(results, runUrl));
 
   for (const r of results) {
     if (!r.pr_url) continue;

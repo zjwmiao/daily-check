@@ -37,7 +37,7 @@ GEO 优化开发工作流的**协调仓**。把"评估侧产生的 P0 问题 →
 /fix
 ```
 
-工作流会跑 `geo-bot.yml` 里的 `fix` job,基于最近一次 analyze 制品,对每个涉及的 community 提一个 PR 到对应 portal 仓。
+工作流会跑 `geo-bot.yml` 里的 `fix` job,**自动复用同一 issue 下最近一次 `/analyze` 评论里嵌入的 payload**(无需重新 `/analyze`),对每个涉及的 community 提一个 PR 到对应 portal 仓。修复决策(opencode 修改清单)+ PR 链接会以评论形式回到本 issue,作为审计轨迹。
 
 ## 本地调试
 

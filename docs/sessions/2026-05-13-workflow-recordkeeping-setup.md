@@ -156,6 +156,17 @@
   - `.github/workflows/geo-bot.yml`:`Commit portal-issues record` + `Commit fix artifacts` 去掉 `\|\| true`,改 `if ! git diff --cached --quiet; then ... fi`,push 失败必报错
   - ADR-0014 追加 Round 13 二次补丁笔记
 
+### Round 14 — geo-runs 不入仓,全靠 issue 评论追踪
+
+- 请求: 用户两点:(1) /fix 能否复用最近一次 /analyze 评论 — 答:`fetch-fix-payload.js` 一直这么做,只是没明确写出;(2) 不要每次 geo-runs 都归档入仓,issue 评论能看到决策和修改点就够了。
+- 结论: 撤掉入仓双轨,完全靠 issue 评论 + GH Actions artifact(90d)闭环。ADR-0015 取代 ADR-0007 的入仓约定。`comment-fix-summary.js` 增强,把每个 community 的 opencode `output.md`(修改清单)用 `<details>` 折叠块嵌入评论,完整的"决策+修改点"轨迹。
+- 产出:
+  - `.github/workflows/geo-bot.yml`:删 `Commit analysis artifacts` + `Commit portal-issues record` + `Commit fix artifacts` 3 步;新增 `Upload fix artifact`(90d)
+  - `.gitignore`:加 `geo-runs/`;`git rm -r --cached geo-runs/` 取消跟踪(58 个文件)
+  - `scripts/comment-fix-summary.js`:每个 run 的 `agent_output` 渲染成 `<details>` 折叠块;评论末尾附 GH Actions run URL
+  - `README.md`:`/fix` 段明确"自动复用最近一次 `/analyze` 评论 payload,无需重 /analyze"
+  - ADR-0015 写入 decisions.md(升序末尾)
+
 ## 未完成 / 待办
 
 - [ ] 关闭探针 issue `openeuler/openEuler-portal#109 #110 #111`(手工 web 关闭)

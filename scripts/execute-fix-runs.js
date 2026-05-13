@@ -336,10 +336,10 @@ async function main() {
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
   fs.writeFileSync(args.output, JSON.stringify({ run_at: new Date().toISOString(), results }, null, 2));
   const errored = results.filter((r) => r.status === 'error');
-  const ok = results.filter((r) => r.status === 'pr_created' || r.status === 'no_changes');
-  const skipped = results.filter((r) => r.status === 'skipped');
+  const okResults = results.filter((r) => r.status === 'pr_created' || r.status === 'no_changes');
+  const skippedResults = results.filter((r) => r.status === 'skipped');
   log(
-    `🏁 all done: ${results.length} run(s) [ok=${ok.length} skipped=${skipped.length} error=${errored.length}], total ${(
+    `🏁 all done: ${results.length} run(s) [ok=${okResults.length} skipped=${skippedResults.length} error=${errored.length}], total ${(
       (Date.now() - T0) /
       1000
     ).toFixed(1)}s → ${args.output}`

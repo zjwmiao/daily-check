@@ -246,3 +246,21 @@
   - `execute-fix-runs.js`:任一 run status=error → throw
   - `open-portal-issues.js`:从"全失败才 throw"收紧为"有任一错就 throw"
   - workflow `Commit portal-issues record` / `Commit fix artifacts`:去掉 `git push ... \|\| true`,push 失败必须可见
+
+## ADR-0015: geo-runs 不再入仓,完全靠 issue 评论追踪决策
+
+- 日期: 2026-05-13
+- 状态: 已采纳(取代 ADR-0007 的"入仓做审计"约定;与 ADR-0012 形成完整闭环)
+- 上下文: 用户提出两点简化:(a) /fix 应该能复用最近一次 /analyze 的评论 payload,不必每次重 /analyze(实际 `fetch-fix-payload.js` 已经这么做了,只是没写明);(b) 不要把每次 geo-runs 都 commit 入仓,issue 评论里能看到完整轨迹就够。
+- 选项:
+  - A. 维持 ADR-0007 入仓 + ADR-0012 评论双轨
+  - B. 撤掉入仓,只靠评论 + GitHub Actions artifact(90d)
+- 决定: B
+- 理由: 评论是 GitHub 第一公民,搜索/筛选/全文检索都现成;入仓加重 main 分支变更历史(force push 还会丢),没多收益;artifact 短期保留够调试。
+- 后果:
+  - 删 workflow 3 个 Commit 步骤(analyze artifacts / portal-issues record / fix artifacts)
+  - `.gitignore` 加 `geo-runs/`,`git rm -r --cached geo-runs/` 清掉历史快照(本地文件保留,但下次 push 会从 main 移除)
+  - /analyze comment 仍内嵌 `geo-analysis-payload v1`(ADR-0012),作 /fix 唯一信号源
+  - **comment-fix-summary 增强**:把每个 run 的 opencode 修改清单(`output.md` 抓取的前 3500 字符)用 `<details>` 折叠块嵌入评论,作为决策轨迹
+  - 新增 /fix `Upload fix artifact` step(已加),90d 内可下载 fix-payload/results/context 等
+  - README + design.md 10.3-10.4 重写

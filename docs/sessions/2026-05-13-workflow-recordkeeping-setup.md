@@ -58,8 +58,31 @@
   - 新增记忆 `feedback_runner_environment.md` + 更新 MEMORY.md
   - `/tmp/` 清理(临时 libsodium 安装)
 
+### Round 6 — workflow 合并消除 UI 噪声
+
+- 请求: 用户首次远端测试发现一次 `/analyze` 评论会在 Actions 页同时出现 2 个 run(GEO Analyze 28s 成功 + GEO Fix 1s skip),询问原因。
+- 结论: 这是 GH Actions 在 `on: issue_comment` 下的标准行为 — 两个独立 workflow 都被触发,job 级 `if:` 事后过滤。合并为单 workflow 多 job 可消除 UI 噪声。用户选 B(合并)。记 ADR-0009。
+- 产出:
+  - 新建 `.github/workflows/geo-bot.yml`(190 行,2 个 job + 各自 `if:` + 各自 concurrency)
+  - 删除 `.github/workflows/geo-{analyze,fix}.yml`
+  - README + design.md 5 处引用更新为 `geo-bot.yml#{analyze,fix}`
+  - ADR-0009 写入 decisions.md
+
+### Round 7 — 404 根因 + 跨社区 fallback bug
+
+- 请求: 用户首次远端跑 `/analyze` 处理 geo-workflow#21,报告显示 "涉及 issue 0 / URL 0",但 q_080 明明有 4 个 official_urls。
+- 结论:
+  1. **主因**: geo-workflow 是 **private** 仓,workflow 的 `secrets.GITHUB_TOKEN`(scope=geo-develop)无权读取,API 返回 404。代码的 catch 块吞掉了错误,产物显示为 0 candidates。修法:加 `GEO_GITHUB_TOKEN` secret(用户 PAT)。
+  2. **副因 bug**: fetch-geo-issues.js 的 fallback 路径在 issue 不在当前 community 的 issue-map 时,会用同 ID(如 `q_016`)从当前 community 的 questions.json 里错配。给 openEuler issue 错误返回了 MindSpore 的 "数据下沉" question。修法:fallback 时检查 issue title 的 `[Community]` 前缀,不匹配则跳过。
+- 产出:
+  - `.github/workflows/geo-bot.yml`:fetch 步骤用 `GEO_GITHUB_TOKEN`,缺失时 fail-fast
+  - `scripts/fetch-geo-issues.js`:fallback 加 community 前缀校验,本地验证 issue#21 → openEuler 1 个 issue 2 个 question(q_016+q_080),MindSpore 0
+  - `docs/decisions.md` ADR-0010
+  - README + design.md secret 表更新
+- **用户需在 repo settings 加 secret `GEO_GITHUB_TOKEN`**(可复用 .env 里 PAT),否则下次 /analyze 仍会失败但会快速报错
+
 ## 未完成 / 待办
 
-- [ ] 在远端 portal-x86 runner 上端到端跑一遍 /analyze 验证(确认 AtomGit API base 路径 + secret 注入是否正常)
+- [ ] 用户配置 `GEO_GITHUB_TOKEN` secret,再跑一次 /analyze 验证
 - [ ] 在测试 issue 上跑 /fix 验证 opencode prompt 真实表现
 - [ ] (后续 ADR)归档策略 — geo-runs/ 长期累积后的清理

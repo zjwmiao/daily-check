@@ -99,6 +99,39 @@
 - 理由: 双平台 if/else 会污染既有路径,提高回归风险;新 action 单一职责,可独立演进。
 - 后果: 维护两套 action,但 API 调用层只是 curl 包装,代码量小。
 
+## ADR-0010: geo-workflow 是 private 仓,需独立 PAT secret
+
+- 日期: 2026-05-13
+- 状态: 已采纳(修正 ADR-0002)
+- 上下文: 首次远端 /analyze 跑出 0 candidates。日志显示对 `api.github.com/repos/opensourceways/geo-workflow/contents/...` 返回 **404**。本地用 .env 里的 PAT 同样请求返回 200。差异来自 token:workflow 用的 `secrets.GITHUB_TOKEN` 是 ephemeral install token,scope 严格限定在当前 repo(geo-develop),对其他 repo(geo-workflow)无权;而 geo-workflow 是 **private**(visibility=private),匿名也访问不了。
+- 选项:
+  - A. 把 geo-workflow 改为 public — 涉及组织策略,不一定可行
+  - B. 在 geo-develop 加 secret `GEO_GITHUB_TOKEN`(PAT,有 geo-workflow read 权限),fetch-geo-issues 步骤用它
+  - C. 用 GitHub App 安装到双 repo(更长期但更复杂)
+- 决定: B
+- 理由: 最小改动,只需用户在 secret 里加一项;PAT 可定期轮换;不依赖组织策略。
+- 后果:
+  - workflow "Fetch geo-workflow candidates" 步骤 env 改为 `GEO_GITHUB_TOKEN`,缺则报错退出
+  - README + design.md 更新 secret 表(标注必填)
+  - 用户需在 repo secrets 加 `GEO_GITHUB_TOKEN`(可直接复用 .env 里的 GITHUB_TOKEN PAT)
+
+## ADR-0009: 合并 geo-{analyze,fix}.yml 为单文件 geo-bot.yml 多 job
+
+- 日期: 2026-05-13
+- 状态: 已采纳(取代 ADR-0001 中"两个 workflow 文件"的隐含约定)
+- 上下文: 两个独立 workflow 都订阅 `issue_comment.created`,每条评论都会触发两个 workflow run,job 级 `if:` 把不匹配的那个 skip 掉。Actions 页面每次评论出现 2 个 run(1 个实际跑、1 个 1s 内 skip),UI 噪声大。
+- 选项:
+  - A. 维持两个独立 workflow 文件
+  - B. 合并为单个 `geo-bot.yml`,内含 `analyze` + `fix` 两个 job,各自 `if:`
+  - C. 拆出 dispatcher workflow 用 `workflow_call`
+- 决定: B
+- 理由: 每条评论只产生 1 个 workflow run;两 job 共用 `on:` / `permissions:`;`concurrency` 仍可在 job 级独立配置,行为与原版一致;C 引入额外复杂度无收益。
+- 后果:
+  - `.github/workflows/geo-{analyze,fix}.yml` 删除
+  - 新增 `.github/workflows/geo-bot.yml`(~190 行)
+  - README + design.md 引用更新为 `geo-bot.yml#analyze` / `#fix`
+  - 历史 Actions run 名称会变(`GEO Analyze` / `GEO Fix` → `GEO Bot`)
+
 ## ADR-0008: 删除旧脚本与三方 SEO skills
 
 - 日期: 2026-05-13

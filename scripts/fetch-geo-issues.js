@@ -101,6 +101,10 @@ async function buildIssueForCommunity(community, targetIssueNumber) {
   if (targetIssueNumber && targetIssueNumber !== 'all' && candidates.length === 0) {
     try {
       const issue = await fetchIssue(targetIssueNumber);
+      const titleCommunityMatch = issue.title.match(/^\[([^\]]+)\]/);
+      if (titleCommunityMatch && titleCommunityMatch[1] !== community) {
+        return candidates;
+      }
       const qids = extractQuestionIdsFromBody(issue.body);
       const qs = qids
         .map((id) => questionById.get(id))

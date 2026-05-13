@@ -636,13 +636,13 @@ geo-workflow (GitHub) ──评估── 产出 P0/P1 issue + question.json
        ▼
 geo-develop (GitHub) ── 用户开 [GEO优化] issue
        │
-       │ /analyze 评论 ──▶ geo-analyze.yml
+       │ /analyze 评论 ──▶ geo-bot.yml#analyze job
        │                   ├─ fetch-geo-issues.js (取 P0 候选)
        │                   ├─ run-analysis.js     (4 维度分析)
        │                   ├─ generate-report.js  (报告评论)
        │                   └─ open-portal-issues.js (atomgit 开 issue)
        │
-       │ /fix 评论 ─────▶ geo-fix.yml
+       │ /fix 评论 ─────▶ geo-bot.yml#fix job
        │                   ├─ plan-fix-runs.js     (按 community 拆分)
        │                   ├─ execute-fix-runs.js  (clone+opencode+PR)
        │                   └─ comment-fix-summary.js (回评)
@@ -657,8 +657,8 @@ openEuler-portal / mindspore-portal (AtomGit) ── 收 issue + PR
 | ----------------------------- | ------------------------------------------------------------------- |
 | Issue title `[GEO优化]`       | 遍历 geo-workflow 所有 P0 issue(openEuler/MindSpore 范围内)         |
 | Issue title `[GEO优化]#42`    | 仅分析 geo-workflow 的 issue #42                                    |
-| Issue comment `/analyze`      | 触发 `.github/workflows/geo-analyze.yml`                            |
-| Issue comment `/fix`          | 触发 `.github/workflows/geo-fix.yml`(前提:已有 analyze 制品)      |
+| Issue comment `/analyze`      | 触发 `.github/workflows/geo-bot.yml` 的 `analyze` job                |
+| Issue comment `/fix`          | 触发 `.github/workflows/geo-bot.yml` 的 `fix` job(前提:已有 analyze 制品) |
 
 ### 10.3 分析阶段(/analyze)产物
 
@@ -700,8 +700,7 @@ geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
 
 | 路径                                                | 角色                                       |
 | --------------------------------------------------- | ------------------------------------------ |
-| `.github/workflows/geo-analyze.yml`                | /analyze 工作流                            |
-| `.github/workflows/geo-fix.yml`                    | /fix 工作流                                |
+| `.github/workflows/geo-bot.yml`                    | 单 workflow,`analyze` + `fix` 两个 job(各自 `if:` 过滤评论命令) |
 | `.github/actions/atomgit-create-issue/`            | composite action,封装 AtomGit Issue API    |
 | `.github/actions/atomgit-create-pr/`               | composite action,封装 push + PR           |
 | `.github/actions/run-agent/`(沿用)                | opencode + glm5 调用器                     |
@@ -711,11 +710,12 @@ geo-runs/{issue_number}/{YYYYMMDDTHHmmssZ}/
 
 | 名称              | 用途                                                |
 | ----------------- | --------------------------------------------------- |
-| `GITHUB_TOKEN`    | 内置,跨 geo-develop / geo-workflow API 与评论       |
-| `ATOMGIT_TOKEN`   | 自定义 secret,用于 AtomGit issue / PR / push        |
-| `ATOMGIT_API_BASE`| 可选,默认 `https://api.atomgit.com`                |
-| `AI_MODEL`        | 可选,默认 `alibaba-cn/glm-5`                       |
-| `GEO_SKIP_BROWSER`| 可选 repo variable,设 `true` 跳过 Browser 抓取     |
+| `GITHUB_TOKEN`            | 内置,只对当前 geo-develop 仓有效(评论、push)            |
+| `GEO_GITHUB_TOKEN` | **必填**:PAT,读取 private 仓 geo-workflow 的 issue/contents |
+| `ATOMGIT_TOKEN`           | **必填**:自定义 secret,用于 AtomGit issue / PR / push       |
+| `ATOMGIT_API_BASE`        | 可选,默认 `https://api.atomgit.com`                          |
+| `AI_MODEL`                | 可选,默认 `alibaba-cn/glm-5`                                 |
+| `GEO_SKIP_BROWSER`        | 可选 repo variable,设 `true` 跳过 Browser 抓取               |
 
 ### 10.8 决策记录
 

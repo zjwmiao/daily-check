@@ -27,7 +27,7 @@ GEO 优化开发工作流的**协调仓**。把"评估侧产生的 P0 问题 →
 /analyze
 ```
 
-工作流会运行 `geo-analyze.yml`,产物落到 `geo-runs/{issue}/{timestamp}/`,并在 issue 下评论报告。
+工作流会跑 `geo-bot.yml` 里的 `analyze` job,产物落到 `geo-runs/{issue}/{timestamp}/`,并在 issue 下评论报告。
 
 ### 触发修复
 
@@ -37,7 +37,7 @@ GEO 优化开发工作流的**协调仓**。把"评估侧产生的 P0 问题 →
 /fix
 ```
 
-工作流会运行 `geo-fix.yml`,基于最近一次 analyze 制品,对每个涉及的 community 提一个 PR 到对应 portal 仓。
+工作流会跑 `geo-bot.yml` 里的 `fix` job,基于最近一次 analyze 制品,对每个涉及的 community 提一个 PR 到对应 portal 仓。
 
 ## 本地调试
 
@@ -77,7 +77,7 @@ scripts/
   comment-fix-summary.js       回评
 
 .github/
-  workflows/geo-{analyze,fix}.yml
+  workflows/geo-bot.yml                 单 workflow,analyze + fix 两个 job(if 区分)
   actions/atomgit-create-{issue,pr}/    AtomGit API composite action
   actions/run-agent/                    opencode+glm5 调用器(沿用)
   agents/geo-fix-prompt.md              修复 prompt(白名单约束)
@@ -91,13 +91,14 @@ docs/
 
 ## 配置
 
-| 名称              | 用途                                                 |
-| ----------------- | ---------------------------------------------------- |
-| `GITHUB_TOKEN`    | GitHub Actions 内置,跨 geo-develop / geo-workflow    |
-| `ATOMGIT_TOKEN`   | repo secret,用于 atomgit 创建 issue/PR/push          |
-| `ATOMGIT_API_BASE`| 可选,默认 `https://api.atomgit.com`                 |
-| `AI_MODEL`        | 可选,opencode 模型 id,默认 `alibaba-cn/glm-5`       |
-| `GEO_SKIP_BROWSER`| 可选 repo variable,设 `true` 跳过 playwright 抓取   |
+| 名称                     | 用途                                                              |
+| ------------------------ | ----------------------------------------------------------------- |
+| `GITHUB_TOKEN`           | GitHub Actions 内置,只对 geo-develop 自身有读写权                 |
+| `GEO_GITHUB_TOKEN`| repo secret,**必填**。PAT,需有 geo-workflow(private)读权限    |
+| `ATOMGIT_TOKEN`          | repo secret,**必填**。用于 atomgit 创建 issue/PR/push             |
+| `ATOMGIT_API_BASE`       | 可选,默认 `https://api.atomgit.com`                              |
+| `AI_MODEL`               | 可选,opencode 模型 id,默认 `alibaba-cn/glm-5`                    |
+| `GEO_SKIP_BROWSER`       | 可选 repo variable,设 `true` 跳过 playwright 抓取                |
 
 ## 设计参考
 

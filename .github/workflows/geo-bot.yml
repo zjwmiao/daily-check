@@ -1,4 +1,4 @@
-name: GEO Analyze
+name: GEO Bot
 
 on:
   issue_comment:
@@ -8,10 +8,6 @@ permissions:
   contents: write
   issues: write
 
-concurrency:
-  group: geo-analyze-${{ github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
   analyze:
     if: |
@@ -19,6 +15,9 @@ jobs:
       startsWith(github.event.issue.title, '[GEO优化]') &&
       startsWith(github.event.comment.body, '/analyze')
     runs-on: portal-x86
+    concurrency:
+      group: geo-bot-analyze-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - name: Checkout geo-develop
         uses: actions/checkout@v4
@@ -56,9 +55,15 @@ jobs:
 
       - name: Fetch geo-workflow candidates
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # geo-workflow 是 private 仓,内置 secrets.GITHUB_TOKEN 无权读取
+          # 需要在仓库 secrets 配置 GEO_GITHUB_TOKEN (拥有 geo-workflow 读权限的 PAT)
+          GITHUB_TOKEN: ${{ secrets.GEO_GITHUB_TOKEN }}
         shell: bash
         run: |
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "❌ secret GEO_GITHUB_TOKEN 未配置 — geo-workflow 是 private 仓,需 PAT 读取"
+            exit 1
+          fi
           mkdir -p "${{ steps.parse.outputs.run_dir }}"
           node scripts/fetch-geo-issues.js \
             --issue=${{ steps.parse.outputs.target }} \
@@ -136,3 +141,96 @@ jobs:
           name: geo-analysis-${{ github.event.issue.number }}-${{ github.run_id }}
           path: ${{ steps.parse.outputs.run_dir }}/
           retention-days: 90
+
+  fix:
+    if: |
+      !github.event.issue.pull_request &&
+      startsWith(github.event.issue.title, '[GEO优化]') &&
+      startsWith(github.event.comment.body, '/fix')
+    runs-on: portal-x86
+    concurrency:
+      group: geo-bot-fix-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout geo-develop
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install deps
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Locate latest analysis
+        id: locate
+        shell: bash
+        run: |
+          BASE="geo-runs/${{ github.event.issue.number }}"
+          if [ ! -d "$BASE" ]; then
+            echo "❌ no analysis found at $BASE — please run /analyze first"
+            exit 1
+          fi
+          RUN_DIR=$(ls -1d "$BASE"/*/ 2>/dev/null | sort -r | head -1 | sed 's:/*$::')
+          if [ -z "$RUN_DIR" ] || [ ! -f "$RUN_DIR/analysis.json" ]; then
+            echo "❌ no analysis.json in $BASE/*"
+            exit 1
+          fi
+          echo "run_dir=$RUN_DIR" >> $GITHUB_OUTPUT
+          echo "Found: $RUN_DIR"
+
+      - name: Ack on issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+            -d "$(jq -nc --arg b "🛠 开始修复 (analysis: \`${{ steps.locate.outputs.run_dir }}\`)..." '{body:$b}')"
+
+      - name: Plan fix runs (per community + per geo-issue)
+        id: plan
+        shell: bash
+        env:
+          ANALYSIS: ${{ steps.locate.outputs.run_dir }}/analysis.json
+        run: |
+          node scripts/plan-fix-runs.js \
+            --input=$ANALYSIS \
+            --run-dir=${{ steps.locate.outputs.run_dir }} \
+            --output=${{ steps.locate.outputs.run_dir }}/fix-plan.json
+          echo "plan_file=${{ steps.locate.outputs.run_dir }}/fix-plan.json" >> $GITHUB_OUTPUT
+
+      - name: Execute fix runs
+        shell: bash
+        env:
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRIGGER_REPO: ${{ github.repository }}
+          TRIGGER_ISSUE: ${{ github.event.issue.number }}
+          RUN_DIR: ${{ steps.locate.outputs.run_dir }}
+          AGENT_FILE: ${{ github.workspace }}/.github/agents/geo-fix-prompt.md
+        run: |
+          node scripts/execute-fix-runs.js \
+            --plan=${{ steps.plan.outputs.plan_file }} \
+            --output=${{ steps.locate.outputs.run_dir }}/fix-results.json
+
+      - name: Commit fix-results
+        shell: bash
+        run: |
+          git config user.name "geo-develop-bot"
+          git config user.email "geo-develop-bot@noreply.local"
+          git add ${{ steps.locate.outputs.run_dir }}/
+          git diff --cached --quiet || git commit -m "chore(geo-runs): fix results for #${{ github.event.issue.number }}"
+          git push origin HEAD:${{ github.event.repository.default_branch }} || true
+
+      - name: Comment fix summary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/comment-fix-summary.js \
+            --results=${{ steps.locate.outputs.run_dir }}/fix-results.json \
+            --trigger-repo=${{ github.repository }} \
+            --trigger-issue=${{ github.event.issue.number }}

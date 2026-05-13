@@ -1,0 +1,10 @@
+{
+  "run_at": "2026-05-13T15:19:45.515Z",
+  "records": [
+    {
+      "community": "openEuler",
+      "geo_issue_number": 21,
+      "error": "createIssue failed: 400 {\"error_code\":403,\"error_code_name\":\"UN_KNOW\",\"error_message\":\"CH.00000403 apig token has not permission to request url\",\"trace_id\":\"e95385afc9a755b50bcfb0ae5deb8ad9\"}"
+    }
+  ]
+}

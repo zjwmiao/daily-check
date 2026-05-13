@@ -167,15 +167,6 @@
   - `README.md`:`/fix` 段明确"自动复用最近一次 `/analyze` 评论 payload,无需重 /analyze"
   - ADR-0015 写入 decisions.md(升序末尾)
 
-### Round 16 — opencode hang 真根因:缺 `--dangerously-skip-permissions`
-
-- 请求: 用户让我参考 `openEuler-portal-mirror` 仓为啥它的 opencode 跑得快。
-- 结论: 对比发现参考仓 workflow 顶层 env 有 `AI_EXTRA_ARGS: --dangerously-skip-permissions`,我这边漏了。opencode `build` agent 在 CI 无 TTY 环境下,任何文件读写都会触发权限交互 → 永久 hang 等用户输入。这是 17 小时挂死的真根因,Round 15 的 SIGKILL 只是兜底。
-- 产出:
-  - `.github/workflows/geo-bot.yml` 顶层加 `env: AI_MODEL/AI_AGENT/AI_EXTRA_ARGS`(后者默认 `--dangerously-skip-permissions`,同参考仓);两 job 加 `timeout-minutes`(analyze 15、fix 30)硬墙
-  - `scripts/execute-fix-runs.js` 默认 `AI_EXTRA_ARGS ?? '--dangerously-skip-permissions'`,双重兜底
-  - ADR-0016 写入
-
 ### Round 15 — opencode 超时杀不掉子进程
 
 - 请求: 用户发现一个 GEO Bot run #16 在 opencode 输出 "Let me first explore the repository..." 后挂了 17 小时,远超 20min timeout。
@@ -185,8 +176,49 @@
   - 帮用户 API cancel 了 run 25810327388
   - (用户表示挂死 run 自己手工杀掉即可)
 
+### Round 16 — opencode hang 真根因:缺 `--dangerously-skip-permissions`
+
+- 请求: 用户让我参考 `openEuler-portal-mirror` 仓为啥它的 opencode 跑得快。
+- 结论: 对比发现参考仓 workflow 顶层 env 有 `AI_EXTRA_ARGS: --dangerously-skip-permissions`,我这边漏了。opencode `build` agent 在 CI 无 TTY 环境下,任何文件读写都会触发权限交互 → 永久 hang 等用户输入。这是 17 小时挂死的真根因,Round 15 的 SIGKILL 只是兜底。
+- 产出:
+  - `.github/workflows/geo-bot.yml` 顶层加 `env: AI_MODEL/AI_AGENT/AI_EXTRA_ARGS`(后者默认 `--dangerously-skip-permissions`,同参考仓);两 job 加 `timeout-minutes`(analyze 15、fix 30)硬墙
+  - `scripts/execute-fix-runs.js` 默认 `AI_EXTRA_ARGS ?? '--dangerously-skip-permissions'`,双重兜底
+  - ADR-0016 写入
+
+### Round 17 — 删 artifact + 中间文件移到 RUNNER_TEMP
+
+- 请求: 用户问 fix `Upload fix artifact` 步骤和 `fix-payload.json` / `fix-results.json` 是不是都可以去掉。
+- 结论: 是,因为 ADR-0015 已经把审计轨迹完全转到 issue 评论(report + payload embed + fix summary + opencode output 折叠块),artifact 和落盘 JSON 都是冗余。两个 job 的 run_dir 改成 `${RUNNER_TEMP}/...`,workflow 结束 runner 自动清理。drop `Upload artifact` (analyze) + `Upload fix artifact` (fix) 两个 step。
+- 产出:
+  - `.github/workflows/geo-bot.yml`:`run_dir` 改 `${RUNNER_TEMP}/geo-{analyze,fix}-{issue}-{ts}/`;删 2 个 Upload artifact step
+  - ADR-0015 追加 Round 17 简化说明
+  - `.gitignore` `geo-runs/` 条目保留(本地调试可能仍用)
+
+### Round 18 — 本地复现确认 input/spawn OK,大仓需更长 timeout
+
+- 请求: 用户怀疑 `--dangerously-skip-permissions` 没真的传 / agent 没拿到 input。让我本地实测验证。
+- 结论: 本地 opencode 1.4.3 + glm-5,用与 execute-fix-runs.js 一致的 spawn 模式(`stdio:['pipe','inherit','inherit']` + `detached:true` + stdin.write+end),在 portal-mirror 仓里**2 分钟完整跑完修复**(Glob/Grep/Read/Edit/Write/Write output.md 全部 stream 出来),agent 产出可用 diff(为 vulnerability-reporting 加 sitemap priority 0.7)。**spawn pattern 和 input 喂入完全没问题**。runner 上挂死真因大概率:真 openEuler-portal 仓比 mirror 简化版大几十倍,glob/grep + LLM 思考累计超 10min 默认 timeout。
+- 产出:
+  - `scripts/execute-fix-runs.js`:`OPENCODE_TIMEOUT_MS` 默认 10min → 25min(可通过 env 覆盖);改 `??` 为 `||` 防 vars 设空串;增强日志打印完整 args + cwd + 关键 env 是否设置
+  - `.github/workflows/geo-bot.yml` fix job `timeout-minutes`:30 → 45(GH 层硬墙留余量)
+  - 清理 portal-mirror 本地测试副作用(删 output.md)
+- 诊断结论: runner 上下次跑请关注新日志输出的 `args: [...]` 一行,若 `--dangerously-skip-permissions` 在 args 里且 agent 输出有 `Glob/Grep/Read` 等 tool 调用,只是慢,等 25min 即可
+
+### Round 19 — 修正 Round 18 误判 + runner 诊断脚本
+
+- 请求: 用户指出 `openeuler-portal-mirror` 就是 openEuler-portal 的真镜像(不是简化版),让我直接基于它测。
+- 结论: Round 18 的"mirror 是简化版"是错的(我用 `find -maxdepth 2` 误判,只看了顶层 2 个文件)。**mirror 真实规模 = 26364 个文件 / 5296 ts·vue·js / 1656 md / 4652 目录,跟 atomgit 上 openEuler-portal 一致**。所以本地 2 min 完成 = 大仓也能 2 min 完成。runner 上 10 min 一句话不出的真因不在仓库大小,而在 **runner 环境本身**(网络到 glm5 API、磁盘 IO、CPU 占用、opencode 版本),需要 runner-side 实测。
+- 产出:
+  - `scripts/debug/runner-probe.sh`:可直接拷到 runner 上跑的诊断脚本,自带心跳输出 + 总耗时,验证 clone/refresh/opencode 各段真实速度
+  - 推荐用户:SSH 到 runner → `ATOMGIT_TOKEN=xxx bash runner-probe.sh` → 对比本地 2 min 看差几倍
+- 后续判断:
+  - runner 也 2-3min → 跟本地一致,workflow 那次 10min hang 是偶发(网络/API 抖动),timeout 25min 够用
+  - runner >> 10min → 真是 runner 慢,需更长 timeout / 换 model id / 排查 runner 网络
+  - runner 永远 hang → 跟 workflow 一致,问题在 runner 环境,需手工 debug
+
 ## 未完成 / 待办
 
+- [ ] **用户在 runner 上跑 `scripts/debug/runner-probe.sh`,看真实耗时**
 - [ ] 关闭探针 issue `openeuler/openEuler-portal#109 #110 #111`(手工 web 关闭)
 - [ ] 用户在 issue 重新评论 /analyze 生成新 payload,再 /fix 验证全链路
 - [ ] 在测试 issue 上验证 opencode prompt 真实表现 + cache 命中行为

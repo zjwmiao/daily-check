@@ -49,7 +49,8 @@ jobs:
           else
             echo "target=all" >> $GITHUB_OUTPUT
           fi
-          echo "run_dir=geo-runs/${{ github.event.issue.number }}/$(date -u +%Y%m%dT%H%M%SZ)" >> $GITHUB_OUTPUT
+          # 中间文件丢到 runner 临时区,workflow 结束自动清理(审计走 issue 评论,ADR-0015 + Round 17)
+          echo "run_dir=${RUNNER_TEMP}/geo-analyze-${{ github.event.issue.number }}-$(date -u +%Y%m%dT%H%M%SZ)" >> $GITHUB_OUTPUT
 
       - name: Ack on issue
         env:
@@ -120,13 +121,6 @@ jobs:
             --run-dir=${{ steps.parse.outputs.run_dir }} \
             --output=${{ steps.parse.outputs.run_dir }}/portal-issues.json
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: geo-analysis-${{ github.event.issue.number }}-${{ github.run_id }}
-          path: ${{ steps.parse.outputs.run_dir }}/
-          retention-days: 90
-
       - name: Comment failure summary
         if: failure()
         shell: bash
@@ -146,7 +140,7 @@ jobs:
       startsWith(github.event.issue.title, '[GEO优化]') &&
       startsWith(github.event.comment.body, '/fix')
     runs-on: portal-x86
-    timeout-minutes: 30
+    timeout-minutes: 45
     concurrency:
       group: geo-bot-fix-${{ github.event.issue.number }}
       cancel-in-progress: false
@@ -165,7 +159,8 @@ jobs:
         id: prepare
         shell: bash
         run: |
-          RUN_DIR="geo-runs/${{ github.event.issue.number }}/fix-$(date -u +%Y%m%dT%H%M%SZ)"
+          # 中间文件丢到 runner 临时区(ADR-0015 + Round 17)
+          RUN_DIR="${RUNNER_TEMP}/geo-fix-${{ github.event.issue.number }}-$(date -u +%Y%m%dT%H%M%SZ)"
           mkdir -p "$RUN_DIR"
           echo "run_dir=$RUN_DIR" >> $GITHUB_OUTPUT
 
@@ -203,13 +198,6 @@ jobs:
           node scripts/execute-fix-runs.js \
             --payload=${{ steps.prepare.outputs.run_dir }}/fix-payload.json \
             --output=${{ steps.prepare.outputs.run_dir }}/fix-results.json
-
-      - name: Upload fix artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: geo-fix-${{ github.event.issue.number }}-${{ github.run_id }}
-          path: ${{ steps.prepare.outputs.run_dir }}/
-          retention-days: 90
 
       - name: Comment fix summary
         shell: bash

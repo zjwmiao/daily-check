@@ -264,6 +264,11 @@
   - **comment-fix-summary 增强**:把每个 run 的 opencode 修改清单(`output.md` 抓取的前 3500 字符)用 `<details>` 折叠块嵌入评论,作为决策轨迹
   - 新增 /fix `Upload fix artifact` step(已加),90d 内可下载 fix-payload/results/context 等
   - README + design.md 10.3-10.4 重写
+- 进一步简化(Round 17):中间文件连 artifact 也不再上传,统统丢 `${RUNNER_TEMP}/`,workflow 结束自动清理。所有"决策 + 修改点"在 issue 评论里:
+  - /analyze:report 评论(含 embed payload)+ portal issue + portal-issues 暴露在评论文本里
+  - /fix:fix summary 评论(含 PR 链接 + opencode `output.md` 折叠块)
+  - 失败时:`if: failure()` 步骤回评 + GH Actions run url
+  - 调试只需看 issue + run log,不需要下载 artifact 解压看 JSON
 
 ## ADR-0016: opencode 必须带 `--dangerously-skip-permissions`,否则 CI hang
 

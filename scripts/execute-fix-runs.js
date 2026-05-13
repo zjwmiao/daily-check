@@ -137,27 +137,32 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
   const agent = process.env.AI_AGENT || 'build';
   // 默认带 --dangerously-skip-permissions:opencode 的 build agent 在 CI 无 TTY 环境下,
   // 任何文件读写都会触发交互确认 → 永远 hang。参考 openEuler-portal-mirror 仓的实现。
-  const extra = process.env.AI_EXTRA_ARGS ?? '--dangerously-skip-permissions';
-  // 默认 10min(从原来的 20min 收紧);卡死时通过强杀进程组确保不再 zombie
-  const timeoutMs = Number(process.env.OPENCODE_TIMEOUT_MS || 10 * 60 * 1000);
+  // 注意用 || 而非 ?? — workflow 把 vars.AI_EXTRA_ARGS 未设时映射为 ''(空串),?? 不会触发 fallback
+  const extra = process.env.AI_EXTRA_ARGS || '--dangerously-skip-permissions';
+  // 大仓(如 openEuler-portal)glob/grep + LLM 思考累计可能十几分钟,默认 25min;真挂死靠进程组 SIGKILL 兜底
+  const timeoutMs = Number(process.env.OPENCODE_TIMEOUT_MS || 25 * 60 * 1000);
 
   const prompt = `${fs.readFileSync(agentFile, 'utf-8')}\n\n## 上下文\n\n${fs.readFileSync(contextFile, 'utf-8')}\n\n请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
 
-  log(`  🤖 starting opencode (model=${model}, agent=${agent}, timeout=${timeoutMs / 1000}s)`);
+  const opencodeArgs = ['run', '-', '--model', model, '--agent', agent, ...(extra ? extra.split(' ').filter(Boolean) : [])];
+  log(`  🤖 starting opencode (timeout=${timeoutMs / 1000}s)`);
+  log(`     bin: ${opencode}`);
+  log(`     args: ${JSON.stringify(opencodeArgs)}`);
+  log(`     cwd:  ${workDir}`);
   log(`     prompt size: ${prompt.length} chars`);
+  // 关键 env 透传(opencode 模型/网关认证常依赖这些)
+  for (const k of ['OPENCODE_API_KEY', 'OPENCODE_TOKEN', 'OPENCODE_CONFIG']) {
+    if (process.env[k]) log(`     env ${k}=<set, len=${process.env[k].length}>`);
+  }
   const t0 = Date.now();
 
   return new Promise((resolve) => {
     let timedOut = false;
-    const child = spawn(
-      opencode,
-      ['run', '-', '--model', model, '--agent', agent, ...(extra ? extra.split(' ').filter(Boolean) : [])],
-      {
-        stdio: ['pipe', 'inherit', 'inherit'],
-        cwd: workDir,
-        detached: true, // 开独立进程组,timeout 时能 kill 整个组(含 opencode 拉起的子进程)
-      }
-    );
+    const child = spawn(opencode, opencodeArgs, {
+      stdio: ['pipe', 'inherit', 'inherit'],
+      cwd: workDir,
+      detached: true, // 开独立进程组,timeout 时能 kill 整个组(含 opencode 拉起的子进程)
+    });
     // 喂 prompt 到 stdin
     child.stdin.write(prompt);
     child.stdin.end();

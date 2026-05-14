@@ -124,3 +124,6 @@ dist
 
 # mac
 .DS_Store
+
+# 调试现场,不再入仓 (已废弃,Round 22)
+geo-debug/

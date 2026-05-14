@@ -17,7 +17,7 @@
 {
   "portal": {"owner": "...", "repo": "...", "work_dir": "...", "base_branch": "..."},
   "fixes": [
-    {"url": "...", "issues": [{"severity": "...", "dimension": "...", "description": "...", "suggestion": "..."}]}
+    {"url": "...", "issues": [{"dimension": "...", "description": "...", "suggestion": "..."}]}
   ],
   "output_file": "<work_dir>/output.md"
 }

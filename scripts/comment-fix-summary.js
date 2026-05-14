@@ -34,17 +34,36 @@ function buildTriggerComment(results, runUrl) {
   const lines = [
     `## 🛠 修复结果`,
     '',
-    `| Community | geo issue | 状态 | PR |`,
-    `| --- | --- | --- | --- |`,
+    `| Community | geo issue | 状态 | Verify | Critic | PR |`,
+    `| --- | --- | --- | --- | --- | --- |`,
   ];
   for (const r of results) {
     const pr = r.pr_url ? `[${r.pr_number}](${r.pr_url})` : '-';
     const action = r.pr_action ? ` (${r.pr_action})` : '';
+    const verify = r.verify?.summary
+      ? `✅${r.verify.summary.fixed}/❌${r.verify.summary.still_failing}/⏭${r.verify.summary.deferred}`
+      : '-';
+    const critic = r.critic?.verdict
+      ? { pass: '🟢 pass', warn: '🟡 warn', block: '🔴 block' }[r.critic.verdict] || r.critic.verdict
+      : '-';
     lines.push(
-      `| ${r.community} | #${r.geo_issue_number} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${pr}${action} |`
+      `| ${r.community} | #${r.geo_issue_number} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${verify} | ${critic} | ${pr}${action} |`
     );
   }
   lines.push('');
+
+  // verify_failed / critic_blocked 的 run 把 critic body 也贴出来,便于人 review
+  for (const r of results) {
+    if (r.status !== 'critic_blocked') continue;
+    if (!r.critic_body) continue;
+    lines.push('');
+    lines.push(`<details open>`);
+    lines.push(`<summary>⛔ ${r.community} #${r.geo_issue_number} — critic 判 block,PR 未推</summary>`);
+    lines.push('');
+    lines.push(r.critic_body.slice(0, 3500));
+    lines.push('');
+    lines.push('</details>');
+  }
 
   // 每个成功的 run 把 agent 修改清单(opencode 写的 output.md)默认展开 + 渲染成 markdown
   // — 不用 ```text``` 包裹,让 ✅/⏭/❌ 列表直接展示,不显示原生符号

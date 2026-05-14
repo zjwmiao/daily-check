@@ -23,8 +23,6 @@ function parseArgs(argv) {
   return out;
 }
 
-const SEV = { critical: '🔴', important: '🟡', minor: '⚪' };
-
 // 把长 URL 截短给表格,避免 atomgit UI 撑爆
 function shortUrl(u, max = 64) {
   if (!u || u.length <= max) return u;
@@ -40,16 +38,15 @@ function cell(s) {
   return String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
-// 收集本 issue 所有 critical/important 问题(对外仓的开发者只看真正要改的)
+// 收集本 issue 所有 analyzer 标记的问题 — analyzer 出的都是确定性判定,无 severity 分级,全是"需要改"
+// preflight 失败的 URL 不进 portal issue(上游数据问题,要 geo-workflow 那边修)
 function collectProblems(issue) {
   const rows = [];
   for (const q of issue.questions || []) {
     for (const u of q.urls || []) {
-      if (!u.ok || u.scope_skipped) continue;
+      if (!u.ok || u.scope_skipped || u.preflight_failed) continue;
       for (const p of u.problems || []) {
-        if (p.severity !== 'critical' && p.severity !== 'important') continue;
         rows.push({
-          severity: p.severity,
           dimension: p.dimension || p.category || '-',
           url: u.url,
           description: p.description,
@@ -63,22 +60,19 @@ function collectProblems(issue) {
 
 function buildBody(issue) {
   const problems = collectProblems(issue);
-  const relations = [
-    `[geo-workflow #${issue.geo_issue_number}](${issue.geo_issue_url})`,
-    `severity \`${issue.severity || '-'}\``,
-  ].join(' · ');
-
-  const lines = [`**来源**: ${relations}`, ''];
+  const lines = [
+    `**来源**: [geo-workflow #${issue.geo_issue_number}](${issue.geo_issue_url})`,
+    '',
+  ];
 
   if (problems.length === 0) {
-    lines.push('_本 issue 当前没有 critical / important 级别的可发现性问题_');
+    lines.push('_本 issue 当前 analyzer 未检测到可发现性问题_');
   } else {
-    lines.push(`| Severity | Dimension | URL | Description |`);
-    lines.push(`| --- | --- | --- | --- |`);
+    lines.push(`| Dimension | URL | Description |`);
+    lines.push(`| --- | --- | --- |`);
     for (const p of problems) {
-      const sev = `${SEV[p.severity] || '·'} ${p.severity}`;
       const urlMd = `[${shortUrl(p.url)}](${p.url})`;
-      lines.push(`| ${cell(sev)} | ${cell(p.dimension)} | ${urlMd} | ${cell(p.description)} |`);
+      lines.push(`| ${cell(p.dimension)} | ${urlMd} | ${cell(p.description)} |`);
     }
   }
 
@@ -118,16 +112,16 @@ async function main() {
       console.error(`⚠ skip unsupported community: ${issue.community}`);
       continue;
     }
-    // 没有 critical/important 问题 → 不在 portal 仓刷外部可见的 issue(避免噪音)
+    // analyzer 没检测到问题(或全是 preflight 失败的)→ 不在 portal 仓刷外部可见的 issue
     if (collectProblems(issue).length === 0) {
-      log(`⏭ skip portal issue (no critical/important): ${issue.community} #${issue.geo_issue_number}`);
+      log(`⏭ skip portal issue (no actionable problems): ${issue.community} #${issue.geo_issue_number}`);
       records.push({
         community: issue.community,
         geo_issue_number: issue.geo_issue_number,
         portal_owner: community.portal_owner,
         portal_repo: community.portal_repo,
         skipped: true,
-        skip_reason: 'no critical/important problems',
+        skip_reason: 'no actionable problems',
       });
       continue;
     }

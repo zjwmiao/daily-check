@@ -19,12 +19,10 @@ function parseArgs(argv) {
   return out;
 }
 
-const SEV_ICON = { critical: '🔴', important: '🟡', minor: '⚪' };
-
 function renderProblems(problems) {
   if (!problems || problems.length === 0) return '_(无)_';
   return problems
-    .map((p) => `- ${SEV_ICON[p.severity] || '·'} **[${p.severity}/${p.dimension || p.category}]** ${p.description}${p.suggestion ? ` — 建议: ${p.suggestion}` : ''}`)
+    .map((p) => `- **[${p.dimension || p.category}]** ${p.description}${p.suggestion ? ` — 建议: ${p.suggestion}` : ''}`)
     .join('\n');
 }
 
@@ -35,10 +33,13 @@ function renderUrl(urlAnalysis) {
   if (urlAnalysis.scope_skipped) {
     return `**${urlAnalysis.url}**  ⏭ 跳过(非官网域,${urlAnalysis.scope_skipped_reason})`;
   }
+  if (urlAnalysis.preflight_failed) {
+    return `**${urlAnalysis.url}**  ⚠ preflight 未通过(${urlAnalysis.preflight_reason}: ${urlAnalysis.preflight_detail || '-'}),不进 fix payload,需上游校正`;
+  }
   const c = urlAnalysis.checks;
-  const score = `🔴 ${urlAnalysis.summary.critical} / 🟡 ${urlAnalysis.summary.important} / ⚪ ${urlAnalysis.summary.minor}`;
+  const total = urlAnalysis.summary?.total ?? (urlAnalysis.problems?.length || 0);
   return [
-    `**${urlAnalysis.url}**  ${urlAnalysis.pass ? '✅ PASS' : '❌ FAIL'}  (${score})`,
+    `**${urlAnalysis.url}**  ${urlAnalysis.pass ? '✅ PASS' : `❌ ${total} problem(s)`}`,
     '',
     `| 维度 | 结果 |`,
     `| --- | --- |`,
@@ -79,17 +80,17 @@ export function buildFixPayload(analysis, triggerIssue, portalIssuesIndex = new 
       const urls = [];
       for (const u of q.urls) {
         if (!u.ok) continue;
-        const problems = (u.problems || [])
-          .filter((p) => p.severity === 'critical' || p.severity === 'important')
-          .map((p) => ({
-            severity: p.severity,
-            dimension: p.dimension || p.category,
-            category: p.category,
-            description: p.description,
-            suggestion: p.suggestion,
-            expected: p.expected,
-            actual: p.actual,
-          }));
+        // P1: preflight 失败的 URL 不进 fix payload — 上游数据问题(URL 失效/重定向),agent 修不了
+        if (u.preflight_failed) continue;
+        // 不再按 severity 过滤 — analyzer 报的都是确定性问题,都需要改
+        const problems = (u.problems || []).map((p) => ({
+          dimension: p.dimension || p.category,
+          category: p.category,
+          description: p.description,
+          suggestion: p.suggestion,
+          expected: p.expected,
+          actual: p.actual,
+        }));
         if (problems.length === 0) continue;
         urls.push({ url: u.url, final_url: u.final_url, problems });
       }
@@ -139,8 +140,7 @@ function renderPayloadBlock(payload) {
 
 function aggregate(analysis) {
   let total = 0;
-  let crit = 0;
-  let imp = 0;
+  let preflightFailed = 0;
   let passUrls = 0;
   let totalUrls = 0;
   for (const issue of analysis.issues) {
@@ -148,14 +148,13 @@ function aggregate(analysis) {
       for (const u of q.urls) {
         totalUrls++;
         if (!u.ok) continue;
+        if (u.preflight_failed) preflightFailed++;
         if (u.pass) passUrls++;
-        total += u.summary.total;
-        crit += u.summary.critical;
-        imp += u.summary.important;
+        total += u.summary?.total || (u.problems?.length || 0);
       }
     }
   }
-  return { total, crit, imp, passUrls, totalUrls };
+  return { total, preflightFailed, passUrls, totalUrls };
 }
 
 async function main() {
@@ -193,9 +192,7 @@ async function main() {
     `| 项 | 值 |`,
     `| --- | --- |`,
     `| 涉及 geo-workflow issue | ${analysis.issues.length} 个 |`,
-    `| 分析 URL 数 | ${agg.totalUrls} (PASS: ${agg.passUrls}) |`,
-    `| 🔴 Critical | ${agg.crit} |`,
-    `| 🟡 Important | ${agg.imp} |`,
+    `| 分析 URL 数 | ${agg.totalUrls} (PASS: ${agg.passUrls}, preflight 失败: ${agg.preflightFailed}) |`,
     `| 问题总数 | ${agg.total} |`,
     '',
     `---`,

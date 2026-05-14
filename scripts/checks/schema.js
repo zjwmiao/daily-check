@@ -15,7 +15,6 @@ export function checkSchema(html) {
     } catch (err) {
       problems.push({
         category: 'schema.parse',
-        severity: 'critical',
         description: `JSON-LD 第 ${i + 1} 块解析失败: ${err.message}`,
       });
       blocks.push({ index: i, types: [], valid: false, error: err.message });
@@ -25,7 +24,6 @@ export function checkSchema(html) {
   if (blocks.length === 0) {
     problems.push({
       category: 'schema.missing',
-      severity: 'critical',
       description: '无 JSON-LD 结构化数据',
       suggestion: '按页面类型添加 Schema.org JSON-LD (Organization / Article / FAQPage 等)',
     });

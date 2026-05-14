@@ -60,7 +60,7 @@ async function main() {
             scope_skipped_reason: 'non-official host (e.g. forum/discuss/news)',
             checks: {},
             problems: [],
-            summary: { total: 0, critical: 0, important: 0, minor: 0 },
+            summary: { total: 0 },
             pass: true,
           });
           continue;

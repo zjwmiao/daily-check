@@ -113,9 +113,18 @@ async function revalidate(payload) {
             stillFailing.push({ url: u.url, why: `fetch failed: ${fresh.error}` });
             continue;
           }
-          const remaining = fresh.problems.filter((p) => p.severity === 'critical' || p.severity === 'important');
-          if (remaining.length > 0) {
-            stillFailing.push({ url: u.url, remaining });
+          // preflight 失败的 URL 现在算 "url 已失效",不阻断关闭;但单独记录
+          if (fresh.preflight_failed) {
+            stillFailing.push({
+              url: u.url,
+              preflight_failed: true,
+              why: `preflight: ${fresh.preflight_reason} — ${fresh.preflight_detail || ''}`,
+            });
+            continue;
+          }
+          // analyzer 出的 problems 没有 severity 分级,有就算还没修完
+          if ((fresh.problems || []).length > 0) {
+            stillFailing.push({ url: u.url, remaining: fresh.problems });
           }
         } catch (err) {
           stillFailing.push({ url: u.url, why: `revalidate exception: ${err.message}` });
@@ -123,7 +132,9 @@ async function revalidate(payload) {
       }
     }
   }
-  return { allCleared: stillFailing.length === 0, stillFailing };
+  // preflight 失败不应阻断闭环 — URL 已失效是上游数据状况,本仓修不了
+  const blockingFailures = stillFailing.filter((f) => !f.preflight_failed);
+  return { allCleared: blockingFailures.length === 0, stillFailing };
 }
 
 function countUrls(payload) {
@@ -250,7 +261,7 @@ async function main() {
       // 关闭 issue + 评论
       log(`  🎉 重验通过,关闭 issue`);
       const body =
-        `✅ **已验证关闭** — 所有 PR 均已 merge,4 维度重验通过(0 critical / 0 important problems)。\n\n` +
+        `✅ **已验证关闭** — 所有 PR 均已 merge,4 维度重验通过(0 problems)。\n\n` +
         `<!-- ${REVALIDATE_MARKER} pr-count=${prStatus.length} decision=pass at=${new Date().toISOString()} -->`;
       await retry(
         () => gh(tgtToken).post(`https://api.github.com/repos/${repo}/issues/${issue.number}/comments`, { body }),
@@ -286,7 +297,7 @@ async function main() {
         .slice(0, 10)
         .map((s) => {
           if (s.remaining) {
-            return `- ${s.url}\n  - ${s.remaining.map((p) => `[${p.severity}] ${p.dimension || p.category}: ${p.description}`).join('\n  - ')}`;
+            return `- ${s.url}\n  - ${s.remaining.map((p) => `[${p.dimension || p.category}] ${p.description}`).join('\n  - ')}`;
           }
           return `- ${s.url}\n  - ${s.why}`;
         })

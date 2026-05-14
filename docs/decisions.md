@@ -398,3 +398,58 @@
   - `scripts/open-portal-issues.js` `buildBody(issue)`:不再接 `triggerRepo/triggerIssue/runDir`;只取 critical/important 行,scope-skipped + minor 全部过滤;match PR 风格(关联行 + 表 + 脚注);本 issue 无 critical/important 直接跳过,不在 portal 建空 issue
   - PR / issue 不再外露 geo-develop trigger / runDir / `[GEO]` 内部状态字段
   - smoke-test:`portal_issue_url=https://atomgit.com/openeuler/openEuler-portal/issues/2842` 已能流到 payload JSON;PR body 渲染样例:`**关联**: [geo-workflow #21] · [portal issue #2842]\n\n<table>\n\n<sub>...</sub>\n\nCloses #2842`
+
+## ADR-0023: /fix 质量护栏 — pre-push 自检 + critic 反向审查
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: /fix 走 opencode + glm-5,prompt 是软约束 — agent 可能错改、漏改、过度修改、偏离白名单。当前唯一兜底是 geo-poll 重验 + 人 review portal PR。两者都有问题:① geo-poll 反馈周/月级,等不起;② review portal PR 没有"对照"可看,reviewer 没法快速判 PR 是不是真把问题修了。需要在 push 之前 + 在 PR body 上给两层质量护栏。
+- 选项:
+  - A. 维持现状(只靠 prompt + geo-poll 闭环)
+  - B. 加 pre-push 静态自检(可静态校验的维度立刻判 fixed/still_failing,blocking 不让 push)
+  - C. 加 critic agent(第二次 opencode,只读审查 diff + analysis,产出 pass/warn/block 判定)
+  - D. 上人工 review 闸门(`/confirm` `/apply`)
+- 决定: B + C(D 暂不上,如果误报 / 改错频发再考虑)
+- 理由: B 给"确凿的可验证"维度立即兜底(sitemap inclusion / tdk 长度),C 给"启发式 / LLM 偏差"维度增加一道"第三方眼睛";D 会显著降低自动化体感,留作后手。
+- 后果:
+  - 新增 `scripts/checks/post-fix-verify.js`:
+    - `parseAgentOutput(md)`:从 agent 自报清单(`✅ <url> <dim> — 改 <file>`)抽出 (url, dim, file, icon)
+    - 在 workDir 全树搜 `sitemap*.xml` 拉所有 `<loc>`,host 归一(走 `canonicalizeUrlHost`)再比对 target
+    - `tdk.{title,description,keywords}` 维度:打开 agent 自报的文件,读 frontmatter / `<meta>`,套阈值
+    - `schema` / `static_render`:标 `deferred`(需 build),由 geo-poll 重验闭环兜底
+    - 任一 status=still_failing → `blocking=true`
+  - `scripts/execute-fix-runs.js` 主循环:在 `runOpencode` 后、`pushAndPr` 前调用 verifier;`verify.blocking=true` 直接 `status=verify_failed`,不 push,本 run 算失败
+  - 新增 `.github/agents/geo-critic-prompt.md`:critic 角色 prompt,只读审查,产出 `Critic 结论: pass/warn/block`
+  - `runOpencode` 抽出 `options.{label,taskLine,timeoutMs}` 复用给 critic(critic 5min 超时)
+  - 新 `runCritic`:把 analysis + agent_output + verify + `git diff HEAD`(20k 截断)写成 JSON 上下文,跑第二次 opencode;critic block → 阻断 push,critic 输出贴到 trigger issue + PR body
+  - PR body 加 **Pre-push 自检 (Before → After)** 表 + **Critic (反向审查)** 块
+  - trigger issue 修复结果表加 `Verify` 列(fixed/still_failing/deferred 计数) + `Critic` 列(verdict badge)
+  - workflow `Execute fix runs` step 新增 env `CRITIC_AGENT_FILE` 指向 critic prompt;`CRITIC_DISABLE=1` 可本地调试关 critic
+  - smoke-test:fixture workDir 跑过 5 个用例(fixed×2、still_failing×2、deferred×1),summary 计数 + blocking 判定都对
+  - 后续观察:critic 在 glm-5 上的 verdict 一致性如果不稳,再加 `--temperature 0` / 换模型
+
+## ADR-0024: /analyze 质量护栏 — URL preflight + 取消 severity 分级
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: ADR-0023 解决了 /fix 侧的质量(改完是不是真改对了),但 /analyze 侧"判定是不是真有问题"还没护栏。两个具体问题:① official_urls 可能误填、页面下线、改路由 → URL 返回 404 / 重定向到根 / 空响应,但 analyzer 直接跑 4 维度判出一堆假问题;② 4 维度的 problem 之前按 critical/important/minor 三档分,但阈值都是经验拍的(title 10-60 / desc 50-160 / content_ratio < 0.5 等),分级标准没有 ground truth,等同于"既然要 fix,所有 analyzer 报的问题都要改"。三档分级:① 制造决策错觉(说服 reviewer "只看 critical"),② 让 buildFixPayload / planRunsFromPayload / portal-issue 几个地方都要带过滤逻辑,代码噪音多,③ 个别 minor 检查(tdk.keywords 缺失)其实根本不影响 AI 引用,但还在产噪音。
+- 选项:
+  - A. 维持现状(URL 误填靠人审,severity 分级照旧)
+  - B. URL preflight + 取消 severity:URL 异常进 url_unreachable 分支不跑 4 维度;每个 analyzer-detected problem 都视为"要改",废除 critical/important/minor 字段
+- 决定: B
+- 理由:
+  - preflight 是确定性逻辑、上游数据问题专责通道,避免 analyzer 跑出假数据污染下游
+  - severity 分级在我们这种"全是确定性规则"的检查体系里是伪复杂度 — 改的标准就一个:analyzer 标了 problem 就改。删除分级让代码更干净、PR / issue 显示更简单
+  - tdk.keywords 检查直接删:keywords meta 现代搜索/AI 引擎都不加权,改不改无影响
+- 后果:
+  - `scripts/analyze-discoverability.js`:加 `preflightUrl(url, httpResult)`,检查 status===200、body≥200 字符、final path 不是从非根跳到根。preflight 失败 → 返回 `{ ok: true, preflight_failed: true, preflight_reason, preflight_detail, problems: [{ category: 'preflight.xxx', dimension: 'preflight', ... }] }`,**不跑 4 维度**
+  - `scripts/checks/{tdk,schema,static-render,sitemap-inclusion}.js`:每个 problem 都去掉 `severity` 字段;`pass = problems.length === 0`(static-render 也统一,过去 skipBrowser 模式按 critical 算)
+  - `scripts/checks/tdk.js`:删除 keywords 检查(连同 `keywords` 字段返回)
+  - `scripts/run-analysis.js` + `analyze-discoverability.js`:`summary` 只剩 `{ total }`,不再有 critical/important/minor 计数
+  - `scripts/generate-report.js`:`SEV_ICON` 删除;`buildFixPayload` 不再按 severity 过滤,只过滤 `preflight_failed`;问题清单表去掉 Severity 列
+  - `scripts/execute-fix-runs.js`:`buildSlimContext` 不再透 severity 字段给 agent;`planRunsFromPayload` 的 skip_reason 改 'no problems to fix';PR body 表去掉 Severity 列
+  - `scripts/open-portal-issues.js`:`collectProblems` 收所有 analyzer problem(只剔 scope_skipped + preflight_failed);portal issue body 表去掉 Severity 列
+  - `scripts/poll-portal-status.js` `revalidate`:重验后 problems 数 > 0 就算 still_failing,不再按 severity 过滤;preflight_failed 的 URL 单独记录但**不阻断闭环**(URL 已失效是上游问题)
+  - `.github/agents/geo-fix-prompt.md`:input JSON 描述里删 `"severity"` 字段
+  - smoke-test:正常 URL → 2 problems, problems 全无 severity ✓;404 → fetchHttp 已经先 throw 走 ok:false 分支(preflight 不会被触发,顺其自然);preflight_failed 的 URL 不进 payload ✓
+  - 后续观察:线上跑一段时间统计 preflight_failed 比例;如果高,说明 geo-workflow 那边 official_urls 维护不及时,可以反向反馈给评估侧

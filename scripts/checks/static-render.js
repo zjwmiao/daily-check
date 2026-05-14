@@ -27,7 +27,6 @@ export async function checkStaticRender(url, { skipBrowser = false } = {}) {
     if (httpSignals.body_length < 500) {
       problems.push({
         category: 'static.empty_body',
-        severity: 'critical',
         description: `HTTP 抓取正文不足 500 字符(${httpSignals.body_length} 字符)`,
         suggestion: '页面可能完全依赖 JS 渲染,改 SSR/SSG',
       });
@@ -35,7 +34,6 @@ export async function checkStaticRender(url, { skipBrowser = false } = {}) {
     if (!httpSignals.has_h1) {
       problems.push({
         category: 'static.no_h1',
-        severity: 'important',
         description: 'HTTP 抓取无 H1 标签(skip-browser 模式下无法确认是否 JS 渲染缺失)',
         suggestion: '若 Browser 抓取有 H1 则需 SSR;否则需补 H1',
       });
@@ -45,7 +43,7 @@ export async function checkStaticRender(url, { skipBrowser = false } = {}) {
       mode: 'http-only',
       http: httpSignals,
       problems,
-      pass: problems.filter((p) => p.severity === 'critical').length === 0,
+      pass: problems.length === 0,
     };
   }
 
@@ -73,7 +71,6 @@ export async function checkStaticRender(url, { skipBrowser = false } = {}) {
   if (h1Diff) {
     problems.push({
       category: 'static.h1_missing',
-      severity: 'critical',
       description: 'HTTP 抓取无 H1,Browser 抓取有 H1(需 JS 渲染)',
       suggestion: '改 SSR/SSG,确保 H1 在静态 HTML 中',
     });
@@ -81,7 +78,6 @@ export async function checkStaticRender(url, { skipBrowser = false } = {}) {
   if (contentLoss) {
     problems.push({
       category: 'static.content_loss',
-      severity: 'critical',
       description: `HTTP 正文长度仅为 Browser 的 ${Math.round(ratio * 100)}%(< 50%)`,
       suggestion: '关键内容必须在静态 HTML 中输出',
       http_length: httpSignals.body_length,

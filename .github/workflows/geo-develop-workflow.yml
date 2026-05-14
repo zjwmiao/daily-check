@@ -214,6 +214,8 @@ jobs:
           TRIGGER_ISSUE: ${{ github.event.issue.number }}
           RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
           AGENT_FILE: ${{ github.workspace }}/.github/agents/geo-fix-prompt.md
+          # 反向审查 prompt — 设为空串关闭(整 run 时长会 -3~5min)
+          CRITIC_AGENT_FILE: ${{ github.workspace }}/.github/agents/geo-critic-prompt.md
         run: |
           node scripts/execute-fix-runs.js \
             --payload=${{ steps.prepare.outputs.run_dir }}/fix-payload.json \

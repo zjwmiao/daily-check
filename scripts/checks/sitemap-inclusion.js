@@ -56,7 +56,7 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
     return {
       dimension: 'sitemap_inclusion',
       problems: [
-        { category: 'sitemap.config', severity: 'critical', description: '未配置 sitemap URL' },
+        { category: 'sitemap.config', description: '未配置 sitemap URL' },
       ],
       pass: false,
     };
@@ -73,7 +73,6 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
       problems: [
         {
           category: 'sitemap.fetch',
-          severity: 'critical',
           description: `sitemap 拉取失败: ${err.message}`,
         },
       ],
@@ -90,7 +89,6 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
     : [
         {
           category: 'sitemap.not_included',
-          severity: 'critical',
           description: 'URL 未被 sitemap 收录',
           suggestion: '将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod',
           target_url: target,

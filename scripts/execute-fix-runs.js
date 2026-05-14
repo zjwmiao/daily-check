@@ -10,6 +10,7 @@ import {
   getPullRequest,
   PullRequestAlreadyExistsError,
 } from './lib/atomgit-api.js';
+import { verifyFixesInWorkDir } from './checks/post-fix-verify.js';
 
 // 用 env 控制 git 作者/提交者身份,不污染 repo 级 git config
 process.env.GIT_AUTHOR_NAME = process.env.GIT_AUTHOR_NAME || 'geo-develop-bot';
@@ -41,7 +42,7 @@ function planRunsFromPayload(payload) {
       }
     }
     if (flatProblems.length === 0) {
-      runs.push({ ...issue, skip: true, skip_reason: 'no critical/important problems' });
+      runs.push({ ...issue, skip: true, skip_reason: 'no problems to fix' });
       continue;
     }
     runs.push({
@@ -139,7 +140,7 @@ function clonePortal(run) {
   return workDir;
 }
 
-function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
+function runOpencode(run, workDir, agentFile, contextFile, outputFile, options = {}) {
   const opencode = process.env.OPENCODE_BIN || 'opencode';
   const model = process.env.AI_MODEL || 'alibaba-cn/glm-5';
   const agent = process.env.AI_AGENT || 'build';
@@ -148,19 +149,25 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
   // 注意用 || 而非 ?? — workflow 把 vars.AI_EXTRA_ARGS 未设时映射为 ''(空串),?? 不会触发 fallback
   const extra = process.env.AI_EXTRA_ARGS || '--dangerously-skip-permissions';
   // 大仓(如 openEuler-portal)glob/grep + LLM 思考累计可能十几分钟,默认 25min;真挂死靠进程组 SIGKILL 兜底
-  const timeoutMs = Number(process.env.OPENCODE_TIMEOUT_MS || 25 * 60 * 1000);
+  // critic 只读,5min 够用,允许外部 override
+  const timeoutMs =
+    options.timeoutMs ?? Number(process.env.OPENCODE_TIMEOUT_MS || 25 * 60 * 1000);
+  const label = options.label || 'fix';
+  const taskLine =
+    options.taskLine ||
+    `请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
 
-  const prompt = `${fs.readFileSync(agentFile, 'utf-8')}\n\n## 上下文\n\n${fs.readFileSync(contextFile, 'utf-8')}\n\n请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
+  const prompt = `${fs.readFileSync(agentFile, 'utf-8')}\n\n## 上下文\n\n${fs.readFileSync(contextFile, 'utf-8')}\n\n${taskLine}`;
 
   // prompt 落盘,失败时可在 runner 上手工 replay
   const ctxDir = path.dirname(contextFile);
-  const promptFile = path.join(ctxDir, `opencode-prompt-${run.community}-${run.geo_issue_number}.txt`);
+  const promptFile = path.join(ctxDir, `opencode-prompt-${label}-${run.community}-${run.geo_issue_number}.txt`);
   fs.writeFileSync(promptFile, prompt);
 
   const opencodeArgs = ['run', '-', '--model', model, '--agent', agent, ...(extra ? extra.split(' ').filter(Boolean) : [])];
   const argsShell = opencodeArgs.map((a) => (/[\s'"]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(' ');
 
-  log(`  🤖 starting opencode (timeout=${timeoutMs / 1000}s)`);
+  log(`  🤖 starting opencode [${label}] (timeout=${timeoutMs / 1000}s)`);
   log(`     bin: ${opencode}`);
   log(`     args: ${JSON.stringify(opencodeArgs)}`);
   log(`     cwd:  ${workDir}`);
@@ -229,7 +236,6 @@ function buildSlimContext(run, workDir, outputFile) {
   for (const p of run.problems || []) {
     if (!byUrl.has(p.url)) byUrl.set(p.url, { url: p.url, issues: [] });
     byUrl.get(p.url).issues.push({
-      severity: p.severity,
       dimension: p.dimension,
       description: p.description,
       ...(p.suggestion ? { suggestion: p.suggestion } : {}),
@@ -242,8 +248,6 @@ function buildSlimContext(run, workDir, outputFile) {
     output_file: outputFile,
   };
 }
-
-const SEV_ICON = { critical: '🔴', important: '🟡', minor: '⚪' };
 
 // 把长 URL 截短给表格用 — 避免在 atomgit UI 里把表格撑爆
 function shortUrl(u, max = 64) {
@@ -261,7 +265,14 @@ function cell(s) {
   return String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
-function buildPrBody(run) {
+const VERIFY_ICON = {
+  fixed: '✅',
+  still_failing: '❌',
+  deferred: '⏭',
+  unverifiable: '❓',
+};
+
+function buildPrBody(run, verify, critic) {
   // 顶部一行关联只贴对外可见、对维护人有用的:geo-workflow 原始 issue + portal issue。
   // 内部触发 issue(geo-develop)不外露 — 维护人不关心我们的协调仓。
   const relations = [
@@ -270,11 +281,49 @@ function buildPrBody(run) {
   ].filter(Boolean);
 
   const tableRows = run.problems.map((p) => {
-    const sev = `${SEV_ICON[p.severity] || '·'} ${p.severity}`;
     const dim = p.dimension || p.category || '-';
     const urlMd = `[${shortUrl(p.url)}](${p.url})`;
-    return `| ${cell(sev)} | ${cell(dim)} | ${urlMd} | ${cell(p.description)} |`;
+    return `| ${cell(dim)} | ${urlMd} | ${cell(p.description)} |`;
   });
+
+  // Before / After 自检表 — 让 reviewer 一眼看到这次改动是不是真把问题修了
+  const verifyBlock = [];
+  if (verify && verify.checks && verify.checks.length > 0) {
+    verifyBlock.push('');
+    verifyBlock.push(`**Pre-push 自检 (Before → After)**`);
+    verifyBlock.push('');
+    verifyBlock.push(`| 状态 | Dimension | URL | Before | After |`);
+    verifyBlock.push(`| --- | --- | --- | --- | --- |`);
+    for (const c of verify.checks) {
+      const icon = VERIFY_ICON[c.status] || '·';
+      verifyBlock.push(
+        `| ${icon} ${c.status} | ${cell(c.dimension)} | [${shortUrl(c.url)}](${c.url}) | ${cell(c.before)} | ${cell(c.after)} |`
+      );
+    }
+    if (verify.summary?.deferred || verify.summary?.unverifiable) {
+      verifyBlock.push('');
+      verifyBlock.push(
+        `<sub>⏭ deferred:需 portal build 后才能验(schema / static-render),由 geo-poll 重验闭环兜底。❓ unverifiable:agent 未给出可定位的改动位置。</sub>`
+      );
+    }
+  }
+
+  // Critic 块 — 反向审查结论 + 详情(折叠默认展开,reviewer 一眼看到)
+  const criticBlock = [];
+  if (critic && critic.body) {
+    const verdictBadge =
+      { pass: '🟢 pass', warn: '🟡 warn', block: '🔴 block' }[critic.verdict] ||
+      `❓ ${critic.verdict}`;
+    criticBlock.push('');
+    criticBlock.push(`**Critic (反向审查)**: ${verdictBadge}`);
+    criticBlock.push('');
+    criticBlock.push('<details open>');
+    criticBlock.push('<summary>📋 critic 输出</summary>');
+    criticBlock.push('');
+    criticBlock.push(critic.body);
+    criticBlock.push('');
+    criticBlock.push('</details>');
+  }
 
   // closes 引用让 atomgit 合并 PR 时自动关 portal issue;放在 body 末尾不破坏可读性
   const closes =
@@ -283,16 +332,75 @@ function buildPrBody(run) {
   return [
     `**关联**: ${relations.join(' · ')}`,
     '',
-    `| Severity | Dimension | URL | Description |`,
-    `| --- | --- | --- | --- |`,
+    `| Dimension | URL | Description |`,
+    `| --- | --- | --- |`,
     ...tableRows,
+    ...verifyBlock,
+    ...criticBlock,
     '',
     `<sub>由 geo-develop 自动化生成 · 改动应限于 \`schema\` / \`tdk\` / \`sitemap\` / \`prerender\` 等可发现性配置,review 时若发现正文/业务逻辑变动请直接 reject。</sub>`,
     closes,
   ].join('\n');
 }
 
-async function pushAndPr(run, workDir) {
+// 运行 critic agent — 输入 analysis + agent output + git diff + verify,产出 markdown 审查报告
+// critic 只读,有自己的 prompt(geo-critic-prompt.md),走同一 opencode 二开机制
+async function runCritic(run, workDir, ctxDir, agentOutput, verify) {
+  const criticPrompt = process.env.CRITIC_AGENT_FILE;
+  if (!criticPrompt || !fs.existsSync(criticPrompt)) {
+    log(`  ⚠ critic prompt 未配置(CRITIC_AGENT_FILE),跳过 critic`);
+    return null;
+  }
+
+  // 取 working tree 跟 HEAD 的 diff(agent 改完还没 commit,所以是工作树差异)
+  // 体积控制在 ~20k 字符(critic 上下文容量),超出截断
+  let diff = '';
+  try {
+    diff = sh('git diff --no-color HEAD', { cwd: workDir });
+  } catch {
+    diff = '(git diff 失败)';
+  }
+  if (diff.length > 20000) {
+    diff = diff.slice(0, 20000) + `\n\n... (截断,完整 diff 共 ${diff.length} 字符,见 runner artifact)`;
+  }
+
+  const contextPayload = {
+    portal: { owner: run.portal_owner, repo: run.portal_repo, base_branch: run.portal_base_branch },
+    problems: run.problems,
+    agent_output: agentOutput || '(empty)',
+    verify_summary: verify?.summary || null,
+    verify_checks: verify?.checks || [],
+    git_diff: diff,
+  };
+  const criticContextFile = path.join(
+    ctxDir,
+    `critic-context-${run.community}-${run.geo_issue_number}.json`
+  );
+  fs.writeFileSync(criticContextFile, JSON.stringify(contextPayload, null, 2));
+
+  const criticOut = path.join(
+    ctxDir,
+    `critic-output-${run.community}-${run.geo_issue_number}.md`
+  );
+
+  const oc = await runOpencode(run, workDir, criticPrompt, criticContextFile, criticOut, {
+    label: 'critic',
+    timeoutMs: 5 * 60 * 1000,
+    taskLine: `你是 critic,只审不改。请把审查结论(Markdown)写入 ${criticOut}。**不要执行任何 git 操作、不要修改任何文件**。`,
+  });
+  if (!oc.ok) {
+    log(`  ⚠ critic opencode 退出非 0(失败/超时),不阻断 push`);
+    return { ok: false, body: null, verdict: 'unknown' };
+  }
+  let body = '';
+  if (fs.existsSync(criticOut)) body = fs.readFileSync(criticOut, 'utf-8').slice(0, 4000);
+  const verdictMatch = body.match(/Critic 结论\s*[:：]\s*(pass|warn|block)/i);
+  const verdict = (verdictMatch && verdictMatch[1].toLowerCase()) || 'unknown';
+  log(`  🧐 critic verdict=${verdict}`);
+  return { ok: true, body, verdict };
+}
+
+async function pushAndPr(run, workDir, verify, critic) {
   // 双保险:即使 agent 没遵守 output_file,在 workDir 根写了 output.md / output-*.md,也清掉再 git add
   for (const f of fs.readdirSync(workDir)) {
     if (/^output(-.*)?\.md$/i.test(f)) {
@@ -318,7 +426,7 @@ async function pushAndPr(run, workDir) {
 
   log('  🔍 list existing PRs');
   const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;
-  const prBody = buildPrBody(run);
+  const prBody = buildPrBody(run, verify, critic);
 
   // AtomGit 的 head 过滤只认裸 branch,不认 GitHub 的 owner:branch — 传裸 branch
   const existing = await listPullRequests({
@@ -458,7 +566,7 @@ async function main() {
         JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2)
       );
 
-      log('  [3/4] runOpencode');
+      log('  [3/5] runOpencode');
       const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
       const ok = ocRes.ok;
       result.agent_ok = ok;
@@ -466,8 +574,48 @@ async function main() {
         result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
       }
 
-      log('  [4/4] pushAndPr');
-      const prRes = await pushAndPr(run, workDir);
+      log('  [4/6] pre-push verify (sitemap + tdk 就地校验)');
+      const verify = verifyFixesInWorkDir({
+        workDir,
+        agentOutput: result.agent_output || '',
+        problems: run.problems,
+        community: run.community,
+      });
+      result.verify = verify;
+      log(
+        `  📊 verify: fixed=${verify.summary.fixed} still_failing=${verify.summary.still_failing} deferred=${verify.summary.deferred} unverifiable=${verify.summary.unverifiable}`
+      );
+
+      // 任何静态可验维度仍 still_failing → 拒绝 push,本 run 标 verify_failed,
+      // workflow 末尾 throw 让整个 step 失败、`if:failure` 走回评分支
+      if (verify.blocking) {
+        result.status = 'verify_failed';
+        result.error = `pre-push 自检不通过: ${verify.summary.still_failing} 个 still_failing(详见 verify.checks)`;
+        log(`  ❌ ${result.error},跳过 push`);
+        results.push(result);
+        continue;
+      }
+
+      log('  [5/6] critic (反向审查;不阻断 push,只在 PR body 上贴结论)');
+      // CRITIC_DISABLE=1 给本地调试关闭(critic 多 ~3-5min)
+      const critic =
+        process.env.CRITIC_DISABLE === '1'
+          ? null
+          : await runCritic(run, workDir, ctxDir, result.agent_output || '', verify);
+      if (critic) result.critic = { verdict: critic.verdict, body_len: critic.body?.length || 0 };
+
+      // critic 判 block → 阻断 push(罕见,但 prompt 明确说只在红线问题确凿才 block)
+      if (critic?.verdict === 'block') {
+        result.status = 'critic_blocked';
+        result.error = `critic 判 block,详见 PR 不会推、issue 评论里有 critic 输出`;
+        result.critic_body = critic.body;
+        log(`  ⛔ ${result.error}`);
+        results.push(result);
+        continue;
+      }
+
+      log('  [6/6] pushAndPr');
+      const prRes = await pushAndPr(run, workDir, verify, critic);
       Object.assign(result, prRes);
 
       result.status = prRes.has_changes ? 'pr_created' : 'no_changes';

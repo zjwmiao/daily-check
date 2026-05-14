@@ -490,3 +490,39 @@
   - smoke-test:fixture dist 4 用例(schema fixed、tdk fixed、static_render still_failing、schema URL 没出产物 still_failing),全对;无 outputDir 时优雅降级 deferred
   - /fix 整体时长预计 +2–10min;portal 仓持久 cache 中 deps 不需要每次重装,首次 fresh clone 后 install 5min 是一次性的
   - 暂不做:portal 仓 CI hook(C 选项);build 缓存优化(增量 build)
+
+## ADR-0026: baseline build 前置 + agent prompt 内嵌 build 自检;workflow 失败状态聚合
+
+- 日期: 2026-05-15
+- 状态: 已采纳
+- 上下文: ADR-0025 加 portal build 之后,首次线上跑(`runs/25872209757`)在 `phase=install` 挂了:`pnpm install` 跑到 husky 的 `prepare` lifecycle 时炸了,stderr 被吞,workflow log 只剩"$ husky install"一行。三个问题暴露:① `execute-fix-runs.js` 末尾的失败聚合只看 `status==='error'`,`build_failed / verify_failed / critic_blocked` 三种 terminal 失败都没让 workflow 挂,整个 job 显示 success;② phase=install 失败 baseline 锅 / agent 锅一刀切归 agent;③ portal-build 错误捕获只看 stderr,pnpm 的 lifecycle script 输出常在 stdout。
+- 选项:
+  - A. 维持现状(失败一次就放弃,人工 review)
+  - B. **baseline build 前置** — agent 跑之前先 build 一次,失败甩锅 portal 维护;成功的话顺便把 deps + dist 都准备好
+  - C. **agent prompt 内嵌 build 自检** — prompt 里加"改完先 pnpm install 再 pnpm run build,失败就回滚到 build 通过为止"
+  - D. 第二轮 opencode 自救 — 第一轮 agent 跑完 build 挂了,起第二轮 opencode 把 stderr 喂回去再试
+- 决定: B + C(D 暂不上)
+- 理由:
+  - **B 的价值在归因**:phase=install 失败用 baseline 就能定性 — agent 还没下手,baseline 都构不动 → portal 仓 / runner 环境问题。多 1 次 build 换"清晰甩锅"很值
+  - **B 的次要价值在准备**:baseline 通过后 deps 装好 + 一份 dist 也在 workDir,agent 自检 build 就不用从零装依赖
+  - **C 让 agent 在自己 session 里闭环**:agent 是 opencode + glm-5,有 grep / tool use / 多步思考能力,改完自己 build 看 stderr 是最自然的迭代方式 — prompt 里要求"先 install 再 build,失败就回滚到 build 通过";自检不通过就写 ❌(下游硬验证会兜底,虚标 ✅ 会被抓出)
+  - **不上 D**:opencode 第二轮 session 失去第一轮的上下文,要重新 grep + 思考一遍;agent prompt 直接告知"自检通过才标 ✅"已经覆盖大部分场景。如果观察一段时间发现 build 一次过率 <50%,再考虑加 D
+- 后果:
+  - `scripts/lib/portal-build.js`:
+    - install / build 都加 `env: { HUSKY: '0', CI: '1' }`(husky 官方关 prepare 钩子的开关 — 本次 install 失败根因)
+    - 错误捕获改成 stdout + stderr 双通道,`merged.slice(-2000/-3000)` 入 `build.error`
+  - `scripts/execute-fix-runs.js`:流水线扩到 **8 步**
+    - `[1/8] clonePortal`
+    - `[2/8] portal baseline build`(新):跑通才进 agent;phase=install/build/detect-output 任一失败 → `status=baseline_failed`(明确归因:portal baseline 问题)
+    - `[3/8] write context`
+    - `[4/8] runOpencode`(agent prompt 强制要求自己跑 install + build 自检)
+    - `[5/8] portal build (post-agent)`(原 `[4/7]`):baseline 此前已通过 → 本次挂只能是 agent 改坏了,`status=build_failed`
+    - `[6/8] verify` / `[7/8] critic` / `[8/8] pushAndPr`(序号 +1)
+    - 末尾失败聚合 `FAILED_STATES = {error, baseline_failed, build_failed, verify_failed, critic_blocked}`,任一项 → throw,workflow step 失败
+    - baseline_failed / build_failed 时把 `error` 尾段 30 行打到 workflow log,免得每次都翻 trigger issue 评论
+    - 抽工具函数 `logBuildErrorTail(label, build)` 复用
+  - `.github/agents/geo-fix-prompt.md`:工作步骤加第 4 条"改完必须自检 build" — 先 `pnpm install` 再 `pnpm run build`,报错就看 stderr 修;跑不通的改动**优先回滚**并标 ❌;安全约束加一条"不要为了让 build 通过去乱动白名单外的文件"
+  - `scripts/comment-fix-summary.js`:Build 列优先看 baseline_build(失败时);baseline_failed / build_failed 都用 `<details open>` 贴 stderr,baseline_failed 文案明确"portal 仓 baseline 问题,跟 agent 无关"
+  - README pipeline 描述拉成 8 步;env 表 `GEO_BUILD_DISABLE` 现在同时关 baseline + post-agent build
+  - 时长预算:baseline build 比 post-agent build 慢(要装 deps,首次 5-10min;后续 cache 命中 <1min);post-agent build 因为 deps 已装通常 30s-2min。/fix 整体 +5-15min(首次)/ +2-5min(cache 命中)
+  - 后续观察:统计 baseline_failed 比例 → 高的话该催 portal 维护;统计 build_failed 比例 → 高且 stderr 看是语法错的话考虑加 D(self-heal)

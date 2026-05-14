@@ -81,7 +81,29 @@ function sh(cmd, cwd, timeoutMs) {
     encoding: 'utf-8',
     timeout: timeoutMs,
     maxBuffer: 100 * 1024 * 1024,
+    env: {
+      ...process.env,
+      // 关 husky prepare/postinstall hook — 我们只跑 build,用不到 git hooks
+      // 在 self-hosted runner 里 husky install 经常因 .husky/_/ 权限或 git config 不到位挂掉
+      HUSKY: '0',
+      CI: '1',
+      // pnpm v10+ 默认对未授权的 postinstall hook(esbuild / @parcel/watcher 等 native deps)
+      // 抛 ERR_PNPM_IGNORED_BUILDS 让 install exit 非零。我们 portal 仓做 build 需要这些 binary,
+      // 但又不能去改 portal 仓的 package.json 加 onlyBuiltDependencies。
+      // 这个 env 让 pnpm 降级为 warning(deps 实际照常装好),build 阶段再看是不是真缺 binary。
+      npm_config_fail_on_ignored_builds: 'false',
+    },
   });
+}
+
+// pnpm v10+ 的 ERR_PNPM_IGNORED_BUILDS — 不是真错(deps 已装好),只是 postinstall hook 被跳。
+// 用来在 install 抛错时判定要不要软放过
+function isPnpmIgnoredBuildsOnly(output) {
+  if (!output) return false;
+  if (!/ERR_PNPM_IGNORED_BUILDS/.test(output)) return false;
+  // 进一步排除真的失败 — install 真挂时通常带 ELIFECYCLE / ERR_PNPM_FETCH / 404 等
+  const realFailures = /(ELIFECYCLE|ERR_PNPM_FETCH|ENOENT|EACCES|ECONN|404 Not Found)/;
+  return !realFailures.test(output);
 }
 
 export async function buildPortal(
@@ -115,13 +137,27 @@ export async function buildPortal(
       sh(cmd, workDir, installTimeoutMs);
       log(`✅ deps installed in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     } catch (err) {
-      const tail = (err.stderr?.toString() || err.message || '').slice(-1000);
-      return {
-        ok: false,
-        phase: 'install',
-        error: `${pm} install failed: ${tail}`,
-        duration_ms: Date.now() - t0,
-      };
+      // pnpm 在 lifecycle 脚本失败时常常把真错放 stdout(scripts 输出)而不是 stderr,要都抓
+      const stderr = err.stderr?.toString() || '';
+      const stdout = err.stdout?.toString() || '';
+      const merged = [stdout, stderr].filter(Boolean).join('\n--- stderr ---\n').trim() || err.message;
+
+      // pnpm v10+ 的 ERR_PNPM_IGNORED_BUILDS:deps 其实装好了,只是 postinstall hook 被跳。
+      // 已经设了 npm_config_fail_on_ignored_builds=false,但如果 env 在某些 pnpm 版本上不生效,
+      // 这里再判一遍:错误体只含这一项 + node_modules 真有东西 → 视作软警告,继续 build
+      if (isPnpmIgnoredBuildsOnly(merged) && fs.existsSync(nm) && fs.readdirSync(nm).length > 0) {
+        log(`⚠ install 抛 ERR_PNPM_IGNORED_BUILDS 但 node_modules 已建立,视作软警告,继续 build`);
+        const ignored = merged.match(/Ignored build scripts:\s*([^\n]+)/)?.[1] || '?';
+        log(`  跳过的 postinstall:${ignored.slice(0, 200)}`);
+        log(`  ✅ deps installed (with warnings) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+      } else {
+        return {
+          ok: false,
+          phase: 'install',
+          error: `${pm} install failed (exit=${err.status ?? '?'}):\n${merged.slice(-2000)}`,
+          duration_ms: Date.now() - t0,
+        };
+      }
     }
   } else {
     log(`♻️  node_modules 已存在,跳过 install`);
@@ -133,11 +169,13 @@ export async function buildPortal(
   try {
     sh(`${pm} run ${buildScript}`, workDir, buildTimeoutMs);
   } catch (err) {
-    const tail = (err.stderr?.toString() || err.message || '').slice(-2000);
+    const stderr = err.stderr?.toString() || '';
+    const stdout = err.stdout?.toString() || '';
+    const merged = [stdout, stderr].filter(Boolean).join('\n--- stderr ---\n').trim() || err.message;
     return {
       ok: false,
       phase: 'build',
-      error: `${pm} run ${buildScript} failed: ${tail}`,
+      error: `${pm} run ${buildScript} failed (exit=${err.status ?? '?'}):\n${merged.slice(-3000)}`,
       duration_ms: Date.now() - beforeBuild,
     };
   }

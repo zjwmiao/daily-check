@@ -40,13 +40,17 @@ function buildTriggerComment(results, runUrl) {
   for (const r of results) {
     const pr = r.pr_url ? `[${r.pr_number}](${r.pr_url})` : '-';
     const action = r.pr_action ? ` (${r.pr_action})` : '';
-    const build = !r.build
+    // baseline_failed 时整个 run 还没进 build 步,baseline_build 才是失败现场
+    const buildInfo = r.baseline_build && !r.baseline_build.ok && !r.baseline_build.skipped
+      ? r.baseline_build
+      : r.build;
+    const build = !buildInfo
       ? '-'
-      : r.build.ok
-        ? `✅ ${(r.build.duration_ms / 1000).toFixed(0)}s`
-        : r.build.skipped
-          ? `⏭ ${r.build.reason || 'skipped'}`
-          : `❌ ${r.build.phase || 'failed'}`;
+      : buildInfo.ok
+        ? `✅ ${(buildInfo.duration_ms / 1000).toFixed(0)}s`
+        : buildInfo.skipped
+          ? `⏭ ${buildInfo.reason || 'skipped'}`
+          : `❌ ${buildInfo.phase || 'failed'}`;
     const verify = r.verify?.summary
       ? `✅${r.verify.summary.fixed}/❌${r.verify.summary.still_failing}/⏭${r.verify.summary.deferred}`
       : '-';
@@ -59,15 +63,24 @@ function buildTriggerComment(results, runUrl) {
   }
   lines.push('');
 
-  // build_failed 把 error tail 也贴出来 — agent 改坏 build 是要 review 的强信号
+  // baseline_failed / build_failed 把 error tail 贴出来给 reviewer 排查
   for (const r of results) {
-    if (r.status !== 'build_failed' || !r.build?.error) continue;
+    let label, errSource;
+    if (r.status === 'baseline_failed' && r.baseline_build?.error) {
+      label = `⚠ ${r.community} #${r.geo_issue_number} — portal baseline build 失败(phase=${r.baseline_build.phase}),agent 还没下手就坏了。这是 portal 仓 baseline 问题,跟 agent 无关,需人工排查 portal 仓 deps / runner 工具链`;
+      errSource = r.baseline_build.error;
+    } else if (r.status === 'build_failed' && r.build?.error) {
+      label = `❌ ${r.community} #${r.geo_issue_number} — post-agent build 失败(phase=${r.build.phase}),baseline 此前已通过 → agent 改动破坏了 build,PR 未推`;
+      errSource = r.build.error;
+    } else {
+      continue;
+    }
     lines.push('');
     lines.push(`<details open>`);
-    lines.push(`<summary>❌ ${r.community} #${r.geo_issue_number} — portal build 失败(phase=${r.build.phase}),PR 未推</summary>`);
+    lines.push(`<summary>${label}</summary>`);
     lines.push('');
     lines.push('```');
-    lines.push(r.build.error.slice(-2000));
+    lines.push(errSource.slice(-2000));
     lines.push('```');
     lines.push('');
     lines.push('</details>');

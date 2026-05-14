@@ -344,6 +344,14 @@ function buildPrBody(run, verify, critic) {
   ].join('\n');
 }
 
+// 把 portal build 的失败 stderr 尾段打到 workflow log(免得每次都翻 trigger issue 评论)
+function logBuildErrorTail(label, build) {
+  if (!build?.error) return;
+  log(`  --- ${label} error (phase=${build.phase}) ---`);
+  for (const line of build.error.split('\n').slice(-30)) log(`    ${line}`);
+  log(`  --- end ${label} error ---`);
+}
+
 // 运行 critic agent — 输入 analysis + agent output + git diff + verify,产出 markdown 审查报告
 // critic 只读,有自己的 prompt(geo-critic-prompt.md),走同一 opencode 二开机制
 async function runCritic(run, workDir, ctxDir, agentOutput, verify) {
@@ -554,10 +562,47 @@ async function main() {
     const tRun = Date.now();
 
     try {
-      log('  [1/7] clonePortal');
+      log('  [1/8] clonePortal');
       const workDir = clonePortal(run);
 
-      log('  [2/7] write context file');
+      // baseline build:进 agent 之前先证 portal baseline 自己构得动
+      // 失败 → 直接挂 + 状态 baseline_failed(跟 agent 无关,portal 维护人的事)
+      // 成功 → deps + dist 已在 workDir,agent 也能拿来跑 build 自检(prompt 里要求)
+      log('  [2/8] portal baseline build (前置 sanity — 跑不通直接 baseline_failed,不进 agent)');
+      let buildOutputDir = null;
+      let baselineSkipped = false;
+      if (process.env.GEO_BUILD_DISABLE === '1') {
+        log('  ⏭ GEO_BUILD_DISABLE=1,跳过 baseline + post-agent build,schema/static-render 走 deferred');
+        result.baseline_build = { skipped: true, reason: 'GEO_BUILD_DISABLE=1' };
+        baselineSkipped = true;
+      } else {
+        const baseline = await buildPortal(workDir);
+        result.baseline_build = {
+          ok: baseline.ok,
+          skipped: baseline.skipped,
+          reason: baseline.reason,
+          phase: baseline.phase,
+          duration_ms: baseline.duration_ms,
+          output_dir_rel: baseline.output_dir_rel,
+          error: baseline.error ? baseline.error.slice(0, 2000) : undefined,
+        };
+        if (baseline.ok) {
+          log(`  ✅ baseline build ok in ${(baseline.duration_ms / 1000).toFixed(1)}s → ${baseline.output_dir_rel}/`);
+        } else if (baseline.skipped) {
+          log(`  ⏭ baseline build 跳过: ${baseline.reason}(post-agent build 同样跳过,schema/static-render → deferred)`);
+          baselineSkipped = true;
+        } else {
+          // baseline 都构不动 — agent 没下手前就坏的,不归 agent
+          result.status = 'baseline_failed';
+          result.error = `portal baseline build 失败(phase=${baseline.phase}) — portal 仓本来就在我们环境里构不出来,不是 agent 的锅。请人工排查 portal 仓依赖 / runner 工具链 / 网络`;
+          log(`  ❌ ${result.error}`);
+          logBuildErrorTail('baseline build', baseline);
+          results.push(result);
+          continue;
+        }
+      }
+
+      log('  [3/8] write context file');
       const ctxDir = path.dirname(path.resolve(args.output));
       const contextFile = path.join(ctxDir, `fix-context-${run.community}-${run.geo_issue_number}.json`);
       // output.md 落在 ctxDir(runner 临时区),不落进 workDir(portal 仓),避免被 `git add -A` 提交进 PR
@@ -567,7 +612,7 @@ async function main() {
         JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2)
       );
 
-      log('  [3/7] runOpencode');
+      log('  [4/8] runOpencode (agent prompt 里要求改完自己跑 install + build,改坏的话自己看到 stderr)');
       const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
       const ok = ocRes.ok;
       result.agent_ok = ok;
@@ -575,11 +620,10 @@ async function main() {
         result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
       }
 
-      log('  [4/7] portal build (验证 agent 改动在构建产物里真生效)');
-      let buildOutputDir = null;
-      if (process.env.GEO_BUILD_DISABLE === '1') {
-        log('  ⏭ GEO_BUILD_DISABLE=1,跳过 build,schema / static-render 走 deferred 由 geo-poll 闭环兜底');
-        result.build = { skipped: true, reason: 'GEO_BUILD_DISABLE=1' };
+      log('  [5/8] portal build (post-agent — 验证 agent 改动后 build 仍通过,作为 agent 自检的硬验证)');
+      if (baselineSkipped) {
+        log('  ⏭ baseline 跳过,post-agent build 同样跳过');
+        result.build = { skipped: true, reason: 'baseline-skipped' };
       } else {
         const build = await buildPortal(workDir);
         result.build = {
@@ -589,25 +633,23 @@ async function main() {
           phase: build.phase,
           duration_ms: build.duration_ms,
           output_dir_rel: build.output_dir_rel,
-          // error 截短防止 fix-results.json 变巨
           error: build.error ? build.error.slice(0, 2000) : undefined,
         };
         if (build.ok) {
           buildOutputDir = build.output_dir;
-          log(`  ✅ build ok in ${(build.duration_ms / 1000).toFixed(1)}s → ${build.output_dir_rel}/`);
-        } else if (build.skipped) {
-          log(`  ⏭ build 跳过: ${build.reason}(schema/static-render 降级 deferred)`);
+          log(`  ✅ post-agent build ok in ${(build.duration_ms / 1000).toFixed(1)}s → ${build.output_dir_rel}/`);
         } else {
-          // build 失败是强信号:很可能是 agent 改坏了 build → 拒绝 push
+          // baseline 已通过 → 本次 build 挂只能是 agent 改坏了(JSON 语法 / YAML 缩进 / config 语义)
           result.status = 'build_failed';
-          result.error = `portal build 失败(phase=${build.phase}),很可能是 agent 改动破坏了 build;详见 PR 不会推`;
+          result.error = `post-agent portal build 失败(phase=${build.phase}) — baseline 此前已通过,说明 agent 改动破坏了 build`;
           log(`  ❌ ${result.error}`);
+          logBuildErrorTail('post-agent build', build);
           results.push(result);
           continue;
         }
       }
 
-      log('  [5/7] pre-push verify (sitemap + tdk + schema/static-render 全维度校验)');
+      log('  [6/8] pre-push verify (sitemap + tdk + schema/static-render 全维度校验)');
       const verify = verifyFixesInWorkDir({
         workDir,
         agentOutput: result.agent_output || '',
@@ -630,7 +672,7 @@ async function main() {
         continue;
       }
 
-      log('  [6/7] critic (反向审查;不阻断 push,只在 PR body 上贴结论)');
+      log('  [7/8] critic (反向审查;不阻断 push,只在 PR body 上贴结论)');
       // CRITIC_DISABLE=1 给本地调试关闭(critic 多 ~3-5min)
       const critic =
         process.env.CRITIC_DISABLE === '1'
@@ -648,7 +690,7 @@ async function main() {
         continue;
       }
 
-      log('  [7/7] pushAndPr');
+      log('  [8/8] pushAndPr');
       const prRes = await pushAndPr(run, workDir, verify, critic);
       Object.assign(result, prRes);
 
@@ -665,20 +707,30 @@ async function main() {
 
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
   fs.writeFileSync(args.output, JSON.stringify({ run_at: new Date().toISOString(), results }, null, 2));
-  const errored = results.filter((r) => r.status === 'error');
+  // FAILED = 没 PR / 没产物的所有 terminal 状态(error 是脚本异常,*_failed/*_blocked 是护栏拒绝)
+  // 任何一项 FAILED → workflow step 必须挂,让 `if:failure` 走回评分支,trigger issue 上看得到失败
+  const FAILED_STATES = new Set([
+    'error',
+    'baseline_failed',
+    'build_failed',
+    'verify_failed',
+    'critic_blocked',
+  ]);
+  const failed = results.filter((r) => FAILED_STATES.has(r.status));
   const okResults = results.filter((r) => r.status === 'pr_created' || r.status === 'no_changes');
   const skippedResults = results.filter((r) => r.status === 'skipped');
   log(
-    `🏁 all done: ${results.length} run(s) [ok=${okResults.length} skipped=${skippedResults.length} error=${errored.length}], total ${(
+    `🏁 all done: ${results.length} run(s) [ok=${okResults.length} skipped=${skippedResults.length} failed=${failed.length}], total ${(
       (Date.now() - T0) /
       1000
     ).toFixed(1)}s → ${args.output}`
   );
 
-  // strict: 任一 run 出错 → throw,让 workflow step 失败、if:failure 回评
-  if (errored.length > 0) {
-    const summary = errored.map((e) => `${e.community}#${e.geo_issue_number}: ${e.error}`).join('\n');
-    throw new Error(`execute-fix-runs 有 ${errored.length} 个 run 失败:\n${summary}`);
+  if (failed.length > 0) {
+    const summary = failed
+      .map((e) => `${e.community}#${e.geo_issue_number} [${e.status}]: ${e.error || '(no message)'}`)
+      .join('\n');
+    throw new Error(`execute-fix-runs 有 ${failed.length} 个 run 失败:\n${summary}`);
   }
 }
 

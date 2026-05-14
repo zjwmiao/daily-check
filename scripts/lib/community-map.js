@@ -46,3 +46,20 @@ export function isOfficialHost(community, url) {
     return false;
   }
 }
+
+// 把 community 的所有等价 host(openeuler.org / openeuler.openatom.cn …)归一化到 site_hosts[0]。
+// openEuler 双域名是同一份代码 + 构建环境变量切换,sitemap 仅产一份,匹配/收录判断必须先归一才不漏。
+export function canonicalizeUrlHost(community, url) {
+  const cfg = COMMUNITY_MAP[community];
+  if (!cfg) return url;
+  try {
+    const u = new URL(url);
+    if (cfg.site_hosts.includes(u.hostname) && u.hostname !== cfg.site_hosts[0]) {
+      u.hostname = cfg.site_hosts[0];
+      return u.toString();
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}

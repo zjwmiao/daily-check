@@ -46,20 +46,20 @@ function buildTriggerComment(results, runUrl) {
   }
   lines.push('');
 
-  // 每个成功的 run 把 agent 修改清单(opencode 写的 output.md)展开,作为决策轨迹
+  // 每个成功的 run 把 agent 修改清单(opencode 写的 output.md)默认展开 + 渲染成 markdown
+  // — 不用 ```text``` 包裹,让 ✅/⏭/❌ 列表直接展示,不显示原生符号
   for (const r of results) {
     if (!r.agent_output) continue;
     const trimmed = r.agent_output.trim();
     if (!trimmed) continue;
     lines.push('');
-    lines.push(`<details>`);
+    lines.push(`<details open>`);
     lines.push(
       `<summary>📝 ${r.community} #${r.geo_issue_number} — opencode 修改清单 (${r.pr_action || r.status})</summary>`
     );
     lines.push('');
-    lines.push('```text');
-    lines.push(trimmed.slice(0, 3500)); // 留出注释 + summary 框的空间,GH 评论限 65k
-    lines.push('```');
+    // 留出注释 + summary 框的空间,GH 评论限 65k;不再 fenced
+    lines.push(trimmed.slice(0, 3500));
     lines.push('');
     lines.push('</details>');
   }

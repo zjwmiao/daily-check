@@ -360,3 +360,23 @@
     - `listPullRequests` 传 `head: run.branch_name`(不再 `owner:branch`)
     - 抽出 `updateExisting(number)` 内部函数;create 抛 `PullRequestAlreadyExistsError` 时直接走 update
   - smoke-test:`head=geo/fix-openeuler-21` 命中 #3085;主动 createPR 同源分支被捕获为 `PullRequestAlreadyExistsError(existingNumber=3085, nonRetryable=true)` — 都跑通
+
+## ADR-0021: 评论与 PR 卫生 5 项(host 归一 / 路径不外泄 / 清单默认展开 / output 不入 PR / PR URL 不为 undefined)
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: /fix 走一轮后,issue 评论里的几个细节体验差:① openEuler 双域名 `openeuler.org` 与 `openeuler.openatom.cn` 是同代码 + 不同构建环境变量,sitemap 只产一份,导致 `openatom.cn` 的 URL 在 sitemap 比对时永远未收录,误报 critical;② workflow ack 评论里贴了 runner 临时路径 `/home/.../_temp/geo-fix-...`,既无意义又像调试残留;③ "opencode 修改清单"用 `<details>` 折叠 + ```text``` 包裹,用户得手动展开还看到原生 md 符号;④ agent 把 output.md 写到 portal 仓 work_dir,被 `git add -A` 提进 PR;⑤ updateExisting 走 PATCH 时 atomgit 偶尔返回空 body 或字段不全,导致评论表格里 PR 链接显示 undefined。
+- 选项:
+  - A. 维持现状,人工挑刺
+  - B. 一次性把这 5 点都修了
+- 决定: B
+- 后果:
+  - `scripts/lib/community-map.js`:导出 `canonicalizeUrlHost(community, url)` — 把 site_hosts 里的等价 host 全部映射到 `site_hosts[0]`(openEuler 的 canonical = `www.openeuler.org`)
+  - `scripts/checks/sitemap-inclusion.js`:`normalize()` 接受 community 参数,先归一 host 再比 path;`checkSitemapInclusion(url, sitemapUrl, community)` 透传 community
+  - `scripts/analyze-discoverability.js`:把 communityName 透传给 sitemap check
+  - `.github/workflows/geo-develop-workflow.yml`:`analyze` / `fix` 两个 Ack on issue 步骤的评论里去掉 `${run_dir}` / payload 路径
+  - `scripts/comment-fix-summary.js`:`<details>` → `<details open>`(默认展开);删 ```text``` 围栏,agent 输出按 markdown 渲染
+  - `scripts/execute-fix-runs.js`:`output.md` 落 ctxDir(runner 临时区)而不是 workDir;`buildSlimContext(run, workDir, outputFile)` 新参数;`pushAndPr` 入口加防御扫一次 workDir 根的 `output*.md` 删掉(agent 没遵守 output_file 也不入 PR)
+  - `scripts/execute-fix-runs.js` `updateExisting`:即使 PATCH 返回空 body,也用 `{ ...(updated || {}), number: updated?.number || number }` 保证 `pr.number` 非空,fallback URL `merge_requests/${pr.number}` 不会 undefined
+  - `scripts/execute-fix-runs.js` fallback 路径(`PullRequestAlreadyExistsError`):多调一次 `getPullRequest` 补 `html_url`,评论表格里直接是规范链接
+  - smoke-test:`https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting` + `openeuler.org/sitemap.xml` → included=true,problems=0(之前 critical/未收录)

@@ -56,7 +56,7 @@ export async function analyzeUrl(url, { skipBrowser = false, communityHint } = {
     checkStaticRender(url, { skipBrowser }),
     Promise.resolve(checkSchema(html)),
     Promise.resolve(checkTdk(html)),
-    checkSitemapInclusion(url, sitemapUrl),
+    checkSitemapInclusion(url, sitemapUrl, communityName),
   ]);
 
   const checks = {

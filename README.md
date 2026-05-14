@@ -1,4 +1,4 @@
-# Geo Develop
+# GEO Develop Workflow
 
 GEO 优化开发工作流的**协调仓**,在 GitHub Actions 上跑全闭环:`geo-workflow 评估侧产 P0 issue → 本仓 [GEO优化] 跟踪 → 4 维度分析 → 跨仓提 portal issue/PR → 线上重验 → 自动关闭`。
 

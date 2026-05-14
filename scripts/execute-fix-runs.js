@@ -7,6 +7,7 @@ import {
   createPullRequest,
   updatePullRequest,
   listPullRequests,
+  getPullRequest,
   PullRequestAlreadyExistsError,
 } from './lib/atomgit-api.js';
 
@@ -221,7 +222,7 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
 // 给 opencode 的精简上下文 — 去除冗余字段
 // 之前实测:analysis 字段跟 problems 数据重复(占 1100+ 字符),agent 不需要 question_text/category 等
 // 按 URL 聚合 problems,agent 一眼就知道每个 URL 要修什么
-function buildSlimContext(run, workDir) {
+function buildSlimContext(run, workDir, outputFile) {
   const byUrl = new Map();
   for (const p of run.problems || []) {
     if (!byUrl.has(p.url)) byUrl.set(p.url, { url: p.url, issues: [] });
@@ -235,11 +236,19 @@ function buildSlimContext(run, workDir) {
   return {
     portal: { owner: run.portal_owner, repo: run.portal_repo, work_dir: workDir, base_branch: run.portal_base_branch },
     fixes: [...byUrl.values()],
-    output_file: `${workDir}/output.md`,
+    // output 写到 portal 仓外,避免 `git add -A` 把清单一起 commit 进 PR(只走 issue 评论)
+    output_file: outputFile,
   };
 }
 
 async function pushAndPr(run, workDir) {
+  // 双保险:即使 agent 没遵守 output_file,在 workDir 根写了 output.md / output-*.md,也清掉再 git add
+  for (const f of fs.readdirSync(workDir)) {
+    if (/^output(-.*)?\.md$/i.test(f)) {
+      const p = path.join(workDir, f);
+      try { fs.unlinkSync(p); log(`  🧹 dropped rogue ${f} (agent wrote into work_dir; output 不进 PR)`); } catch {}
+    }
+  }
   log('  🔍 checking git status...');
   const status = sh('git status --porcelain', { cwd: workDir }).trim();
   if (!status) {
@@ -282,6 +291,8 @@ async function pushAndPr(run, workDir) {
     state: 'open',
   });
 
+  // 兜底:atomgit PATCH 偶尔返回空 body / 字段不全 → 强制把 number 补回去,
+  // 后续 prUrl fallback 才能拼出有效链接(否则 #undefined / merge_requests/undefined)
   async function updateExisting(number) {
     let pr;
     let action;
@@ -293,7 +304,7 @@ async function pushAndPr(run, workDir) {
         title: prTitle,
         body: prBody,
       });
-      pr = updated || { number };
+      pr = { ...(updated || {}), number: (updated && updated.number) || number };
       action = 'updated';
     } catch (err) {
       log(`  ⚠ updatePullRequest failed, reusing existing: ${err.message}`);
@@ -324,10 +335,24 @@ async function pushAndPr(run, workDir) {
       });
       action = 'created';
     } catch (err) {
-      // 竞态/lookup 漏:atomgit 已认为同源分支有 open MR,直接路由到 update
+      // 竞态/lookup 漏:atomgit 已认为同源分支有 open MR,直接路由到 update;
+      // 顺便 GET 一次拿规范 html_url,避免评论表格里 PR 链接是 undefined
       if (err instanceof PullRequestAlreadyExistsError) {
         log(`  ♻️  atomgit 报已有 PR (#${err.existingNumber}),fallback 到 update`);
         ({ pr, action } = await updateExisting(err.existingNumber));
+        if (!pr.html_url) {
+          try {
+            const fetched = await getPullRequest({
+              owner: run.portal_owner,
+              repo: run.portal_repo,
+              number: err.existingNumber,
+            });
+            if (fetched?.html_url) pr.html_url = fetched.html_url;
+            if (fetched?.url && !pr.url) pr.url = fetched.url;
+          } catch (e) {
+            log(`  ⚠ getPullRequest fallback also failed (will use fallback URL): ${e.message}`);
+          }
+        }
       } else {
         throw err;
       }
@@ -389,13 +414,14 @@ async function main() {
       log('  [2/4] write context file');
       const ctxDir = path.dirname(path.resolve(args.output));
       const contextFile = path.join(ctxDir, `fix-context-${run.community}-${run.geo_issue_number}.json`);
+      // output.md 落在 ctxDir(runner 临时区),不落进 workDir(portal 仓),避免被 `git add -A` 提交进 PR
+      const outputMd = path.join(ctxDir, `output-${run.community}-${run.geo_issue_number}.md`);
       fs.writeFileSync(
         contextFile,
-        JSON.stringify(buildSlimContext(run, workDir), null, 2)
+        JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2)
       );
 
       log('  [3/4] runOpencode');
-      const outputMd = path.join(workDir, 'output.md');
       const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
       const ok = ocRes.ok;
       result.agent_ok = ok;

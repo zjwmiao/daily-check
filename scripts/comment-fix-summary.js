@@ -34,12 +34,19 @@ function buildTriggerComment(results, runUrl) {
   const lines = [
     `## 🛠 修复结果`,
     '',
-    `| Community | geo issue | 状态 | Verify | Critic | PR |`,
-    `| --- | --- | --- | --- | --- | --- |`,
+    `| Community | geo issue | 状态 | Build | Verify | Critic | PR |`,
+    `| --- | --- | --- | --- | --- | --- | --- |`,
   ];
   for (const r of results) {
     const pr = r.pr_url ? `[${r.pr_number}](${r.pr_url})` : '-';
     const action = r.pr_action ? ` (${r.pr_action})` : '';
+    const build = !r.build
+      ? '-'
+      : r.build.ok
+        ? `✅ ${(r.build.duration_ms / 1000).toFixed(0)}s`
+        : r.build.skipped
+          ? `⏭ ${r.build.reason || 'skipped'}`
+          : `❌ ${r.build.phase || 'failed'}`;
     const verify = r.verify?.summary
       ? `✅${r.verify.summary.fixed}/❌${r.verify.summary.still_failing}/⏭${r.verify.summary.deferred}`
       : '-';
@@ -47,10 +54,24 @@ function buildTriggerComment(results, runUrl) {
       ? { pass: '🟢 pass', warn: '🟡 warn', block: '🔴 block' }[r.critic.verdict] || r.critic.verdict
       : '-';
     lines.push(
-      `| ${r.community} | #${r.geo_issue_number} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${verify} | ${critic} | ${pr}${action} |`
+      `| ${r.community} | #${r.geo_issue_number} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${build} | ${verify} | ${critic} | ${pr}${action} |`
     );
   }
   lines.push('');
+
+  // build_failed 把 error tail 也贴出来 — agent 改坏 build 是要 review 的强信号
+  for (const r of results) {
+    if (r.status !== 'build_failed' || !r.build?.error) continue;
+    lines.push('');
+    lines.push(`<details open>`);
+    lines.push(`<summary>❌ ${r.community} #${r.geo_issue_number} — portal build 失败(phase=${r.build.phase}),PR 未推</summary>`);
+    lines.push('');
+    lines.push('```');
+    lines.push(r.build.error.slice(-2000));
+    lines.push('```');
+    lines.push('');
+    lines.push('</details>');
+  }
 
   // verify_failed / critic_blocked 的 run 把 critic body 也贴出来,便于人 review
   for (const r of results) {

@@ -15,6 +15,8 @@
 import fs from 'fs';
 import path from 'path';
 import { canonicalizeUrlHost } from '../lib/community-map.js';
+import { checkSchema } from './schema.js';
+import { checkTdk } from './tdk.js';
 
 // agent prompt 约定每行格式:`✅ <url> <dimension> — 改 path/to/file (原因)`
 // 我们容忍点空格/全角差别,但需要拿出 url / dimension / file
@@ -140,17 +142,122 @@ const TITLE_MAX = 60;
 const DESC_MIN = 50;
 const DESC_MAX = 160;
 
+// 把 URL pathname 映射到 build 产物里的 HTML 文件 — 试常见 SSG 输出布局
+// /zh/security/vulnerability-reporting/ →
+//   1) <outputDir>/zh/security/vulnerability-reporting/index.html (vitepress / nuxt full-static)
+//   2) <outputDir>/zh/security/vulnerability-reporting.html (vite ssg)
+//   3) <outputDir>/zh/security/vulnerability-reporting (无后缀,有的框架直出)
+function resolveBuiltHtml(url, outputDir) {
+  let pathname;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return null;
+  }
+  const stripped = pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (stripped === '') {
+    const root = path.join(outputDir, 'index.html');
+    return fs.existsSync(root) ? root : null;
+  }
+  const candidates = [
+    path.join(outputDir, stripped, 'index.html'),
+    path.join(outputDir, stripped + '.html'),
+    path.join(outputDir, stripped),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+  }
+  return null;
+}
+
+// 用已构建的 HTML 跑该维度对应的 check,把 "deferred(build 后才能验)" 推到 fixed / still_failing
+function verifyFromBuiltHtml({ url, dimension, outputDir, beforeProblem }) {
+  const file = resolveBuiltHtml(url, outputDir);
+  if (!file) {
+    return {
+      status: 'still_failing',
+      before: beforeProblem?.description || '-',
+      after: `build 产物里找不到 ${new URL(url).pathname} 对应的 HTML`,
+      note: `URL 没在 build output 中产页面 — 可能 prerender 路由没配上 / URL 错填 / 框架不出该路径`,
+    };
+  }
+  const html = fs.readFileSync(file, 'utf-8');
+  if (dimension === 'schema') {
+    const r = checkSchema(html);
+    return r.pass
+      ? {
+          status: 'fixed',
+          before: beforeProblem?.description || 'schema 缺失',
+          after: `已嵌入 JSON-LD (${r.types.join(', ') || `${r.block_count} 块`})`,
+          file: path.relative(outputDir, file),
+        }
+      : {
+          status: 'still_failing',
+          before: beforeProblem?.description || 'schema 缺失',
+          after: `build 产物 ${r.block_count} 块 JSON-LD,${r.problems[0]?.description || '仍未通过'}`,
+          file: path.relative(outputDir, file),
+        };
+  }
+  if (dimension && dimension.startsWith('tdk')) {
+    const r = checkTdk(html);
+    return r.pass
+      ? {
+          status: 'fixed',
+          before: beforeProblem?.description || '-',
+          after: `title=${r.title_length}/desc=${r.description_length}(build 后达标)`,
+          file: path.relative(outputDir, file),
+        }
+      : {
+          status: 'still_failing',
+          before: beforeProblem?.description || '-',
+          after: r.problems[0]?.description || '仍不达标',
+          file: path.relative(outputDir, file),
+        };
+  }
+  if (dimension === 'static_render') {
+    // 有 HTML 文件本身就是静态化通过(SSG 出了页面);进一步看是否有 h1 + 正文长度
+    const h1 = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) || [])[1]?.replace(/<[^>]+>/g, '').trim();
+    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    const bodyText = (bodyMatch?.[1] || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    if (h1 && bodyText.length > 500) {
+      return {
+        status: 'fixed',
+        before: beforeProblem?.description || '内容差异',
+        after: `静态 HTML 已含 h1 + ${bodyText.length} 字符正文`,
+        file: path.relative(outputDir, file),
+      };
+    }
+    return {
+      status: 'still_failing',
+      before: beforeProblem?.description || '内容差异',
+      after: `build 产物 h1=${h1 ? '有' : '无'} / body=${bodyText.length} 字符,静态化仍未达标`,
+      file: path.relative(outputDir, file),
+    };
+  }
+  return {
+    status: 'unverifiable',
+    note: `dimension=${dimension} 没有 build-aware 校验逻辑`,
+  };
+}
+
 function verifyTdk({ url, dimension, file, workDir, beforeProblem }) {
   if (!file) {
     return {
       status: 'unverifiable',
+      before: beforeProblem?.description || '-',
+      after: 'agent 未给出可定位的改动文件',
       note: 'agent output 未给出 file 路径,无法在 workDir 定位',
     };
   }
   const abs = path.isAbsolute(file) ? file : path.join(workDir, file);
   const tdk = extractTdkFromFile(abs);
   if (!tdk) {
-    return { status: 'unverifiable', note: `读不到 ${file}` };
+    return {
+      status: 'unverifiable',
+      before: beforeProblem?.description || '-',
+      after: `读不到 ${file}`,
+      note: `读不到 ${file}`,
+    };
   }
   // 对应字段
   const sub = dimension.split('.')[1] || 'title';
@@ -179,7 +286,7 @@ function verifyTdk({ url, dimension, file, workDir, beforeProblem }) {
   };
 }
 
-export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community }) {
+export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community, outputDir }) {
   const records = parseAgentOutput(agentOutput);
   // url -> first record from agent
   const byUrlDim = new Map();
@@ -200,7 +307,7 @@ export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community
         dimension: p.dimension,
         status: 'deferred',
         before: p.description,
-        after: '-',
+        after: '⏭ agent 跳过未改',
         note: 'agent 自报跳过',
       });
       continue;
@@ -222,23 +329,43 @@ export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community
       const r = verifySitemap({ url: p.url, community }, sitemapLocs);
       checks.push({ url: p.url, dimension: p.dimension, ...r });
     } else if (p.dimension && p.dimension.startsWith('tdk')) {
-      const r = verifyTdk({
-        url: p.url,
-        dimension: p.dimension,
-        file: agentRec?.file || null,
-        workDir,
-        beforeProblem: p,
-      });
-      checks.push({ url: p.url, dimension: p.dimension, ...r });
+      // build 产物存在时优先用 build 后 HTML(frontmatter 改了但是否真生效要看渲染)
+      if (outputDir) {
+        const r = verifyFromBuiltHtml({ url: p.url, dimension: p.dimension, outputDir, beforeProblem: p });
+        checks.push({ url: p.url, dimension: p.dimension, ...r });
+      } else {
+        const r = verifyTdk({
+          url: p.url,
+          dimension: p.dimension,
+          file: agentRec?.file || null,
+          workDir,
+          beforeProblem: p,
+        });
+        checks.push({ url: p.url, dimension: p.dimension, ...r });
+      }
+    } else if (p.dimension === 'schema' || p.dimension === 'static_render') {
+      if (outputDir) {
+        // 有 build 产物 → 真验
+        const r = verifyFromBuiltHtml({ url: p.url, dimension: p.dimension, outputDir, beforeProblem: p });
+        checks.push({ url: p.url, dimension: p.dimension, ...r });
+      } else {
+        // 没 build(build_disabled / build 失败 / 仓没有 build 脚本)→ 延后到线上闭环
+        checks.push({
+          url: p.url,
+          dimension: p.dimension,
+          status: 'deferred',
+          before: p.description,
+          after: 'build 未跑,延后由 geo-poll 线上重验闭环',
+          note: 'schema / static_render 必须看构建产物,本次未跑 build',
+        });
+      }
     } else {
-      // schema / static_render → 需要 build 才能验
       checks.push({
         url: p.url,
         dimension: p.dimension,
-        status: 'deferred',
+        status: 'unverifiable',
         before: p.description,
-        after: '-',
-        note: '需 build 后才可静态校验,延后到 portal CI / geo-poll 重验',
+        after: `未知 dimension=${p.dimension},无验法`,
       });
     }
   }

@@ -453,3 +453,40 @@
   - `.github/agents/geo-fix-prompt.md`:input JSON 描述里删 `"severity"` 字段
   - smoke-test:正常 URL → 2 problems, problems 全无 severity ✓;404 → fetchHttp 已经先 throw 走 ok:false 分支(preflight 不会被触发,顺其自然);preflight_failed 的 URL 不进 payload ✓
   - 后续观察:线上跑一段时间统计 preflight_failed 比例;如果高,说明 geo-workflow 那边 official_urls 维护不及时,可以反向反馈给评估侧
+
+## ADR-0025: /fix 加 portal build 步骤 — schema / static-render 不再 "deferred 等线上"
+
+- 日期: 2026-05-15
+- 状态: 已采纳
+- 上下文: ADR-0023 给 /fix 加了 pre-push 自检,但 schema / static-render 这两个维度被标 `deferred`,延后到 geo-poll 重验闭环兜底。geo-poll 是 cron(目前 weekly,生产 4h),延迟以小时/天计;而且需要 portal 那边先 merge + 部署 才能看到。"不能只依赖线上"是对的 — workDir 里就有完整源码,本来就可以本地 build 出产物 HTML,直接验 JSON-LD 是否真嵌入了、静态 HTML 是否真有内容。如果 build 都跑不起来,那基本说明 agent 改坏了,这本身就是必须 block push 的强信号。
+- 选项:
+  - A. 维持 ADR-0023(schema/static-render 走 deferred)
+  - B. /fix 加 build 步骤:agent 改完 → workDir 里 `pnpm install` + `pnpm run build` → 拿到 dist → 在 dist 里 resolve URL→HTML → 跑 checkSchema / checkTdk 以及静态化校验。build 失败 = agent 改坏了 = 直接 `status=build_failed` 不 push
+  - C. 在 portal 仓 CI 做(workflow_run trigger)— 但需要 portal 维护方配合,我们不能控制
+- 决定: B(C 是 portal 侧的事,不在本仓范围)
+- 理由:
+  - build 是 portal 仓的"自有事实" — 跑通了就跑通了,验证比线上闭环可靠且快(2–10 min vs 4h–几天)
+  - build 失败这个信号在 ADR-0023 没被捕获 — agent 改个 schema 文件改错 JSON 也能"通过"自检,而 build 一跑就 100% 暴露
+  - 退路充足:`GEO_BUILD_DISABLE=1` 关闭、仓没 build 脚本时 skipped=true 优雅降级回 deferred
+- 后果:
+  - 新增 `scripts/lib/portal-build.js`:
+    - 检测 pm:`pnpm-lock.yaml` > `yarn.lock` > `package-lock.json` > 默认 `npm`
+    - 检测 build script:`build` > `docs:build` > `generate` > `build:prod`
+    - install 跳过(workDir 是 portal 持久 cache 默认 deps 已就位,首次跑才走 `--frozen-lockfile`)
+    - 默认 `installTimeoutMs=5min`、`buildTimeoutMs=10min`
+    - 探测 output dir:扫一组候选(`dist`、`.vitepress/dist`、`docs/.vitepress/dist`、`.output/public`、`out`、`build`、`public` 等),挑 build 之后 mtime 新的
+  - `scripts/checks/post-fix-verify.js`:`verifyFixesInWorkDir({...outputDir})` 多 `outputDir` 入参
+    - 新增 `resolveBuiltHtml(url, outputDir)`:URL pathname → 候选文件路径(`<path>/index.html`、`<path>.html`、裸 path),三种 SSG 输出布局都覆盖
+    - 新增 `verifyFromBuiltHtml({url, dimension, outputDir, beforeProblem})`:对 schema / static-render / tdk 三种维度跑真验
+      - schema:复用 `checkSchema()` 解 JSON-LD
+      - tdk:复用 `checkTdk()` 解 `<title>` + `<meta description>`(比 frontmatter 更接近真相)
+      - static_render:看 build HTML 有没有 h1 + body 长度 ≥500
+    - 主流程:`outputDir` 存在 → 维度走 `verifyFromBuiltHtml`,不存在 → 仍走 deferred 兜底
+  - `scripts/execute-fix-runs.js`:
+    - 新增 `[4/7] portal build` 步,放在 agent 之后、verify 之前;`buildOutputDir` 传给 verifier
+    - build 失败 → `status=build_failed`,**不 push**(强信号:agent 改坏了)
+    - `GEO_BUILD_DISABLE=1` 退路
+  - `scripts/comment-fix-summary.js`:trigger issue 修复结果表加 `Build` 列(`✅ Ns` / `⏭ skipped:reason` / `❌ phase`);`build_failed` 单独 `<details open>` 贴 build error 尾巴 2000 字符,给 reviewer 排查
+  - smoke-test:fixture dist 4 用例(schema fixed、tdk fixed、static_render still_failing、schema URL 没出产物 still_failing),全对;无 outputDir 时优雅降级 deferred
+  - /fix 整体时长预计 +2–10min;portal 仓持久 cache 中 deps 不需要每次重装,首次 fresh clone 后 install 5min 是一次性的
+  - 暂不做:portal 仓 CI hook(C 选项);build 缓存优化(增量 build)

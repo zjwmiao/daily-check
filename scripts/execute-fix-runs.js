@@ -11,6 +11,7 @@ import {
   PullRequestAlreadyExistsError,
 } from './lib/atomgit-api.js';
 import { verifyFixesInWorkDir } from './checks/post-fix-verify.js';
+import { buildPortal } from './lib/portal-build.js';
 
 // 用 env 控制 git 作者/提交者身份,不污染 repo 级 git config
 process.env.GIT_AUTHOR_NAME = process.env.GIT_AUTHOR_NAME || 'geo-develop-bot';
@@ -303,7 +304,7 @@ function buildPrBody(run, verify, critic) {
     if (verify.summary?.deferred || verify.summary?.unverifiable) {
       verifyBlock.push('');
       verifyBlock.push(
-        `<sub>⏭ deferred:需 portal build 后才能验(schema / static-render),由 geo-poll 重验闭环兜底。❓ unverifiable:agent 未给出可定位的改动位置。</sub>`
+        `<sub>deferred 由 geo-poll 闭环重验兜底;unverifiable = agent 没给出可定位的改动位置。</sub>`
       );
     }
   }
@@ -553,10 +554,10 @@ async function main() {
     const tRun = Date.now();
 
     try {
-      log('  [1/4] clonePortal');
+      log('  [1/7] clonePortal');
       const workDir = clonePortal(run);
 
-      log('  [2/4] write context file');
+      log('  [2/7] write context file');
       const ctxDir = path.dirname(path.resolve(args.output));
       const contextFile = path.join(ctxDir, `fix-context-${run.community}-${run.geo_issue_number}.json`);
       // output.md 落在 ctxDir(runner 临时区),不落进 workDir(portal 仓),避免被 `git add -A` 提交进 PR
@@ -566,7 +567,7 @@ async function main() {
         JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2)
       );
 
-      log('  [3/5] runOpencode');
+      log('  [3/7] runOpencode');
       const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
       const ok = ocRes.ok;
       result.agent_ok = ok;
@@ -574,12 +575,45 @@ async function main() {
         result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
       }
 
-      log('  [4/6] pre-push verify (sitemap + tdk 就地校验)');
+      log('  [4/7] portal build (验证 agent 改动在构建产物里真生效)');
+      let buildOutputDir = null;
+      if (process.env.GEO_BUILD_DISABLE === '1') {
+        log('  ⏭ GEO_BUILD_DISABLE=1,跳过 build,schema / static-render 走 deferred 由 geo-poll 闭环兜底');
+        result.build = { skipped: true, reason: 'GEO_BUILD_DISABLE=1' };
+      } else {
+        const build = await buildPortal(workDir);
+        result.build = {
+          ok: build.ok,
+          skipped: build.skipped,
+          reason: build.reason,
+          phase: build.phase,
+          duration_ms: build.duration_ms,
+          output_dir_rel: build.output_dir_rel,
+          // error 截短防止 fix-results.json 变巨
+          error: build.error ? build.error.slice(0, 2000) : undefined,
+        };
+        if (build.ok) {
+          buildOutputDir = build.output_dir;
+          log(`  ✅ build ok in ${(build.duration_ms / 1000).toFixed(1)}s → ${build.output_dir_rel}/`);
+        } else if (build.skipped) {
+          log(`  ⏭ build 跳过: ${build.reason}(schema/static-render 降级 deferred)`);
+        } else {
+          // build 失败是强信号:很可能是 agent 改坏了 build → 拒绝 push
+          result.status = 'build_failed';
+          result.error = `portal build 失败(phase=${build.phase}),很可能是 agent 改动破坏了 build;详见 PR 不会推`;
+          log(`  ❌ ${result.error}`);
+          results.push(result);
+          continue;
+        }
+      }
+
+      log('  [5/7] pre-push verify (sitemap + tdk + schema/static-render 全维度校验)');
       const verify = verifyFixesInWorkDir({
         workDir,
         agentOutput: result.agent_output || '',
         problems: run.problems,
         community: run.community,
+        outputDir: buildOutputDir,
       });
       result.verify = verify;
       log(
@@ -596,7 +630,7 @@ async function main() {
         continue;
       }
 
-      log('  [5/6] critic (反向审查;不阻断 push,只在 PR body 上贴结论)');
+      log('  [6/7] critic (反向审查;不阻断 push,只在 PR body 上贴结论)');
       // CRITIC_DISABLE=1 给本地调试关闭(critic 多 ~3-5min)
       const critic =
         process.env.CRITIC_DISABLE === '1'
@@ -614,7 +648,7 @@ async function main() {
         continue;
       }
 
-      log('  [6/6] pushAndPr');
+      log('  [7/7] pushAndPr');
       const prRes = await pushAndPr(run, workDir, verify, critic);
       Object.assign(result, prRes);
 

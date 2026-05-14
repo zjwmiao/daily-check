@@ -87,11 +87,26 @@ jobs:
             --output=${{ steps.parse.outputs.run_dir }}/analysis.json \
             ${{ vars.GEO_SKIP_BROWSER == 'true' && '--skip-browser' || '' }}
 
+      # 先开 portal issue,再生成报告 — 这样报告里的 fix-payload 能内嵌 portal_issue_url,
+      # /fix 拿到 payload 就有 portal_issue_url,后续 createPR 才能在 PR body 里链上 portal issue
+      - name: Open portal issues
+        shell: bash
+        env:
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+        run: |
+          node scripts/open-portal-issues.js \
+            --input=${{ steps.parse.outputs.run_dir }}/analysis.json \
+            --trigger-repo=${{ github.repository }} \
+            --trigger-issue=${{ github.event.issue.number }} \
+            --run-dir=${{ steps.parse.outputs.run_dir }} \
+            --output=${{ steps.parse.outputs.run_dir }}/portal-issues.json
+
       - name: Generate report
         shell: bash
         run: |
           node scripts/generate-report.js \
             --input=${{ steps.parse.outputs.run_dir }}/analysis.json \
+            --portal-issues=${{ steps.parse.outputs.run_dir }}/portal-issues.json \
             --output=${{ steps.parse.outputs.run_dir }}/report.md \
             --trigger-issue=${{ github.event.issue.number }}
 
@@ -108,18 +123,6 @@ jobs:
             -H "Content-Type: application/json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
             --data @/tmp/comment.json > /dev/null
-
-      - name: Open portal issues
-        shell: bash
-        env:
-          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
-        run: |
-          node scripts/open-portal-issues.js \
-            --input=${{ steps.parse.outputs.run_dir }}/analysis.json \
-            --trigger-repo=${{ github.repository }} \
-            --trigger-issue=${{ github.event.issue.number }} \
-            --run-dir=${{ steps.parse.outputs.run_dir }} \
-            --output=${{ steps.parse.outputs.run_dir }}/portal-issues.json
 
       - name: Comment failure summary
         if: failure()

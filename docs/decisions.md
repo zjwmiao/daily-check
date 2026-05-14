@@ -380,3 +380,21 @@
   - `scripts/execute-fix-runs.js` `updateExisting`:即使 PATCH 返回空 body,也用 `{ ...(updated || {}), number: updated?.number || number }` 保证 `pr.number` 非空,fallback URL `merge_requests/${pr.number}` 不会 undefined
   - `scripts/execute-fix-runs.js` fallback 路径(`PullRequestAlreadyExistsError`):多调一次 `getPullRequest` 补 `html_url`,评论表格里直接是规范链接
   - smoke-test:`https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting` + `openeuler.org/sitemap.xml` → included=true,problems=0(之前 critical/未收录)
+
+## ADR-0022: 对外可见物(portal PR / portal issue)正文重排 + 关联 portal issue + 隐藏内部协调
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: portal 仓的 PR 描述、portal 仓上的关联 issue 都是对外可见的工件,直接面对 portal 维护人 / 用户。之前两个问题:① PR 没引用 portal issue(maintainer 不知道这个 PR 修的是哪个跟踪 issue,merge 后也不会自动关 issue);② PR + issue 的版式都偏粗暴 — 多级 `## / ###` 大标题 + `[critical]` 平文标签 + 列表里塞所有 URL(包括没问题的 ✅);③ 把"geo-develop trigger #N"、`runDir` 这些内部协调字段也露给外部,既无意义又像泄露调试信息。
+- 选项:
+  - A. 维持现状
+  - B. PR / issue body 都重排:小字关联行 + 单张问题表 + `<sub>` 脚注;过滤掉无问题的 URL 和 scope-skipped 行;PR 加 `Closes #N` 让 atomgit 合并自动关 portal issue;移除 trigger / runDir 字段。
+- 决定: B
+- 理由: portal 维护人只关心"为什么这个 PR 存在、要 review 啥",geo-develop 的协调 issue 对他们是噪音。
+- 后果:
+  - 工作流顺序调整:`open-portal-issues` 改为先于 `generate-report` 跑,把 portal-issues.json 喂给 `generate-report` 的新参数 `--portal-issues`,让 payload 内嵌 `portal_issue_url` / `portal_issue_number`
+  - `scripts/generate-report.js` `buildFixPayload(analysis, triggerIssue, portalIssuesIndex)` — 按 `community#geo_issue_number` 查表注入 portal 字段;main 接受 `--portal-issues=...`
+  - `scripts/execute-fix-runs.js` `planRunsFromPayload`:把 issue.portal_issue_url / portal_issue_number 透传到 run;新 `buildPrBody(run)` 输出小字关联行 + 问题表 + `<sub>` 脚注;末尾追加 `Closes #N`
+  - `scripts/open-portal-issues.js` `buildBody(issue)`:不再接 `triggerRepo/triggerIssue/runDir`;只取 critical/important 行,scope-skipped + minor 全部过滤;match PR 风格(关联行 + 表 + 脚注);本 issue 无 critical/important 直接跳过,不在 portal 建空 issue
+  - PR / issue 不再外露 geo-develop trigger / runDir / `[GEO]` 内部状态字段
+  - smoke-test:`portal_issue_url=https://atomgit.com/openeuler/openEuler-portal/issues/2842` 已能流到 payload JSON;PR body 渲染样例:`**关联**: [geo-workflow #21] · [portal issue #2842]\n\n<table>\n\n<sub>...</sub>\n\nCloses #2842`

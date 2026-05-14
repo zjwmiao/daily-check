@@ -69,7 +69,7 @@ function renderIssue(issue) {
   return lines.join('\n');
 }
 
-export function buildFixPayload(analysis, triggerIssue) {
+export function buildFixPayload(analysis, triggerIssue, portalIssuesIndex = new Map()) {
   const issues = [];
   for (const issue of analysis.issues) {
     const community = getCommunity(issue.community);
@@ -97,6 +97,9 @@ export function buildFixPayload(analysis, triggerIssue) {
       questions.push({ id: q.id, question: q.question, official_urls: urls });
     }
     if (questions.length === 0) continue;
+    // 取出本 issue 对应的 portal issue(open-portal-issues 已建好/复用 ),没有就 null
+    const portalKey = `${issue.community}#${issue.geo_issue_number}`;
+    const portalRec = portalIssuesIndex.get(portalKey) || null;
     issues.push({
       community: issue.community,
       geo_issue_number: issue.geo_issue_number,
@@ -104,6 +107,8 @@ export function buildFixPayload(analysis, triggerIssue) {
       geo_issue_title: issue.geo_issue_title,
       severity: issue.severity,
       portal: { owner: community.portal_owner, repo: community.portal_repo, default_branch: community.portal_default_branch },
+      portal_issue_url: portalRec?.portal_issue_url || null,
+      portal_issue_number: portalRec?.portal_issue_number || null,
       questions,
     });
   }
@@ -162,6 +167,21 @@ async function main() {
   const analysis = JSON.parse(fs.readFileSync(args.input, 'utf-8'));
   const agg = aggregate(analysis);
 
+  // 可选:portal-issues.json(本轮 /analyze 同步建好的 portal issue 记录),没传就空表
+  const portalIssuesIndex = new Map();
+  if (args['portal-issues'] && fs.existsSync(args['portal-issues'])) {
+    try {
+      const pi = JSON.parse(fs.readFileSync(args['portal-issues'], 'utf-8'));
+      for (const r of pi.records || []) {
+        if (r.portal_issue_url) {
+          portalIssuesIndex.set(`${r.community}#${r.geo_issue_number}`, r);
+        }
+      }
+    } catch (err) {
+      console.error(`⚠ 解析 portal-issues.json 失败,忽略:${err.message}`);
+    }
+  }
+
   const lines = [
     `# GEO 可发现性分析报告`,
     '',
@@ -203,7 +223,7 @@ async function main() {
     lines.push(`> 评论 \`/fix\` 触发自动修复(将在对应 portal 仓提 PR)`);
   }
 
-  const payload = buildFixPayload(analysis, args['trigger-issue']);
+  const payload = buildFixPayload(analysis, args['trigger-issue'], portalIssuesIndex);
   lines.push(renderPayloadBlock(payload));
 
   const out = lines.filter((l) => l !== undefined).join('\n');

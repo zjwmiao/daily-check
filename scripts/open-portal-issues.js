@@ -25,42 +25,67 @@ function parseArgs(argv) {
 
 const SEV = { critical: '🔴', important: '🟡', minor: '⚪' };
 
-function buildBody(issue, triggerRepo, triggerIssue, runDir) {
-  const lines = [
-    `## 来源`,
-    '',
-    `- geo-workflow 原始 issue: ${issue.geo_issue_url}`,
-    `- geo-develop 触发 issue: https://github.com/${triggerRepo}/issues/${triggerIssue}`,
-    `- 严重度: **${issue.severity}** · 状态: ${issue.status || '-'}`,
-    `- 分析制品: \`${runDir}/\` (analysis.json + report.md)`,
-    '',
-    `## 涉及问题与 URL`,
-    '',
-  ];
+// 把长 URL 截短给表格,避免 atomgit UI 撑爆
+function shortUrl(u, max = 64) {
+  if (!u || u.length <= max) return u;
+  try {
+    const x = new URL(u);
+    return x.hostname + x.pathname.slice(0, max - x.hostname.length - 1) + '…';
+  } catch {
+    return u.slice(0, max - 1) + '…';
+  }
+}
 
-  for (const q of issue.questions) {
-    lines.push(`### ${q.id} — ${q.question}`);
-    lines.push('');
-    for (const u of q.urls) {
-      if (!u.ok) {
-        lines.push(`- ❌ ${u.url} — ${u.error}`);
-        continue;
-      }
-      const summary = `🔴 ${u.summary.critical} / 🟡 ${u.summary.important} / ⚪ ${u.summary.minor}`;
-      lines.push(`- ${u.pass ? '✅' : '❌'} ${u.url}  _(${summary})_`);
-      for (const p of u.problems) {
-        if (p.severity === 'critical' || p.severity === 'important') {
-          lines.push(`  - ${SEV[p.severity]} **${p.dimension}**: ${p.description}`);
-        }
+function cell(s) {
+  return String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+// 收集本 issue 所有 critical/important 问题(对外仓的开发者只看真正要改的)
+function collectProblems(issue) {
+  const rows = [];
+  for (const q of issue.questions || []) {
+    for (const u of q.urls || []) {
+      if (!u.ok || u.scope_skipped) continue;
+      for (const p of u.problems || []) {
+        if (p.severity !== 'critical' && p.severity !== 'important') continue;
+        rows.push({
+          severity: p.severity,
+          dimension: p.dimension || p.category || '-',
+          url: u.url,
+          description: p.description,
+          suggestion: p.suggestion,
+        });
       }
     }
-    lines.push('');
+  }
+  return rows;
+}
+
+function buildBody(issue) {
+  const problems = collectProblems(issue);
+  const relations = [
+    `[geo-workflow #${issue.geo_issue_number}](${issue.geo_issue_url})`,
+    `severity \`${issue.severity || '-'}\``,
+  ].join(' · ');
+
+  const lines = [`**来源**: ${relations}`, ''];
+
+  if (problems.length === 0) {
+    lines.push('_本 issue 当前没有 critical / important 级别的可发现性问题_');
+  } else {
+    lines.push(`| Severity | Dimension | URL | Description |`);
+    lines.push(`| --- | --- | --- | --- |`);
+    for (const p of problems) {
+      const sev = `${SEV[p.severity] || '·'} ${p.severity}`;
+      const urlMd = `[${shortUrl(p.url)}](${p.url})`;
+      lines.push(`| ${cell(sev)} | ${cell(p.dimension)} | ${urlMd} | ${cell(p.description)} |`);
+    }
   }
 
-  lines.push('---');
   lines.push('');
-  lines.push('> 该 Issue 由 geo-develop 自动化分析生成,后续修复 PR 将关联到本 Issue。');
-
+  lines.push(
+    `<sub>由 geo-develop 自动化分析生成 · 修复 PR 合并后将自动关闭本 issue。改动应限于 \`schema\` / \`tdk\` / \`sitemap\` / \`prerender\` 配置文件。</sub>`
+  );
   return lines.join('\n');
 }
 
@@ -93,10 +118,23 @@ async function main() {
       console.error(`⚠ skip unsupported community: ${issue.community}`);
       continue;
     }
+    // 没有 critical/important 问题 → 不在 portal 仓刷外部可见的 issue(避免噪音)
+    if (collectProblems(issue).length === 0) {
+      log(`⏭ skip portal issue (no critical/important): ${issue.community} #${issue.geo_issue_number}`);
+      records.push({
+        community: issue.community,
+        geo_issue_number: issue.geo_issue_number,
+        portal_owner: community.portal_owner,
+        portal_repo: community.portal_repo,
+        skipped: true,
+        skip_reason: 'no critical/important problems',
+      });
+      continue;
+    }
     // 题头前缀唯一标识(community + 原 issue 号),用于去重
     const titlePrefix = `[GEO] ${issue.community} #${issue.geo_issue_number}:`;
     const title = `${titlePrefix} ${issue.geo_issue_title}`;
-    const body = buildBody(issue, triggerRepo, triggerIssue, runDir);
+    const body = buildBody(issue);
 
     if (dryRun) {
       log(`[dry-run] would create/update on ${community.portal_owner}/${community.portal_repo}: ${title}`);

@@ -52,6 +52,8 @@ function planRunsFromPayload(payload) {
       portal_owner: issue.portal.owner,
       portal_repo: issue.portal.repo,
       portal_base_branch: issue.portal.default_branch || 'master',
+      portal_issue_url: issue.portal_issue_url || null,
+      portal_issue_number: issue.portal_issue_number || null,
       branch_name: `geo/fix-${issue.community.toLowerCase()}-${issue.geo_issue_number}`,
       problems: flatProblems,
       issue_payload: issue,
@@ -241,6 +243,55 @@ function buildSlimContext(run, workDir, outputFile) {
   };
 }
 
+const SEV_ICON = { critical: '🔴', important: '🟡', minor: '⚪' };
+
+// 把长 URL 截短给表格用 — 避免在 atomgit UI 里把表格撑爆
+function shortUrl(u, max = 64) {
+  if (!u || u.length <= max) return u;
+  try {
+    const x = new URL(u);
+    return x.hostname + x.pathname.slice(0, max - x.hostname.length - 1) + '…';
+  } catch {
+    return u.slice(0, max - 1) + '…';
+  }
+}
+
+// 安全地用在 markdown 表格单元格里 — 转义 `|` 和换行
+function cell(s) {
+  return String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+function buildPrBody(run) {
+  // 顶部一行关联只贴对外可见、对维护人有用的:geo-workflow 原始 issue + portal issue。
+  // 内部触发 issue(geo-develop)不外露 — 维护人不关心我们的协调仓。
+  const relations = [
+    `[geo-workflow #${run.geo_issue_number}](${run.geo_issue_url})`,
+    run.portal_issue_url ? `[portal issue #${run.portal_issue_number}](${run.portal_issue_url})` : null,
+  ].filter(Boolean);
+
+  const tableRows = run.problems.map((p) => {
+    const sev = `${SEV_ICON[p.severity] || '·'} ${p.severity}`;
+    const dim = p.dimension || p.category || '-';
+    const urlMd = `[${shortUrl(p.url)}](${p.url})`;
+    return `| ${cell(sev)} | ${cell(dim)} | ${urlMd} | ${cell(p.description)} |`;
+  });
+
+  // closes 引用让 atomgit 合并 PR 时自动关 portal issue;放在 body 末尾不破坏可读性
+  const closes =
+    run.portal_issue_number != null ? `\nCloses #${run.portal_issue_number}` : '';
+
+  return [
+    `**关联**: ${relations.join(' · ')}`,
+    '',
+    `| Severity | Dimension | URL | Description |`,
+    `| --- | --- | --- | --- |`,
+    ...tableRows,
+    '',
+    `<sub>由 geo-develop 自动化生成 · 改动应限于 \`schema\` / \`tdk\` / \`sitemap\` / \`prerender\` 等可发现性配置,review 时若发现正文/业务逻辑变动请直接 reject。</sub>`,
+    closes,
+  ].join('\n');
+}
+
 async function pushAndPr(run, workDir) {
   // 双保险:即使 agent 没遵守 output_file,在 workDir 根写了 output.md / output-*.md,也清掉再 git add
   for (const f of fs.readdirSync(workDir)) {
@@ -266,22 +317,8 @@ async function pushAndPr(run, workDir) {
   log(`  ✅ pushed to ${run.branch_name} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   log('  🔍 list existing PRs');
-  const triggerRepo = process.env.TRIGGER_REPO;
-  const triggerIssue = process.env.TRIGGER_ISSUE;
   const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;
-  const prBody = [
-    `## 自动化 GEO 修复`,
-    ``,
-    `- 关联 geo-workflow issue: ${run.geo_issue_url}`,
-    `- 触发 issue: https://github.com/${triggerRepo}/issues/${triggerIssue}`,
-    run.portal_issue_url ? `- portal issue: ${run.portal_issue_url}` : '',
-    ``,
-    `### 问题清单(critical + important)`,
-    ``,
-    ...run.problems.map((p) => `- [${p.severity}] ${p.dimension || p.category} @ ${p.url}: ${p.description}`),
-  ]
-    .filter((l) => l !== '')
-    .join('\n');
+  const prBody = buildPrBody(run);
 
   // AtomGit 的 head 过滤只认裸 branch,不认 GitHub 的 owner:branch — 传裸 branch
   const existing = await listPullRequests({

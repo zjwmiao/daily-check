@@ -125,7 +125,8 @@ async function buildIssueForCommunity(community, targetIssueNumber) {
     candidates.push({
       community,
       geo_issue_number: mapEntry.issue_number,
-      geo_issue_url: mapEntry.issue_url,
+      // issue-map.json 偶尔缺 issue_url 字段 → 用 GEO_REPO + 编号兜底构造,避免下游渲染成死链
+      geo_issue_url: mapEntry.issue_url || `https://github.com/${GEO_REPO}/issues/${mapEntry.issue_number}`,
       geo_issue_title: mapEntry.title_summary,
       severity: mapEntry.severity,
       status: mapEntry.status,

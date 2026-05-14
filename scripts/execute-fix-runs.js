@@ -195,18 +195,86 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
       const dur = ((Date.now() - t0) / 1000).toFixed(1);
+      const meta = { promptFile, opencode, argsShell };
       if (timedOut) {
         log(`  ❌ opencode TIMEOUT after ${dur}s (limit: ${timeoutMs / 1000}s)`);
-        resolve(false);
+        resolve({ ok: false, ...meta });
       } else if (signal) {
         log(`  ❌ opencode killed by signal=${signal} after ${dur}s`);
-        resolve(false);
+        resolve({ ok: false, ...meta });
       } else {
         log(`  ✅ opencode exit=${code} in ${dur}s`);
-        resolve(code === 0);
+        resolve({ ok: code === 0, ...meta });
       }
     });
   });
+}
+
+// 把本次 agent 执行的命令 + prompt + output 落到本仓 geo-debug/ 一次 commit
+function commitDebugArtifact({ run, promptFile, argsShell, opencode, outputMd, agentOk }) {
+  const repoRoot = process.env.GITHUB_WORKSPACE || process.cwd();
+  const triggerIssue = process.env.TRIGGER_ISSUE || 'unknown';
+  const ts = process.env.GEO_DEBUG_RUN_TS; // 由 main() 在 run 开始时统一设置,确保同一 /fix 的所有 community 在同 dir
+  if (!ts) {
+    log('  ⚠ GEO_DEBUG_RUN_TS 未设,跳过 geo-debug commit');
+    return;
+  }
+  const dirRel = `geo-debug/issue-${triggerIssue}/fix-${ts}`;
+  const dirAbs = path.join(repoRoot, dirRel);
+  fs.mkdirSync(dirAbs, { recursive: true });
+
+  const slug = `${run.community}-${run.geo_issue_number}`;
+  // 1) prompt
+  fs.copyFileSync(promptFile, path.join(dirAbs, `${slug}-prompt.txt`));
+  // 2) 复现命令
+  const cmdSh = [
+    '#!/usr/bin/env bash',
+    '# 本次 agent 执行的真实命令(可在 runner 或本地 SSH 后直接跑)',
+    '# 前置:已 clone 对应 portal 仓 + opencode 已 config',
+    'set -eu',
+    '',
+    `# 复现 cwd(以下二选一,看你环境)`,
+    `# a) runner: cd ~/.cache/geo-bot/portals/${run.portal_owner}-${run.portal_repo}`,
+    `# b) 本地: git clone --depth=1 --branch=${run.portal_base_branch} \\`,
+    `#       https://oauth2:$ATOMGIT_TOKEN@atomgit.com/${run.portal_owner}/${run.portal_repo}.git /tmp/${run.portal_repo}`,
+    `#    cd /tmp/${run.portal_repo}`,
+    '',
+    `cat ${slug}-prompt.txt | ${opencode} ${argsShell}`,
+  ].join('\n');
+  fs.writeFileSync(path.join(dirAbs, `${slug}-command.sh`), cmdSh);
+  // 3) agent 输出(若有)
+  if (outputMd && fs.existsSync(outputMd)) {
+    fs.copyFileSync(outputMd, path.join(dirAbs, `${slug}-output.md`));
+  }
+
+  // git add + commit + push,失败不阻塞主流程
+  try {
+    sh(`git add ${dirRel}`, { cwd: repoRoot });
+    let hasChanges = true;
+    try {
+      sh('git diff --cached --quiet', { cwd: repoRoot });
+      hasChanges = false;
+    } catch {
+      hasChanges = true;
+    }
+    if (!hasChanges) {
+      log('  ⏭ geo-debug 无新内容,跳过 commit');
+      return;
+    }
+    const msg = `chore(geo-debug): ${run.community}#${run.geo_issue_number} agent run (issue#${triggerIssue}, agent_ok=${agentOk})`;
+    sh(`git commit -m "${msg.replace(/"/g, '\\"')}"`, { cwd: repoRoot });
+    // push,失败时 rebase 一次再试
+    try {
+      sh('git push origin HEAD:main', { cwd: repoRoot });
+    } catch {
+      log('  ⚠ push 冲突,尝试 pull --rebase 后重试');
+      sh('git pull --rebase origin main', { cwd: repoRoot });
+      sh('git push origin HEAD:main', { cwd: repoRoot });
+    }
+    log(`  📝 geo-debug 提交: ${dirRel}/${slug}-*`);
+  } catch (err) {
+    log(`  ⚠ geo-debug commit 失败(不阻塞主流程): ${err.message.split('\n')[0]}`);
+  }
 }
 
 async function pushAndPr(run, workDir) {
@@ -310,6 +378,12 @@ async function main() {
   const active = runs.length - skipped;
   log(`📋 planned ${runs.length} run(s): ${active} active, ${skipped} skipped`);
 
+  // 同一 /fix 的所有 community 共享 geo-debug/issue-N/fix-{ts}/ 目录
+  if (!process.env.GEO_DEBUG_RUN_TS) {
+    process.env.GEO_DEBUG_RUN_TS = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + 'Z';
+  }
+  log(`🧪 geo-debug run dir: geo-debug/issue-${process.env.TRIGGER_ISSUE}/fix-${process.env.GEO_DEBUG_RUN_TS}/`);
+
   const results = [];
   let idx = 0;
   for (const run of runs) {
@@ -354,11 +428,22 @@ async function main() {
 
       log('  [3/4] runOpencode');
       const outputMd = path.join(workDir, 'output.md');
-      const ok = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
+      const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
+      const ok = ocRes.ok;
       result.agent_ok = ok;
       if (fs.existsSync(outputMd)) {
         result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
       }
+
+      // 落 geo-debug 一次 commit(把本次 agent 的 prompt + command + output 入仓)
+      commitDebugArtifact({
+        run,
+        promptFile: ocRes.promptFile,
+        argsShell: ocRes.argsShell,
+        opencode: ocRes.opencode,
+        outputMd,
+        agentOk: ok,
+      });
 
       log('  [4/4] pushAndPr');
       const prRes = await pushAndPr(run, workDir);

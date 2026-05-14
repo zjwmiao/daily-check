@@ -25,6 +25,7 @@ function client() {
 }
 
 // 通用重试:网络错误 + 5xx + 429,指数退避
+// 业务异常(err.nonRetryable=true)直接抛,不再尝试
 async function retry(fn, { label = 'http', max = 3, baseDelayMs = 1000 } = {}) {
   let lastErr;
   for (let i = 0; i < max; i++) {
@@ -32,6 +33,10 @@ async function retry(fn, { label = 'http', max = 3, baseDelayMs = 1000 } = {}) {
       return await fn();
     } catch (err) {
       lastErr = err;
+      if (err.nonRetryable) {
+        log(`⏹ ${label} nonRetryable: ${err.message}`);
+        throw err;
+      }
       const status = err.response?.status;
       const retryable = !status || status >= 500 || status === 429;
       if (!retryable || i === max - 1) {
@@ -116,6 +121,18 @@ export async function addIssueComment({ owner, repo, issue_number, body }) {
   );
 }
 
+// AtomGit 错误信息里若已有同源分支的 open MR,会带 `!NNNN`(MR 编号)
+// 解析出来给上层做 fallback-update
+export class PullRequestAlreadyExistsError extends Error {
+  constructor(existingNumber, raw) {
+    super(`Another open PR already exists: #${existingNumber}`);
+    this.name = 'PullRequestAlreadyExistsError';
+    this.existingNumber = existingNumber;
+    this.raw = raw;
+    this.nonRetryable = true;
+  }
+}
+
 export async function createPullRequest({ owner, repo, title, body, head, base }) {
   return retry(
     async () => {
@@ -125,7 +142,13 @@ export async function createPullRequest({ owner, repo, title, body, head, base }
         head,
         base,
       });
-      rejectOn4xx(res, 'createPullRequest');
+      if (res.status >= 300) {
+        // 业务错:同源分支已有 open MR — 抛专用类型,上层走 update 流程
+        const raw = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        const m = raw.match(/already exists[^!]*!(\d+)/);
+        if (m) throw new PullRequestAlreadyExistsError(Number(m[1]), raw);
+        rejectOn4xx(res, 'createPullRequest');
+      }
       return res.data;
     },
     { label: `createPullRequest(${owner}/${repo})` }
@@ -158,17 +181,25 @@ export async function getPullRequest({ owner, repo, number }) {
   );
 }
 
+// AtomGit 的 `head` 过滤只认裸 branch 名,不认 GitHub 风格的 `owner:branch`。
+// 为了兼容历史调用方,这里把 `owner:branch` 拆出 branch 部分;另外 API 过滤偶发失灵,
+// 兜底再做一次客户端过滤(按 head.ref 全字符串匹配)。
 export async function listPullRequests({ owner, repo, head, state = 'open' }) {
   const params = { state, per_page: 100 };
-  if (head) params.head = head;
-  return retry(
+  const branch = head && head.includes(':') ? head.split(':').slice(1).join(':') : head;
+  if (branch) params.head = branch;
+  const list = await retry(
     async () => {
       const res = await client().get(`${API_PREFIX}/repos/${owner}/${repo}/pulls`, { params });
       rejectOn4xx(res, 'listPullRequests');
-      return res.data;
+      return Array.isArray(res.data) ? res.data : [];
     },
     { label: `listPullRequests(${owner}/${repo})` }
   );
+  if (!branch) return list;
+  // 服务器若按 head 过滤过就只剩匹配项;若没过滤过(API 静默忽略未知参数)就需要再筛
+  const filtered = list.filter((pr) => (pr.head && pr.head.ref) === branch);
+  return filtered;
 }
 
 export async function getRef({ owner, repo, ref }) {

@@ -3,7 +3,12 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync, spawn } from 'node:child_process';
-import { createPullRequest, updatePullRequest, listPullRequests } from './lib/atomgit-api.js';
+import {
+  createPullRequest,
+  updatePullRequest,
+  listPullRequests,
+  PullRequestAlreadyExistsError,
+} from './lib/atomgit-api.js';
 
 // 用 env 控制 git 作者/提交者身份,不污染 repo 级 git config
 process.env.GIT_AUTHOR_NAME = process.env.GIT_AUTHOR_NAME || 'geo-develop-bot';
@@ -252,7 +257,6 @@ async function pushAndPr(run, workDir) {
   log(`  ✅ pushed to ${run.branch_name} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   log('  🔍 list existing PRs');
-  const head = `${run.portal_owner}:${run.branch_name}`;
   const triggerRepo = process.env.TRIGGER_REPO;
   const triggerIssue = process.env.TRIGGER_ISSUE;
   const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;
@@ -270,45 +274,69 @@ async function pushAndPr(run, workDir) {
     .filter((l) => l !== '')
     .join('\n');
 
-  let pr;
-  let action;
+  // AtomGit 的 head 过滤只认裸 branch,不认 GitHub 的 owner:branch — 传裸 branch
   const existing = await listPullRequests({
     owner: run.portal_owner,
     repo: run.portal_repo,
-    head,
+    head: run.branch_name,
     state: 'open',
   });
-  if (Array.isArray(existing) && existing.length > 0) {
-    pr = existing[0];
-    log(`  ♻️  PR existed (#${pr.number}), updating title/body`);
+
+  async function updateExisting(number) {
+    let pr;
+    let action;
     try {
       const updated = await updatePullRequest({
         owner: run.portal_owner,
         repo: run.portal_repo,
-        number: pr.number,
+        number,
         title: prTitle,
         body: prBody,
       });
-      if (updated) pr = updated;
+      pr = updated || { number };
       action = 'updated';
     } catch (err) {
       log(`  ⚠ updatePullRequest failed, reusing existing: ${err.message}`);
+      pr = { number };
       action = 'reused';
     }
+    return { pr, action };
+  }
+
+  let pr;
+  let action;
+  if (Array.isArray(existing) && existing.length > 0) {
+    log(`  ♻️  PR existed (#${existing[0].number}), updating title/body`);
+    ({ pr, action } = await updateExisting(existing[0].number));
+    // 补全 url 字段:update 接口的返回有时不带 html_url,从 list 结果兜底
+    if (!pr.html_url && existing[0].html_url) pr.html_url = existing[0].html_url;
+    if (!pr.url && existing[0].url) pr.url = existing[0].url;
   } else {
     log('  ✨ creating new PR');
-    pr = await createPullRequest({
-      owner: run.portal_owner,
-      repo: run.portal_repo,
-      title: prTitle,
-      body: prBody,
-      head: run.branch_name,
-      base: run.portal_base_branch,
-    });
-    action = 'created';
+    try {
+      pr = await createPullRequest({
+        owner: run.portal_owner,
+        repo: run.portal_repo,
+        title: prTitle,
+        body: prBody,
+        head: run.branch_name,
+        base: run.portal_base_branch,
+      });
+      action = 'created';
+    } catch (err) {
+      // 竞态/lookup 漏:atomgit 已认为同源分支有 open MR,直接路由到 update
+      if (err instanceof PullRequestAlreadyExistsError) {
+        log(`  ♻️  atomgit 报已有 PR (#${err.existingNumber}),fallback 到 update`);
+        ({ pr, action } = await updateExisting(err.existingNumber));
+      } else {
+        throw err;
+      }
+    }
   }
   const prUrl =
-    pr.html_url || pr.url || `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/pull/${pr.number}`;
+    pr.html_url ||
+    pr.url ||
+    `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/merge_requests/${pr.number}`;
   log(`  ✅ PR ${action}: ${prUrl}`);
   return { has_changes: true, pr_url: prUrl, pr_number: pr.number, pr_action: action };
 }

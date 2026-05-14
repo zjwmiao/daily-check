@@ -85,7 +85,8 @@ function extractPayloadFromComments(comments) {
 function extractPortalPrUrls(comments) {
   const found = new Map();
   for (const c of comments) {
-    const matches = (c.body || '').matchAll(/https:\/\/(?:atomgit|gitcode)\.com\/([^/\s)]+)\/([^/\s)]+)\/pulls?\/(\d+)/g);
+    // atomgit/gitcode 两个域名 + UI 路径有 /pull/N、/pulls/N、/merge_requests/N 三种别名,都视为同一 PR
+    const matches = (c.body || '').matchAll(/https:\/\/(?:atomgit|gitcode)\.com\/([^/\s)]+)\/([^/\s)]+)\/(?:pulls?|merge_requests)\/(\d+)/g);
     for (const m of matches) {
       const key = `${m[1]}/${m[2]}#${m[3]}`;
       if (!found.has(key)) found.set(key, { owner: m[1], repo: m[2], number: Number(m[3]), url: m[0] });

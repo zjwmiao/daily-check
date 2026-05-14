@@ -305,22 +305,21 @@
   - 评论里加幂等 marker:`<!-- geo-revalidated v1 ... decision=pass/keep -->` + `<!-- geo-pr-status v1 ... -->`,防止 cron 重复刷评论
   - geo-workflow 那边的 issue **不自动关**(权责分离 — 评估侧维护人决定)
 
-## ADR-0018: workflow 改名 `geo-develop-workflow` + portal PR URL 路径 `/pull/N`(单数)
+## ADR-0018: workflow 改名 `geo-develop-workflow` + portal PR URL fallback 用 `/merge_requests/N`
 
 - 日期: 2026-05-14
 - 状态: 已采纳
-- 上下文: 之前 workflow 文件叫 `geo-bot.yml`,与仓名 `geo-develop-workflow` 不一致,看 Actions 页眼区分困难;另外 portal 仓 PR 的可访问 UI URL 路径是 `/pull/N`(单数),不是 `/pulls/N`(复数)。`atomgit.com` 和 `gitcode.com` 两个域名都解析同一后端,UI 路径都用单数 `/pull/`。`/pulls/N` 复数仅用于 API(`api.atomgit.com/api/v5/.../pulls/N`)。fallback 写成 `/pulls/N` 会导致 issue 评论里贴的链接 404。
+- 上下文: 之前 workflow 文件叫 `geo-bot.yml`,与仓名 `geo-develop-workflow` 不一致,看 Actions 页眼区分困难。另外 portal 仓 PR 的 UI URL 实测有 4 个等价别名都返回 200:`atomgit.com/.../merge_requests/N`(API `html_url` 返回的规范形式)、`/pull/N`、`/pulls/N`、`gitcode.com/.../pull/N`。fallback URL 写哪个都不会 404,但选 API `html_url` 返回的规范形式最不易翻车。
 - 选项:
   - A. 不改名,文件名与仓名分离
   - B. 改名 `geo-bot.yml` → `geo-develop-workflow.yml`,同步刷 README/concurrency group
-  - URL 上,API 路径仍走 `api.atomgit.com/api/v5/.../pulls/N`(API 用复数);用户可见 fallback URL 改 `atomgit.com/.../pull/N`(UI 用单数)
-- 决定: B + UI/API 路径分离(API 用 `/pulls/`、UI 用 `/pull/`,域名统一 `atomgit.com`)
-- 理由: 仓-workflow 同名认知一致;UI / API 用不同 path 是 atomgit 平台本身的设计(类似 gitea/gitcode);两个域名都通,选 `atomgit.com` 保持与 clone/API 一致,认知少跳。
+- 决定: B + fallback URL 用 `atomgit.com/.../merge_requests/N`(与 API `html_url` 一致)
+- 理由: 仓-workflow 同名认知一致;fallback 跟 API 返回值对齐,日后 atomgit 哪天关掉别名也不会断。
 - 后果:
   - `git mv .github/workflows/geo-bot.yml → geo-develop-workflow.yml`;workflow `name:` + concurrency group 同步改
-  - fallback 改:`execute-fix-runs.js`、`.github/actions/atomgit-create-pr/index.js`(PR `/pulls/N` → `/pull/N`)+ `open-portal-issues.js`(Issue URL 不变,本来就是 `/issues/N`)
-  - `poll-portal-status.js` PR URL 正则放宽:同时匹配 `/pull/N` 和 `/pulls/N`(`pulls?`),也接受 atomgit/gitcode 双域名,保历史评论不丢
-  - clone URL / API base 保持 `atomgit.com` / `api.atomgit.com`,不动
+  - fallback URL 改 `merge_requests/N`:`execute-fix-runs.js`、`.github/actions/atomgit-create-pr/index.js`
+  - `poll-portal-status.js` PR URL 正则放宽:同时匹配 `/pull/N`、`/pulls/N`、`/merge_requests/N`,也接受 atomgit/gitcode 双域名,保历史评论不丢
+  - clone URL / API base 保持 `atomgit.com` / `api.atomgit.com`,不动;API path 仍是复数 `/pulls/N`
   - 历史 decisions.md / sessions 提到 `geo-bot.yml` 的不回填,保历史准
 
 ## ADR-0019: 上游数据空(找不到关联问题 / 无 official_urls)走"跳过"而非"失败"
@@ -340,3 +339,24 @@
   - `generate-report.js`:`analysis.issues.length === 0` 时渲染"⏭ 跳过(无可分析输入)"段,展示 `upstream_note`,明确"不是分析失败,无需 /fix"
   - `open-portal-issues.js`:空 issues 时直接 return,写 `skipped: true` 制品,不进 portal API
   - 网络 / 权限 / JSON 解析炸的硬错仍 throw → workflow 失败 + ❌ 回评 — 这块行为不变
+
+## ADR-0020: AtomGit PR 去重 — `head` 只传裸 branch + 兜底捕获"already exists !N"恢复
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: `/fix` 跑出来 `createPullRequest` 在已有同源分支 open PR 的情况下应当走 update,但实测一直在 create,然后 atomgit 400 报错 `error_code: 409` + `Another open merge request already exists for this source branch: !3085`。原因有两层:① `listPullRequests` 之前按 GitHub 习惯传 `head=owner:branch`(`openeuler:geo/fix-openeuler-21`),实测 atomgit 不认这种格式,返回 0,代码以为不存在;② 即使 lookup 漏掉(竞态 / 缓存 / 分页),也应当能从 createPullRequest 的错误里恢复。
+- 选项:
+  - A. 维持现状,人手清理悬挂分支
+  - B. 修 lookup:传裸 branch 名;额外做客户端按 `head.ref` 全量过滤兜底
+  - C. B 之外再加错误捕获:`createPullRequest` 遇到 "already exists !NNNN" 解析编号 → 自动 fallback 到 update
+- 决定: B + C
+- 理由: B 解 90% 场景的查重失效;C 保险:即使 atomgit 哪天 API 行为又变,只要错误信息里带 PR 号就能恢复,不需要人手介入。
+- 后果:
+  - `scripts/lib/atomgit-api.js` `listPullRequests`:`head` 参数若含 `:`(GitHub `owner:branch` 格式)自动剥 owner;再做一次客户端 `pr.head.ref === branch` 过滤,服务端漏过滤也兜得住
+  - `scripts/lib/atomgit-api.js` 导出新错误类型 `PullRequestAlreadyExistsError(existingNumber, raw)`,带 `nonRetryable = true` 防止 retry() 重试
+  - retry() 检查 `err.nonRetryable`,业务错(冲突 / 4xx 已知)直接抛、不重试
+  - `createPullRequest` 4xx 响应里 regex 抽 `already exists[^!]*!(\d+)` 抛新错;其他 4xx 维持原 `rejectOn4xx`
+  - `scripts/execute-fix-runs.js` `pushAndPr`:
+    - `listPullRequests` 传 `head: run.branch_name`(不再 `owner:branch`)
+    - 抽出 `updateExisting(number)` 内部函数;create 抛 `PullRequestAlreadyExistsError` 时直接走 update
+  - smoke-test:`head=geo/fix-openeuler-21` 命中 #3085;主动 createPR 同源分支被捕获为 `PullRequestAlreadyExistsError(existingNumber=3085, nonRetryable=true)` — 都跑通

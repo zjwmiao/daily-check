@@ -16,7 +16,7 @@ flowchart TB
         direction TB
         TRK["[GEO优化]#N issue<br/>(协调工单)"]
 
-        subgraph bot["geo-bot.yml (issue_comment 触发)"]
+        subgraph bot["geo-develop-workflow.yml (issue_comment 触发)"]
             ANALYZE["analyze job<br/>取 P0 → 跑 4 维度 → 评论报告 +<br/>内嵌 fix-payload"]
             FIX["fix job<br/>读 payload → clone portal cache →<br/>opencode+glm5 修复 → push PR"]
         end
@@ -53,8 +53,8 @@ flowchart TB
 
 | 触发 | 文件 | 时机 | 干什么 |
 | --- | --- | --- | --- |
-| 评论 `/analyze` | `geo-bot.yml#analyze` | 用户在 `[GEO优化]` issue 下评论 | 4 维度分析 + 报告评论 + portal 仓开 issue |
-| 评论 `/fix` | `geo-bot.yml#fix` | 同上(读最近一次 /analyze 评论的 payload,不需重 /analyze) | opencode+glm5 改 portal 仓 + 提 PR + 回评 |
+| 评论 `/analyze` | `geo-develop-workflow.yml#analyze` | 用户在 `[GEO优化]` issue 下评论 | 4 维度分析 + 报告评论 + portal 仓开 issue |
+| 评论 `/fix` | `geo-develop-workflow.yml#fix` | 同上(读最近一次 /analyze 评论的 payload,不需重 /analyze) | opencode+glm5 改 portal 仓 + 提 PR + 回评 |
 | 定时 cron | `geo-poll.yml` | 每 4 小时(调试期改 weekly),`workflow_dispatch` 可手工 | ① 同步 geo-workflow 新 P0 ② 查已有 PR 状态 ③ 全 merge → 重验 → 自动关 |
 
 ## 4 维度分析(只看官网域)
@@ -125,7 +125,7 @@ scripts/
   poll-portal-status.js        geo-poll: 查 PR + 重验 + 自动关 issue
 
 .github/
-  workflows/geo-bot.yml        analyze + fix 两个 job(issue_comment 触发)
+  workflows/geo-develop-workflow.yml        analyze + fix 两个 job(issue_comment 触发)
   workflows/geo-poll.yml       cron + workflow_dispatch
   actions/atomgit-create-{issue,pr}/   AtomGit API composite action
   actions/run-agent/                    opencode 调用器(沿用,实际由 execute-fix-runs 直接 spawn)

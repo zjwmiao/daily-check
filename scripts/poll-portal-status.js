@@ -85,7 +85,7 @@ function extractPayloadFromComments(comments) {
 function extractPortalPrUrls(comments) {
   const found = new Map();
   for (const c of comments) {
-    const matches = (c.body || '').matchAll(/https:\/\/atomgit\.com\/([^/\s)]+)\/([^/\s)]+)\/pulls\/(\d+)/g);
+    const matches = (c.body || '').matchAll(/https:\/\/(?:atomgit|gitcode)\.com\/([^/\s)]+)\/([^/\s)]+)\/pulls?\/(\d+)/g);
     for (const m of matches) {
       const key = `${m[1]}/${m[2]}#${m[3]}`;
       if (!found.has(key)) found.set(key, { owner: m[1], repo: m[2], number: Number(m[3]), url: m[0] });

@@ -308,7 +308,7 @@ async function pushAndPr(run, workDir) {
     action = 'created';
   }
   const prUrl =
-    pr.html_url || pr.url || `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/pulls/${pr.number}`;
+    pr.html_url || pr.url || `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/pull/${pr.number}`;
   log(`  ✅ PR ${action}: ${prUrl}`);
   return { has_changes: true, pr_url: prUrl, pr_number: pr.number, pr_action: action };
 }

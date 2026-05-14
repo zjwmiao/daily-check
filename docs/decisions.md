@@ -304,3 +304,21 @@
   - `scripts/lib/atomgit-api.js` 加 `getPullRequest`
   - 评论里加幂等 marker:`<!-- geo-revalidated v1 ... decision=pass/keep -->` + `<!-- geo-pr-status v1 ... -->`,防止 cron 重复刷评论
   - geo-workflow 那边的 issue **不自动关**(权责分离 — 评估侧维护人决定)
+
+## ADR-0018: workflow 改名 `geo-develop-workflow` + portal PR URL 路径 `/pull/N`(单数)
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: 之前 workflow 文件叫 `geo-bot.yml`,与仓名 `geo-develop-workflow` 不一致,看 Actions 页眼区分困难;另外 portal 仓 PR 的可访问 UI URL 路径是 `/pull/N`(单数),不是 `/pulls/N`(复数)。`atomgit.com` 和 `gitcode.com` 两个域名都解析同一后端,UI 路径都用单数 `/pull/`。`/pulls/N` 复数仅用于 API(`api.atomgit.com/api/v5/.../pulls/N`)。fallback 写成 `/pulls/N` 会导致 issue 评论里贴的链接 404。
+- 选项:
+  - A. 不改名,文件名与仓名分离
+  - B. 改名 `geo-bot.yml` → `geo-develop-workflow.yml`,同步刷 README/concurrency group
+  - URL 上,API 路径仍走 `api.atomgit.com/api/v5/.../pulls/N`(API 用复数);用户可见 fallback URL 改 `atomgit.com/.../pull/N`(UI 用单数)
+- 决定: B + UI/API 路径分离(API 用 `/pulls/`、UI 用 `/pull/`,域名统一 `atomgit.com`)
+- 理由: 仓-workflow 同名认知一致;UI / API 用不同 path 是 atomgit 平台本身的设计(类似 gitea/gitcode);两个域名都通,选 `atomgit.com` 保持与 clone/API 一致,认知少跳。
+- 后果:
+  - `git mv .github/workflows/geo-bot.yml → geo-develop-workflow.yml`;workflow `name:` + concurrency group 同步改
+  - fallback 改:`execute-fix-runs.js`、`.github/actions/atomgit-create-pr/index.js`(PR `/pulls/N` → `/pull/N`)+ `open-portal-issues.js`(Issue URL 不变,本来就是 `/issues/N`)
+  - `poll-portal-status.js` PR URL 正则放宽:同时匹配 `/pull/N` 和 `/pulls/N`(`pulls?`),也接受 atomgit/gitcode 双域名,保历史评论不丢
+  - clone URL / API base 保持 `atomgit.com` / `api.atomgit.com`,不动
+  - 历史 decisions.md / sessions 提到 `geo-bot.yml` 的不回填,保历史准

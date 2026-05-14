@@ -1,4 +1,4 @@
-name: GEO Bot
+name: GEO Develop Workflow
 
 on:
   issue_comment:
@@ -25,7 +25,7 @@ jobs:
     runs-on: portal-x86
     timeout-minutes: 15
     concurrency:
-      group: geo-bot-analyze-${{ github.event.issue.number }}
+      group: geo-develop-workflow-analyze-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
       - name: Checkout geo-develop
@@ -142,7 +142,7 @@ jobs:
     runs-on: portal-x86
     timeout-minutes: 45
     concurrency:
-      group: geo-bot-fix-${{ github.event.issue.number }}
+      group: geo-develop-workflow-fix-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
       - name: Checkout geo-develop

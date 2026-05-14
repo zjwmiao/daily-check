@@ -94,7 +94,7 @@ async function main() {
     console.log(`✅ PR created: ${pr.html_url || pr.url}`);
   }
 
-  const prUrl = pr.html_url || pr.url || `https://atomgit.com/${owner}/${repo}/pulls/${pr.number}`;
+  const prUrl = pr.html_url || pr.url || `https://atomgit.com/${owner}/${repo}/pull/${pr.number}`;
   if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `pr_url=${prUrl}\n`);
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `pr_number=${pr.number}\n`);

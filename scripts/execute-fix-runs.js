@@ -144,12 +144,21 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
 
   const prompt = `${fs.readFileSync(agentFile, 'utf-8')}\n\n## 上下文\n\n${fs.readFileSync(contextFile, 'utf-8')}\n\n请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
 
+  // prompt 落盘,失败时可在 runner 上手工 replay
+  const ctxDir = path.dirname(contextFile);
+  const promptFile = path.join(ctxDir, `opencode-prompt-${run.community}-${run.geo_issue_number}.txt`);
+  fs.writeFileSync(promptFile, prompt);
+
   const opencodeArgs = ['run', '-', '--model', model, '--agent', agent, ...(extra ? extra.split(' ').filter(Boolean) : [])];
+  const argsShell = opencodeArgs.map((a) => (/[\s'"]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(' ');
+
   log(`  🤖 starting opencode (timeout=${timeoutMs / 1000}s)`);
   log(`     bin: ${opencode}`);
   log(`     args: ${JSON.stringify(opencodeArgs)}`);
   log(`     cwd:  ${workDir}`);
-  log(`     prompt size: ${prompt.length} chars`);
+  log(`     prompt: ${prompt.length} chars → ${promptFile}`);
+  log(`     📋 replay (runner SSH 后可贴):`);
+  log(`        cd ${workDir} && cat ${promptFile} | ${opencode} ${argsShell}`);
   // 关键 env 透传(opencode 模型/网关认证常依赖这些)
   for (const k of ['OPENCODE_API_KEY', 'OPENCODE_TOKEN', 'OPENCODE_CONFIG']) {
     if (process.env[k]) log(`     env ${k}=<set, len=${process.env[k].length}>`);

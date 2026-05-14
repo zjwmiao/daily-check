@@ -163,6 +163,11 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
   for (const k of ['OPENCODE_API_KEY', 'OPENCODE_TOKEN', 'OPENCODE_CONFIG']) {
     if (process.env[k]) log(`     env ${k}=<set, len=${process.env[k].length}>`);
   }
+
+  // **关键:在 spawn opencode 之前**就把 prompt + command 入仓 commit
+  // 即使 opencode 卡死,用户也能立刻从 geo-debug/ 拿到现场本地复现
+  commitDebugArtifact({ run, promptFile, argsShell, opencode, outputMd: null, agentOk: 'pending' });
+
   const t0 = Date.now();
 
   return new Promise((resolve) => {
@@ -208,6 +213,35 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
       }
     });
   });
+}
+
+// opencode 跑完后追加 output.md 到对应 geo-debug 目录(单独一次 commit)
+function commitDebugOutput({ run, outputMd, agentOk }) {
+  const repoRoot = process.env.GITHUB_WORKSPACE || process.cwd();
+  const triggerIssue = process.env.TRIGGER_ISSUE || 'unknown';
+  const ts = process.env.GEO_DEBUG_RUN_TS;
+  if (!ts || !fs.existsSync(outputMd)) return;
+  const dirRel = `geo-debug/issue-${triggerIssue}/fix-${ts}`;
+  const dirAbs = path.join(repoRoot, dirRel);
+  const slug = `${run.community}-${run.geo_issue_number}`;
+  try {
+    fs.copyFileSync(outputMd, path.join(dirAbs, `${slug}-output.md`));
+    sh(`git add ${dirRel}`, { cwd: repoRoot });
+    let hasChanges = true;
+    try { sh('git diff --cached --quiet', { cwd: repoRoot }); hasChanges = false; } catch {}
+    if (!hasChanges) return;
+    const msg = `chore(geo-debug): ${run.community}#${run.geo_issue_number} agent output (issue#${triggerIssue}, agent_ok=${agentOk})`;
+    sh(`git commit -m "${msg.replace(/"/g, '\\"')}"`, { cwd: repoRoot });
+    try {
+      sh('git push origin HEAD:main', { cwd: repoRoot });
+    } catch {
+      sh('git pull --rebase origin main', { cwd: repoRoot });
+      sh('git push origin HEAD:main', { cwd: repoRoot });
+    }
+    log(`  📝 geo-debug output 追加: ${dirRel}/${slug}-output.md`);
+  } catch (err) {
+    log(`  ⚠ geo-debug output commit 失败: ${err.message.split('\n')[0]}`);
+  }
 }
 
 // 把本次 agent 执行的命令 + prompt + output 落到本仓 geo-debug/ 一次 commit
@@ -426,24 +460,16 @@ async function main() {
         )
       );
 
-      log('  [3/4] runOpencode');
+      log('  [3/4] runOpencode (注:prompt/command 已在 spawn 前预先 commit 到 geo-debug/)');
       const outputMd = path.join(workDir, 'output.md');
       const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
       const ok = ocRes.ok;
       result.agent_ok = ok;
       if (fs.existsSync(outputMd)) {
         result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
+        // opencode 跑完且有 output.md → 追加一次 commit 保存最终产物 + agent_ok 状态
+        commitDebugOutput({ run, outputMd, agentOk: ok });
       }
-
-      // 落 geo-debug 一次 commit(把本次 agent 的 prompt + command + output 入仓)
-      commitDebugArtifact({
-        run,
-        promptFile: ocRes.promptFile,
-        argsShell: ocRes.argsShell,
-        opencode: ocRes.opencode,
-        outputMd,
-        agentOk: ok,
-      });
 
       log('  [4/4] pushAndPr');
       const prRes = await pushAndPr(run, workDir);

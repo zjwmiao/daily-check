@@ -32,6 +32,7 @@ async function main() {
     source: path.basename(args.input),
     skip_browser: skipBrowser,
     issues: [],
+    ...(candidates.note ? { upstream_note: candidates.note } : {}),
   };
 
   let total = 0;

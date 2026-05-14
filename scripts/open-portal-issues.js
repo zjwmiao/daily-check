@@ -77,6 +77,15 @@ async function main() {
   const triggerIssue = args['trigger-issue'];
   const runDir = args['run-dir'] || '(unknown)';
 
+  if (!analysis.issues || analysis.issues.length === 0) {
+    log(`ℹ 0 issue 可建 portal issue${analysis.upstream_note ? ` — ${analysis.upstream_note}` : ''}(上游数据状况,跳过)`);
+    if (args.output) {
+      fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
+      fs.writeFileSync(args.output, JSON.stringify({ run_at: new Date().toISOString(), records: [], skipped: true }, null, 2));
+    }
+    return;
+  }
+
   const records = [];
   for (const issue of analysis.issues) {
     const community = getCommunity(issue.community);

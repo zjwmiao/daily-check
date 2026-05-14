@@ -189,10 +189,19 @@ async function main() {
   }
 
   if (analysis.issues.length === 0) {
-    lines.push('_未发现符合条件的 P0 issue(possibly: official_urls 全部为空,或 target 不匹配)_');
+    lines.push(`## ⏭ 跳过(无可分析输入)`);
+    lines.push('');
+    if (analysis.upstream_note) {
+      lines.push(`> ${analysis.upstream_note}`);
+    } else {
+      lines.push('_未发现符合条件的 P0 issue(可能:official_urls 全部为空,或 target 不匹配)_');
+    }
+    lines.push('');
+    lines.push('**结论**: 这是上游 geo-workflow 数据状况,不是本工作流的分析失败;无需 `/fix`。');
+    lines.push('');
+  } else {
+    lines.push(`> 评论 \`/fix\` 触发自动修复(将在对应 portal 仓提 PR)`);
   }
-
-  lines.push(`> 评论 \`/fix\` 触发自动修复(将在对应 portal 仓提 PR)`);
 
   const payload = buildFixPayload(analysis, args['trigger-issue']);
   lines.push(renderPayloadBlock(payload));

@@ -322,3 +322,21 @@
   - `poll-portal-status.js` PR URL 正则放宽:同时匹配 `/pull/N` 和 `/pulls/N`(`pulls?`),也接受 atomgit/gitcode 双域名,保历史评论不丢
   - clone URL / API base 保持 `atomgit.com` / `api.atomgit.com`,不动
   - 历史 decisions.md / sessions 提到 `geo-bot.yml` 的不回填,保历史准
+
+## ADR-0019: 上游数据空(找不到关联问题 / 无 official_urls)走"跳过"而非"失败"
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: `/analyze` 触发后,如果 geo-workflow 那边的 issue 状况是:① 指定 `#N` 不存在或非 P0;② 关联的 `question_ids` 都没有 `official_urls`;③ 全是 forum/discuss 这种非官网域被过滤 — 之前 `fetch-geo-issues.js` 会 throw,workflow 走 `if:failure` 回评"❌ /analyze 失败"。但这并不是本仓的代码 / 流水线坏了,而是上游 geo-workflow 评估侧的数据状况。把这种状况当失败回评会:① 噪音多,误导维护人去看 workflow 日志找 bug;② 阻塞 issue 关闭流程(geo-poll 看到 open issue 一直在等)。
+- 选项:
+  - A. 维持现状,任何空结果都 throw
+  - B. 区分"工具故障"(网络 / 权限 / 解析炸了 → 仍 throw)与"上游数据空"(0 候选 → 写 `note` 字段、空 candidates,正常出报告)
+  - C. 完全不报告,跳过即静默
+- 决定: B
+- 理由: 失败要可执行(actionable);上游数据空对本仓维护人来说是只读信息,但需要在 trigger issue 上留痕(否则 /fix 不知道为啥跳),所以不能静默。
+- 后果:
+  - `fetch-geo-issues.js`:`target !== 'all' && allIssues.length === 0` 不再 throw;改为在 candidates.json 顶层加 `note` 字段并 log 一条 `ℹ` 行
+  - `run-analysis.js`:把 candidates 的 `note` 字段透传成 analysis.json 的 `upstream_note`
+  - `generate-report.js`:`analysis.issues.length === 0` 时渲染"⏭ 跳过(无可分析输入)"段,展示 `upstream_note`,明确"不是分析失败,无需 /fix"
+  - `open-portal-issues.js`:空 issues 时直接 return,写 `skipped: true` 制品,不进 portal API
+  - 网络 / 权限 / JSON 解析炸的硬错仍 throw → workflow 失败 + ❌ 回评 — 这块行为不变

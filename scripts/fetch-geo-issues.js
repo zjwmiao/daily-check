@@ -195,7 +195,7 @@ async function main() {
     }
   }
 
-  // 失败的硬条件:任一 community 报错 → 整个步骤失败,让 workflow 走 if:failure 分支
+  // 失败的硬条件:任一 community 报错(网络/权限/解析问题)→ 整个步骤失败,让 workflow 走 if:failure 分支
   if (errors.length > 0) {
     throw new Error(
       `fetch-geo-issues 失败: ${errors.length}/${communities.length} community 报错 — ${errors
@@ -203,11 +203,15 @@ async function main() {
         .join('; ')}`
     );
   }
-  // target 指定但没找到任何匹配 → 也算失败
+
+  // target 指定但 0 候选 → 上游数据问题(issue 不存在 / 非 P0 / 关联 question 全无 official_urls)
+  // 不当成 workflow 错误,写一个 note 进 candidates.json,让下游 generate-report 在 trigger issue 上正常回评说明
+  let note = null;
   if (issue !== 'all' && allIssues.length === 0) {
-    throw new Error(
-      `geo-workflow issue #${issue} 未在任一 community(${communities.join(', ')})的 issue-map / 关联问题中找到`
-    );
+    note = `geo-workflow issue #${issue} 未在 community(${communities.join(
+      ', '
+    )})的 issue-map / 关联问题中找到可分析的 official_urls — 属上游数据状况,不算分析失败(可能:issue 非 P0,或关联 question 都无 official_urls)`;
+    log(`ℹ ${note}`);
   }
 
   const result = {
@@ -216,6 +220,7 @@ async function main() {
     communities,
     issue_count: allIssues.length,
     issues: allIssues,
+    ...(note ? { note } : {}),
   };
 
   const json = JSON.stringify(result, null, 2);

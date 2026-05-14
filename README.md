@@ -8,7 +8,7 @@ GEO(Generative Engine Optimization)优化开发工作流的**协调仓**。在 G
 - [三个触发器](#三个触发器)
 - [4 维度分析(只看官网域)](#4-维度分析只看官网域)
 - [/analyze 流水线](#analyze-流水线)
-- [/fix 流水线(8 步,带 3 道护栏)](#fix-流水线8-步带-3-道护栏)
+- [/fix 流水线(8 步,带 2 道硬护栏 + 2 个 best-effort build)](#fix-流水线8-步带-2-道硬护栏--2-个-best-effort-build)
 - [闭环(geo-poll cron)](#闭环geo-poll-cron)
 - [对外可见物 body 规范](#对外可见物-body-规范)
 - [用法](#用法)
@@ -104,32 +104,31 @@ generate-report        Markdown 报告 + 末尾 geo-analysis-payload v1 JSON 折
 
 **特殊情况**:上游 0 候选(geo-workflow issue 不存在 / 关联 question 全无 `official_urls`)走"跳过"语义,正常出报告但不开 portal issue,不当 workflow 失败。
 
-## /fix 流水线(8 步,带 3 道护栏)
+## /fix 流水线(8 步,带 2 道硬护栏 + 2 个 best-effort build)
 
 ```text
 [1/8] clonePortal              持久 cache (~/.cache/geo-bot/portals/),refresh 失败 fallback fresh clone
-[2/8] portal baseline build    pnpm install + pnpm build 一次,跑通才进 agent
-                                跑不通 → status=baseline_failed (portal 仓在我们环境构不动,不是 agent 的锅)
-                                跑通 → deps + dist 已在 workDir,agent 也能直接拿来跑 build 自检
+[2/8] portal baseline build    pnpm install + pnpm build 一次,best-effort:
+                                跑通 → 拿到 dist,后续 verify 可对 build 产物真验 schema/static-render
+                                跑不通 → warn + 跳过 post-agent build,verify 退到源码层(schema/static-render → deferred)
 [3/8] write fix-context.json   按 URL 聚合 problems,output.md 落 runner 临时区(不入 PR)
 [4/8] runOpencode              opencode + glm-5,white-list 4 类配置 (schema/tdk/sitemap/prerender)
                                 必带 --dangerously-skip-permissions
-                                prompt 强制要求:改完先 pnpm install 再 pnpm run build 自检通过,
-                                build 报错就回滚 + 标 ❌(虚标 ✅ 会被下游硬验证抓出)
-[5/8] portal build  ⛳ 护栏1     post-agent build (baseline 已装好 deps,这里只跑 build ~30s-2min)
-                                挂 → status=build_failed (baseline 此前通过,只能是 agent 改坏了)
-[6/8] pre-push verify  ⛳ 护栏2  schema/static-render 用 build 产物 dist HTML 真验
-                                tdk 用 build HTML 而不是 frontmatter (更接近真相)
-                                sitemap 直接解析 workDir/sitemap.xml
+                                prompt 可选(非强制)让 agent 跑 build 自验,build 跟环境关联太深,不强求
+[5/8] portal build (post-agent) best-effort,同 baseline。挂了只 warn 不阻 push,reviewer 看 PR body / critic 自行判
+[6/8] pre-push verify  ⛳ 护栏1  sitemap.xml + tdk frontmatter 直接源码验
+                                schema/static-render:有 build dist 就真验,没有就 deferred 等 geo-poll 线上重验
                                 still_failing → status=verify_failed, 不 push
-[7/8] critic  ⛳ 护栏3           第二次 opencode (skeptic 角色),输入: problems + agent_output + verify_checks + git diff
+[7/8] critic  ⛳ 护栏2           第二次 opencode (skeptic 角色),输入: problems + agent_output + verify_checks + git diff
                                 critic verdict=block → status=critic_blocked, 不 push
                                 pass/warn 都允许 push,critic 输出贴到 PR body
 [8/8] pushAndPr                 createPR (Closes #portal-issue 自动关) + 评论结果到 trigger issue
                                 listPullRequests 漏判时,createPR 抛 PullRequestAlreadyExistsError 自动 fallback update
 ```
 
-**退路**:`GEO_BUILD_DISABLE=1` 关 baseline + post-agent build(schema/static-render 回落 deferred);`CRITIC_DISABLE=1` 关 critic。
+**两道硬护栏**:`verify_failed`(verify 维度仍未修)+ `critic_blocked`(critic 红线 block)。Build 失败仅 warning,reviewer 决策。
+
+**退路**:`GEO_BUILD_DISABLE=1` 关 baseline + post-agent build(schema/static-render 直接 deferred);`CRITIC_DISABLE=1` 关 critic。
 
 ## 闭环(geo-poll cron)
 

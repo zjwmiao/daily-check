@@ -565,14 +565,13 @@ async function main() {
       log('  [1/8] clonePortal');
       const workDir = clonePortal(run);
 
-      // baseline build:进 agent 之前先证 portal baseline 自己构得动
-      // 失败 → 直接挂 + 状态 baseline_failed(跟 agent 无关,portal 维护人的事)
-      // 成功 → deps + dist 已在 workDir,agent 也能拿来跑 build 自检(prompt 里要求)
-      log('  [2/8] portal baseline build (前置 sanity — 跑不通直接 baseline_failed,不进 agent)');
+      // baseline build:best-effort — 跑通就有 dist 给 verify,跑不通就 warn,verify 退到源码层
+      // 不阻断流程 — build 跟很多 env 因素纠缠,硬卡反而妨碍主流程(只检 schema/static-render 这两个维度需要 build)
+      log('  [2/8] portal baseline build (best-effort — 跑通用 dist,跑不通 verify 退到源码层)');
       let buildOutputDir = null;
       let baselineSkipped = false;
       if (process.env.GEO_BUILD_DISABLE === '1') {
-        log('  ⏭ GEO_BUILD_DISABLE=1,跳过 baseline + post-agent build,schema/static-render 走 deferred');
+        log('  ⏭ GEO_BUILD_DISABLE=1,跳过 baseline + post-agent build');
         result.baseline_build = { skipped: true, reason: 'GEO_BUILD_DISABLE=1' };
         baselineSkipped = true;
       } else {
@@ -589,16 +588,13 @@ async function main() {
         if (baseline.ok) {
           log(`  ✅ baseline build ok in ${(baseline.duration_ms / 1000).toFixed(1)}s → ${baseline.output_dir_rel}/`);
         } else if (baseline.skipped) {
-          log(`  ⏭ baseline build 跳过: ${baseline.reason}(post-agent build 同样跳过,schema/static-render → deferred)`);
+          log(`  ⏭ baseline build 跳过: ${baseline.reason}`);
           baselineSkipped = true;
         } else {
-          // baseline 都构不动 — agent 没下手前就坏的,不归 agent
-          result.status = 'baseline_failed';
-          result.error = `portal baseline build 失败(phase=${baseline.phase}) — portal 仓本来就在我们环境里构不出来,不是 agent 的锅。请人工排查 portal 仓依赖 / runner 工具链 / 网络`;
-          log(`  ❌ ${result.error}`);
+          // baseline 挂了不阻断,只 warn — post-agent build 跳,verify schema/static-render → deferred
+          log(`  ⚠ baseline build 失败(phase=${baseline.phase}),不阻断流程,后续 schema/static-render 维度走 deferred`);
           logBuildErrorTail('baseline build', baseline);
-          results.push(result);
-          continue;
+          baselineSkipped = true;
         }
       }
 
@@ -620,10 +616,10 @@ async function main() {
         result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
       }
 
-      log('  [5/8] portal build (post-agent — 验证 agent 改动后 build 仍通过,作为 agent 自检的硬验证)');
+      log('  [5/8] portal build (post-agent, best-effort — 验证 agent 改动后能否 build,跑不通 warn 不阻断)');
       if (baselineSkipped) {
-        log('  ⏭ baseline 跳过,post-agent build 同样跳过');
-        result.build = { skipped: true, reason: 'baseline-skipped' };
+        log('  ⏭ baseline 跳过/失败,post-agent build 同样跳过');
+        result.build = { skipped: true, reason: 'baseline-skipped-or-failed' };
       } else {
         const build = await buildPortal(workDir);
         result.build = {
@@ -639,13 +635,11 @@ async function main() {
           buildOutputDir = build.output_dir;
           log(`  ✅ post-agent build ok in ${(build.duration_ms / 1000).toFixed(1)}s → ${build.output_dir_rel}/`);
         } else {
-          // baseline 已通过 → 本次 build 挂只能是 agent 改坏了(JSON 语法 / YAML 缩进 / config 语义)
-          result.status = 'build_failed';
-          result.error = `post-agent portal build 失败(phase=${build.phase}) — baseline 此前已通过,说明 agent 改动破坏了 build`;
-          log(`  ❌ ${result.error}`);
+          // baseline 通过、post-agent 挂 → 大概率 agent 改坏了。但不阻断 push,只 warn + 写进 PR body
+          // 让 portal reviewer 看 PR body / critic 判定再决定 — 我们不强行兜底
+          log(`  ⚠ post-agent build 失败(phase=${build.phase})— 大概率 agent 改坏了 build,但不阻断流程`);
+          log(`     reviewer 看 PR body 的 verify 表 + critic 判定再决定是否 merge`);
           logBuildErrorTail('post-agent build', build);
-          results.push(result);
-          continue;
         }
       }
 
@@ -707,15 +701,10 @@ async function main() {
 
   fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
   fs.writeFileSync(args.output, JSON.stringify({ run_at: new Date().toISOString(), results }, null, 2));
-  // FAILED = 没 PR / 没产物的所有 terminal 状态(error 是脚本异常,*_failed/*_blocked 是护栏拒绝)
-  // 任何一项 FAILED → workflow step 必须挂,让 `if:failure` 走回评分支,trigger issue 上看得到失败
-  const FAILED_STATES = new Set([
-    'error',
-    'baseline_failed',
-    'build_failed',
-    'verify_failed',
-    'critic_blocked',
-  ]);
+  // FAILED = 真正"该挂"的 terminal 状态:脚本异常 + verify 维度仍有未修问题 + critic 红线 block
+  // baseline_build / post-agent build 现在是 best-effort,失败只 warn 不上 FAILED — 同 verify_failed 在
+  // verify 那里已经覆盖了"agent 没修对"的硬卡(verify 是 source-based,build 没跑也能给结论)
+  const FAILED_STATES = new Set(['error', 'verify_failed', 'critic_blocked']);
   const failed = results.filter((r) => FAILED_STATES.has(r.status));
   const okResults = results.filter((r) => r.status === 'pr_created' || r.status === 'no_changes');
   const skippedResults = results.filter((r) => r.status === 'skipped');

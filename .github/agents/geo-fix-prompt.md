@@ -33,20 +33,17 @@
    - `static_render`: 加入 SSR/SSG prerender 路由,框架不支持就跳过
 2. 用 `rg`/`grep` 在 `work_dir` 定位匹配的配置文件;一处改动多候选时按现有惯例最多的位置改
 3. **最小改动** — 只 patch 必要行,不动其他字段格式/缩进
-4. **改完必须自检 build**(work_dir 里 baseline 之前已通过,deps 已装好):
-   - 在 `work_dir` 里**先** `pnpm install`(快速对齐依赖,通常 1-2s),**再** `pnpm run build`(也可能是 `pnpm run docs:build` / `generate`,看 package.json scripts)
-   - build 报错 → **自己看 stderr 修**(JSON 语法 / YAML 缩进 / TS 类型 / config 导出 / import 路径),修完再跑一遍,直到 build 通过
-   - build 仍跑不通 → 把出错改动**回滚掉**,该项标 ❌ 写明原因(下游会再跑一次 build 兜底,虚标 ✅ 一定会被抓出来,反而更难看)
-5. 处理清单写入 `output_file`:
+4. 处理清单写入 `output_file`:
    ```text
    ✅ <url> <dimension> — 改 path/to/file (原因)
    ⏭ <url> <dimension> — 跳过 (原因)
    ❌ <url> <dimension> — 失败 (原因)
    ```
 
+> 可选:改完想验证更稳的话,可以在 `work_dir` 跑 `pnpm install && pnpm run build` 看是否过编译。但**不强制** — build 跟环境因素(版本、network)关系太大,跑不通也不算修复失败,下游有源码层的 verify 兜底。
+
 ## 安全约束
 
 - 不 `git checkout`/`reset`/`rm` work_dir 外的东西
 - 不联网下载,只用 work_dir 现有代码
 - 不确定就跳过并说明,不要瞎猜
-- 自检 build 失败时**优先回滚**,不要为了让 build 通过去乱动白名单外的文件

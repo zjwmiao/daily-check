@@ -6,7 +6,7 @@ import axios from 'axios';
 
 // body 末尾埋个隐藏 marker(HTML 注释,显示时不可见),用来识别 body 格式版本
 // — bump 版本号时,旧 marker 的 issue 会被识别为"需要刷"
-const BODY_MARKER = '<!-- geo-sync-body v2 -->';
+export const BODY_MARKER = '<!-- geo-sync-body v2 -->';
 
 function parseArgs(argv) {
   const out = {};
@@ -53,7 +53,11 @@ function gh(token) {
   });
 }
 
-function buildBody(src) {
+export function buildTitle(src) {
+  return `[GEO优化]#${src.number}: ${src.title}`;
+}
+
+export function buildBody(src) {
   const labelList = (src.labels || []).map((l) => `\`${l.name}\``).join(' ') || '_(无)_';
   return [
     `> 🔗 **关联 geo-workflow 原始评估 issue**:[#${src.number}](${src.html_url})`,

@@ -63,21 +63,16 @@ function buildTriggerComment(results, runUrl) {
   }
   lines.push('');
 
-  // baseline_failed / build_failed 把 error tail 贴出来给 reviewer 排查
+  // build 现在是 best-effort,失败只 warn 不阻 push。如果任一阶段 build 挂了,把 stderr 贴出来给 reviewer 自行权衡
   for (const r of results) {
-    let label, errSource;
-    if (r.status === 'baseline_failed' && r.baseline_build?.error) {
-      label = `⚠ ${r.community} #${r.geo_issue_number} — portal baseline build 失败(phase=${r.baseline_build.phase}),agent 还没下手就坏了。这是 portal 仓 baseline 问题,跟 agent 无关,需人工排查 portal 仓 deps / runner 工具链`;
-      errSource = r.baseline_build.error;
-    } else if (r.status === 'build_failed' && r.build?.error) {
-      label = `❌ ${r.community} #${r.geo_issue_number} — post-agent build 失败(phase=${r.build.phase}),baseline 此前已通过 → agent 改动破坏了 build,PR 未推`;
-      errSource = r.build.error;
-    } else {
-      continue;
-    }
+    const blFail = r.baseline_build && !r.baseline_build.ok && !r.baseline_build.skipped && r.baseline_build.error;
+    const buildFail = r.build && !r.build.ok && !r.build.skipped && r.build.error;
+    if (!blFail && !buildFail) continue;
+    const which = blFail && buildFail ? 'baseline + post-agent' : blFail ? 'baseline' : 'post-agent';
+    const errSource = buildFail ? r.build.error : r.baseline_build.error;
     lines.push('');
-    lines.push(`<details open>`);
-    lines.push(`<summary>${label}</summary>`);
+    lines.push(`<details>`);
+    lines.push(`<summary>⚠ ${r.community} #${r.geo_issue_number} — ${which} build 失败(非阻断,reviewer 自行判)</summary>`);
     lines.push('');
     lines.push('```');
     lines.push(errSource.slice(-2000));

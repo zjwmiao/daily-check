@@ -19,69 +19,40 @@ const args = Object.fromEntries(
 );
 
 // 默认上下文:openEuler#21 vulnerability-reporting sitemap 问题
+// 与 execute-fix-runs.js 的 buildSlimContext() 结构保持一致
+const workDir = '/home/geo-develop/.cache/geo-bot/portals/openeuler-openEuler-portal';
 const defaultContext = {
-  portal: {
-    owner: 'openeuler',
-    repo: 'openEuler-portal',
-    work_dir: '/home/geo-develop/.cache/geo-bot/portals/openeuler-openEuler-portal',
-  },
-  geo_issue_url: 'https://github.com/opensourceways/geo-workflow/issues/21',
-  trigger_issue_url: 'https://github.com/opensourceways/geo-develop-workflow/issues/20',
-  run_dir: '/runner-temp/geo-fix-20-XXXXXXXX',
-  problems: [
+  portal: { owner: 'openeuler', repo: 'openEuler-portal', work_dir: workDir, base_branch: 'master' },
+  fixes: [
     {
-      question_id: 'q_080',
       url: 'https://www.openeuler.org/zh/security/vulnerability-reporting/',
-      severity: 'critical',
-      dimension: 'sitemap_inclusion',
-      category: 'sitemap.not_included',
-      description: 'URL 未被 sitemap 收录',
-      suggestion: '将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod',
+      issues: [
+        {
+          severity: 'critical',
+          dimension: 'sitemap_inclusion',
+          description: 'URL 未被 sitemap 收录',
+          suggestion: '将该 URL 加入 sitemap.xml,priority 默认 0.5,lastmod 今天',
+        },
+      ],
     },
     {
-      question_id: 'q_080',
       url: 'https://www.openeuler.org/en/security/vulnerability-reporting/',
-      severity: 'critical',
-      dimension: 'sitemap_inclusion',
-      description: 'URL 未被 sitemap 收录',
-      suggestion: '同上',
+      issues: [{ severity: 'critical', dimension: 'sitemap_inclusion', description: 'URL 未被 sitemap 收录' }],
     },
     {
-      question_id: 'q_080',
       url: 'https://www.openeuler.openatom.cn/zh/security/vulnerability-reporting/',
-      severity: 'critical',
-      dimension: 'sitemap_inclusion',
-      description: 'URL 未被 sitemap 收录',
-      suggestion: '同上',
+      issues: [{ severity: 'critical', dimension: 'sitemap_inclusion', description: 'URL 未被 sitemap 收录' }],
     },
   ],
-  analysis: {
-    community: 'openEuler',
-    geo_issue_number: 21,
-    geo_issue_title: '安全漏洞修复与 CVE 报告流程页面未被 AI 平台引用',
-    severity: 'P0',
-    portal: { owner: 'openeuler', repo: 'openEuler-portal', default_branch: 'master' },
-    questions: [
-      {
-        id: 'q_080',
-        question: '如何向 openEuler 安全委员会(security@openeuler.org)报告 CVE 安全漏洞?漏洞披露流程是什么?',
-        official_urls: [
-          {
-            url: 'https://www.openeuler.org/zh/security/vulnerability-reporting/',
-            problems: [{ severity: 'critical', dimension: 'sitemap_inclusion', description: 'URL 未被 sitemap 收录' }],
-          },
-        ],
-      },
-    ],
-  },
+  output_file: `${workDir}/output.md`,
 };
 
 const context = args.context ? JSON.parse(fs.readFileSync(args.context, 'utf-8')) : defaultContext;
-const workDir = context.portal.work_dir;
-const outputFile = `${workDir}/output.md`;
+const ctxWorkDir = context.portal.work_dir;
+const outputFile = `${ctxWorkDir}/output.md`;
 const prompt =
   `${fs.readFileSync(agentFile, 'utf-8')}\n\n## 上下文\n\n${JSON.stringify(context, null, 2)}\n\n` +
-  `请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
+  `请在 ${ctxWorkDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
 
 const out = args.output || path.join(__dirname, 'sample-fix-prompt.txt');
 fs.writeFileSync(out, prompt);

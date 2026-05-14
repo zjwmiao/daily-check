@@ -215,6 +215,27 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
   });
 }
 
+// 给 opencode 的精简上下文 — 去除冗余字段
+// 之前实测:analysis 字段跟 problems 数据重复(占 1100+ 字符),agent 不需要 question_text/category 等
+// 按 URL 聚合 problems,agent 一眼就知道每个 URL 要修什么
+function buildSlimContext(run, workDir) {
+  const byUrl = new Map();
+  for (const p of run.problems || []) {
+    if (!byUrl.has(p.url)) byUrl.set(p.url, { url: p.url, issues: [] });
+    byUrl.get(p.url).issues.push({
+      severity: p.severity,
+      dimension: p.dimension,
+      description: p.description,
+      ...(p.suggestion ? { suggestion: p.suggestion } : {}),
+    });
+  }
+  return {
+    portal: { owner: run.portal_owner, repo: run.portal_repo, work_dir: workDir, base_branch: run.portal_base_branch },
+    fixes: [...byUrl.values()],
+    output_file: `${workDir}/output.md`,
+  };
+}
+
 // opencode 跑完后追加 output.md 到对应 geo-debug 目录(单独一次 commit)
 function commitDebugOutput({ run, outputMd, agentOk }) {
   const repoRoot = process.env.GITHUB_WORKSPACE || process.cwd();
@@ -446,18 +467,7 @@ async function main() {
       const contextFile = path.join(ctxDir, `fix-context-${run.community}-${run.geo_issue_number}.json`);
       fs.writeFileSync(
         contextFile,
-        JSON.stringify(
-          {
-            portal: { owner: run.portal_owner, repo: run.portal_repo, work_dir: workDir },
-            geo_issue_url: run.geo_issue_url,
-            trigger_issue_url: `https://github.com/${process.env.TRIGGER_REPO}/issues/${process.env.TRIGGER_ISSUE}`,
-            run_dir: ctxDir,
-            problems: run.problems,
-            analysis: run.issue_payload,
-          },
-          null,
-          2
-        )
+        JSON.stringify(buildSlimContext(run, workDir), null, 2)
       );
 
       log('  [3/4] runOpencode (注:prompt/command 已在 spawn 前预先 commit 到 geo-debug/)');

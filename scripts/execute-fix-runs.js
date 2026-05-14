@@ -172,14 +172,16 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile) {
 
   return new Promise((resolve) => {
     let timedOut = false;
-    const child = spawn(opencode, opencodeArgs, {
-      stdio: ['pipe', 'inherit', 'inherit'],
+    // 用 bash + 管道 + stdbuf 启动 opencode — 匹配 SSH 手跑 / 参考仓 self-edit-workflow.yml 的形式
+    // 1. cat $promptFile | opencode ... :stdin 来源是真正的 bash pipe(不是 node writable stream)
+    // 2. stdbuf -oL -eL :强制 opencode stdout/stderr 行缓冲,避免 4KB block buffer 导致 workflow 日志看起来卡死
+    // 3. detached: true 保留 — 进程组 SIGKILL 兜底机制不变
+    const bashCmd = `stdbuf -oL -eL ${opencode} ${argsShell} < "${promptFile}"`;
+    const child = spawn('bash', ['-c', bashCmd], {
+      stdio: ['ignore', 'inherit', 'inherit'],
       cwd: workDir,
-      detached: true, // 开独立进程组,timeout 时能 kill 整个组(含 opencode 拉起的子进程)
+      detached: true,
     });
-    // 喂 prompt 到 stdin
-    child.stdin.write(prompt);
-    child.stdin.end();
 
     const timer = setTimeout(() => {
       timedOut = true;

@@ -285,3 +285,22 @@
   - `.github/workflows/geo-bot.yml` 顶层 `env:` 加 `AI_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}`(同参考仓约定);同时加 `AI_MODEL` + `AI_AGENT` 默认,从 vars 可覆盖
   - `scripts/execute-fix-runs.js` 默认值从 `''` 改为 `--dangerously-skip-permissions`(双重兜底,避免 workflow 配漏时仍然 hang)
   - workflow `analyze` job 加 `timeout-minutes: 15`,`fix` job 加 `timeout-minutes: 30`,GH 层硬墙
+
+## ADR-0017: 闭环 — geo-poll 定时 sync + 重验 + 自动关 issue
+
+- 日期: 2026-05-14
+- 状态: 已采纳
+- 上下文: 之前流程是"用户开 [GEO优化] issue → /analyze → /fix → portal PR"半自动,链路终点是 PR 等人 merge,没有"线上验证 + 闭环关 issue"的反向通路。geo-workflow 新出 P0 issue 也需要人手工搬到本仓。
+- 选项:
+  - A. 维持半自动,人 review 中间所有节点
+  - B. 加 cron 闭环:sync 新 issue + 查 PR 状态 + 重验 + 关 issue
+  - C. 用 webhook 实时驱动(更快但需公网 endpoint / repository_dispatch 配置)
+- 决定: B,cron 每 4 小时(调试期暂改 weekly)
+- 理由: 起步阶段 cron 够用、零外部依赖,符合 self-hosted runner 现状;响应延迟 ≤ 4h 对 GEO 这种"等部署+索引"周期来说不敏感。C 后期上量再考虑。
+- 后果:
+  - 新增 `.github/workflows/geo-poll.yml`(cron `17 */4 * * *`,调试期暂改 `17 5 * * 1`)
+  - 新增 `scripts/sync-geo-issues.js`:按 title `[GEO优化]#N` 去重,从 geo-workflow 同步新 P0 → 本仓(**不**自动 /analyze,人 review 后手动评论)
+  - 新增 `scripts/poll-portal-status.js`:扫本仓 open 的 [GEO优化] issue,抓评论里的 portal PR URL,查 atomgit `getPullRequest`;PR closed-not-merged 仅评论提醒;PR all-merged 且过 30min 冷却 → 重验该 issue 在 payload 评论里的所有 URL → 全清零则 close 本仓 issue + 评论本仓 + 回评 geo-workflow 原 issue;仍有问题则只评论不关
+  - `scripts/lib/atomgit-api.js` 加 `getPullRequest`
+  - 评论里加幂等 marker:`<!-- geo-revalidated v1 ... decision=pass/keep -->` + `<!-- geo-pr-status v1 ... -->`,防止 cron 重复刷评论
+  - geo-workflow 那边的 issue **不自动关**(权责分离 — 评估侧维护人决定)

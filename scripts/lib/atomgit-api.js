@@ -147,6 +147,17 @@ export async function updatePullRequest({ owner, repo, number, title, body }) {
   );
 }
 
+export async function getPullRequest({ owner, repo, number }) {
+  return retry(
+    async () => {
+      const res = await client().get(`${API_PREFIX}/repos/${owner}/${repo}/pulls/${number}`);
+      rejectOn4xx(res, 'getPullRequest');
+      return res.data;
+    },
+    { label: `getPullRequest(${owner}/${repo}#${number})` }
+  );
+}
+
 export async function listPullRequests({ owner, repo, head, state = 'open' }) {
   const params = { state, per_page: 100 };
   if (head) params.head = head;

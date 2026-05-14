@@ -228,6 +228,19 @@ agent 产出可用 diff(为 vulnerability-reporting 加 sitemap priority 0.7)+ o
 
 **所以**:同一代码 + 同一 prompt + 同一真实 portal 仓,Mac 5 分钟完成,runner 10 分钟卡死一句话不动 = 100% **runner 环境层面问题**(网络/代理/防火墙到 glm5 API、或 portal-x86 机器卡住),跟 prompt/代码/timeout 都无关。timeout 25min 够覆盖正常路径 + 余量。
 
+### Round 20 — 闭环:geo-poll(sync + 重验 + 自动关)
+
+- 请求: 用户希望全闭环 — geo-workflow 新 issue 自动同步进来 + portal PR merge 后通知 + 线上重验通过自动关 [GEO优化] issue。
+- 结论: 选 cron 方案,每 4 小时跑一次 `geo-poll.yml`(workflow_dispatch 也可手工触发)。3 个决策点:sync 只创建不自动 /analyze(人 review)、重验通过只关本仓 issue(geo-workflow 那边只回评)、cron 每 4h。
+- 产出:
+  - `.github/workflows/geo-poll.yml`:cron 4h + workflow_dispatch
+  - `scripts/sync-geo-issues.js`:title `[GEO优化]#N` 前缀去重,从 geo-workflow 拉 open + label=geo-improvement,新的 createIssue 到本仓
+  - `scripts/poll-portal-status.js`:扫本仓 open [GEO优化] → 抓评论里 atomgit PR URL → `getPullRequest` 查状态 → all-merged + 30min 冷却 → 重验 payload URL → 通过则 close + 回评双仓 / 失败则评论不关。幂等 marker `geo-revalidated v1` + `geo-pr-status v1`。
+  - `scripts/lib/atomgit-api.js` 加 `getPullRequest`
+  - ADR-0017 + design.md 10.x 待补
+- 后续:首次 sync 可能批量创建多个 [GEO优化] issue(geo-workflow 现有 ~40 个 P0),建议先手工创建一个测试 issue 验证 cron 跑通,再让它扫全量
+- 调试期调整:cron 从 `17 */4 * * *` 改为 `17 5 * * 1`(每周一一次),调试 /analyze 和 /fix 期间不被打扰;手工触发走 `workflow_dispatch` Actions UI 按钮。完成调试后改回 4h 节奏。
+
 ## 未完成 / 待办
 
 - [ ] **用户在 runner 上跑 `scripts/debug/runner-probe.sh`,看真实耗时**

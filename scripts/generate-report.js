@@ -1,5 +1,55 @@
 #!/usr/bin/env node
 
+/*
+ * === /analyze 输出模板(钉死,改 README 不改这里就跟 /fix 模板对齐了)===
+ *
+ * 评论结构(POST 到 [GEO优化]#N issue):
+ *
+ *   ## 🔍 GEO 分析报告
+ *
+ *   | 项 | 值 |
+ *   | --- | --- |
+ *   | 涉及 geo-workflow issue | N 个 |
+ *   | 分析 URL 数 | total (PASS: m, preflight 失败: p) |
+ *   | 问题总数 | x |
+ *
+ *   <details open>
+ *   <summary>🎯 {community} • geo-workflow #{N} — {n} URL / {m} 问题</summary>
+ *
+ *   > [{upstream title}]({upstream url}) · severity: **{P0/P1}**
+ *
+ *   **Q {qid}**: {question}
+ *
+ *   **{url}**  {✅ PASS / ❌ N problem(s) / ⏭ scope-skip / ⚠ preflight}
+ *
+ *   | 维度 | 结果 |
+ *   | --- | --- |
+ *   | 静态化 | ✅/❌ 描述 |
+ *   | Schema | ... |
+ *   | TDK | ... |
+ *   | Sitemap | ... |
+ *
+ *   - **[dimension]** description — 建议: suggestion
+ *
+ *   </details>
+ *
+ *   (重复:每个 issue 一个 <details open>)
+ *
+ *   > 评论 `/fix` 触发自动修复(将在对应 portal 仓提 PR)
+ *
+ *   <details>
+ *   <summary>📦 geo-analysis-payload v1(供 /fix 自动消费,请勿编辑)</summary>
+ *   ```json
+ *   { ... }
+ *   ```
+ *   </details>
+ *   <!-- geo-analysis-payload v1 -->
+ *
+ *   <sub>详细日志见 [GitHub Actions run]({url})</sub>
+ *
+ * 0-issue 跳过场景:把 details 段替换为 "⏭ 跳过(无可分析输入)"  + upstream_note
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { getCommunity } from './lib/community-map.js';
@@ -52,21 +102,37 @@ function renderUrl(urlAnalysis) {
   ].join('\n');
 }
 
+function issueStats(issue) {
+  let urls = 0;
+  let problems = 0;
+  for (const q of issue.questions || []) {
+    for (const u of q.urls || []) {
+      urls++;
+      problems += u.summary?.total || (u.problems?.length || 0);
+    }
+  }
+  return { urls, problems };
+}
+
 function renderIssue(issue) {
+  const stats = issueStats(issue);
   const lines = [
-    `## 🎯 ${issue.community} • geo-workflow #${issue.geo_issue_number}`,
     '',
-    `> [${issue.geo_issue_title}](${issue.geo_issue_url}) · severity: **${issue.severity}** · status: ${issue.status || '-'}`,
+    `<details open>`,
+    `<summary>🎯 ${issue.community} • geo-workflow #${issue.geo_issue_number} — ${stats.urls} URL / ${stats.problems} 问题</summary>`,
+    '',
+    `> [${issue.geo_issue_title}](${issue.geo_issue_url}) · severity: **${issue.severity}**`,
     '',
   ];
   for (const q of issue.questions) {
-    lines.push(`### Q ${q.id}: ${q.question}`);
+    lines.push(`**Q ${q.id}**: ${q.question}`);
     lines.push('');
     for (const u of q.urls) {
       lines.push(renderUrl(u));
       lines.push('');
     }
   }
+  lines.push(`</details>`);
   return lines.join('\n');
 }
 
@@ -181,32 +247,24 @@ async function main() {
     }
   }
 
+  const runUrl =
+    process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+      ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      : null;
+
   const lines = [
-    `# GEO 可发现性分析报告`,
-    '',
-    `_生成时间: ${analysis.run_at}_`,
-    args['trigger-issue'] ? `_触发 Issue: #${args['trigger-issue']}_` : '',
-    '',
-    `## 📊 总览`,
+    `## 🔍 GEO 分析报告`,
     '',
     `| 项 | 值 |`,
     `| --- | --- |`,
     `| 涉及 geo-workflow issue | ${analysis.issues.length} 个 |`,
     `| 分析 URL 数 | ${agg.totalUrls} (PASS: ${agg.passUrls}, preflight 失败: ${agg.preflightFailed}) |`,
     `| 问题总数 | ${agg.total} |`,
-    '',
-    `---`,
-    '',
   ];
 
-  for (const issue of analysis.issues) {
-    lines.push(renderIssue(issue));
-    lines.push('---');
-    lines.push('');
-  }
-
   if (analysis.issues.length === 0) {
-    lines.push(`## ⏭ 跳过(无可分析输入)`);
+    lines.push('');
+    lines.push(`### ⏭ 跳过(无可分析输入)`);
     lines.push('');
     if (analysis.upstream_note) {
       lines.push(`> ${analysis.upstream_note}`);
@@ -214,14 +272,22 @@ async function main() {
       lines.push('_未发现符合条件的 P0 issue(可能:official_urls 全部为空,或 target 不匹配)_');
     }
     lines.push('');
-    lines.push('**结论**: 这是上游 geo-workflow 数据状况,不是本工作流的分析失败;无需 `/fix`。');
-    lines.push('');
+    lines.push('**结论**: 上游 geo-workflow 数据状况,不是分析失败;无需 `/fix`。');
   } else {
+    for (const issue of analysis.issues) {
+      lines.push(renderIssue(issue));
+    }
+    lines.push('');
     lines.push(`> 评论 \`/fix\` 触发自动修复(将在对应 portal 仓提 PR)`);
   }
 
   const payload = buildFixPayload(analysis, args['trigger-issue'], portalIssuesIndex);
   lines.push(renderPayloadBlock(payload));
+
+  if (runUrl) {
+    lines.push('');
+    lines.push(`<sub>详细日志见 [GitHub Actions run](${runUrl})</sub>`);
+  }
 
   const out = lines.filter((l) => l !== undefined).join('\n');
   if (args.output) {

@@ -1,5 +1,47 @@
 #!/usr/bin/env node
 
+/*
+ * === /fix 输出模板(钉死)===
+ *
+ * 评论结构(POST 到 [GEO优化]#N issue):
+ *
+ *   ## 🛠 修复结果
+ *
+ *   | Community | geo issue | 状态 | Build | Verify | Critic | PR |
+ *   | --- | --- | --- | --- | --- | --- | --- |
+ *   | openEuler | [#18](https://github.com/opensourceways/geo-workflow/issues/18) | `pr_created` / `verify_failed` / `critic_blocked` / `skipped` / `error` | ✅ Ns / ⏭ skipped / ❌ phase | ✅n/❌m/⏭k | 🟢pass / 🟡warn / 🔴block | [#3085](https://atomgit.com/openeuler/openEuler-portal/merge_requests/3085) (created/updated) |
+ *
+ *   注意:
+ *   - geo issue / PR 列**必须用完整 markdown 链接**,否则 GitHub 把裸 `#N` 解析到本仓的 issue/PR
+ *
+ *   (可选)build 失败(任一阶段) → <details>(默认折叠)贴 stderr 尾段 2000 字符
+ *
+ *   (可选)critic verdict=block → <details open> 贴 critic body
+ *
+ *   每个有 agent_output 的 run:
+ *   <details open>
+ *   <summary>📝 {community} #{N} — opencode 修改清单 ({status})</summary>
+ *
+ *   {agent's output.md 内容,markdown 渲染,不 fenced}
+ *
+ *   agent_output 内部结构(由 .github/agents/geo-fix-prompt.md 强约束):
+ *     # GEO Fix Agent - {owner}/{repo} 修复清单
+ *     ## 修复概要 — 一段话
+ *     ## ✅ 成功修复 — 每个 URL 一个 ### N. {url} ({dim}) 项,带 维度/修复文件/修复内容 三联块
+ *     ## ⏭ 跳过处理 — 同样结构,加 跳过原因
+ *     ## ❌ 失败处理 — 同样结构,加 失败原因
+ *     ## 修复策略说明 — 配置方式 / 注入机制 / 数据来源 / 避免改动
+ *     ## 文件修改清单 — 每个文件一条
+ *     ## 验证建议 — 浏览器访问哪些 URL 看什么
+ *
+ *   </details>
+ *
+ *   <sub>详细日志见 [GitHub Actions run]({url}),原始制品在 workflow artifact(90 天保留)</sub>
+ *
+ * 同时另发评论到关联的 geo-workflow 原 issue:
+ *   "🛠 portal 仓 PR 已创建,关联本 issue:\n\n{pr_url}\n\n(由 geo-develop 自动化生成...)"
+ */
+
 import fs from 'fs';
 import axios from 'axios';
 
@@ -38,8 +80,12 @@ function buildTriggerComment(results, runUrl) {
     `| --- | --- | --- | --- | --- | --- | --- |`,
   ];
   for (const r of results) {
-    const pr = r.pr_url ? `[${r.pr_number}](${r.pr_url})` : '-';
+    const pr = r.pr_url ? `[#${r.pr_number}](${r.pr_url})` : '-';
     const action = r.pr_action ? ` (${r.pr_action})` : '';
+    // geo issue 列要带完整链接,否则 GitHub 把裸 `#N` 解析成本仓的 issue/PR #N(误指)
+    const geoIssue = r.geo_issue_url
+      ? `[#${r.geo_issue_number}](${r.geo_issue_url})`
+      : `#${r.geo_issue_number}`;
     // baseline_failed 时整个 run 还没进 build 步,baseline_build 才是失败现场
     const buildInfo = r.baseline_build && !r.baseline_build.ok && !r.baseline_build.skipped
       ? r.baseline_build
@@ -58,7 +104,7 @@ function buildTriggerComment(results, runUrl) {
       ? { pass: '🟢 pass', warn: '🟡 warn', block: '🔴 block' }[r.critic.verdict] || r.critic.verdict
       : '-';
     lines.push(
-      `| ${r.community} | #${r.geo_issue_number} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${build} | ${verify} | ${critic} | ${pr}${action} |`
+      `| ${r.community} | ${geoIssue} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${build} | ${verify} | ${critic} | ${pr}${action} |`
     );
   }
   lines.push('');

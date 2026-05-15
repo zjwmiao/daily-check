@@ -18,27 +18,87 @@ import { canonicalizeUrlHost } from '../lib/community-map.js';
 import { checkSchema } from './schema.js';
 import { checkTdk } from './tdk.js';
 
-// agent prompt 约定每行格式:`✅ <url> <dimension> — 改 path/to/file (原因)`
-// 我们容忍点空格/全角差别,但需要拿出 url / dimension / file
-const OUTPUT_LINE_RE = /^([✅⏭❌])\s+(\S+)\s+(\S+)\s+[—\-]\s+(?:改|跳过|失败)?\s*([^\s(（]+)?/u;
-
+// 解析 agent 写到 output.md 的丰格式修复清单(geo-fix-prompt.md 定义的结构)
+// 从 ## ✅/⏭/❌ 状态段 + ### N. {url} ({dim}) 项里:
+//   - 优先读项体内的 **维度**: `<具体 dim>` 行(精确,如 tdk.description / static_render.h1_missing)
+//   - 项体内 **修复文件**: `<file>` 行;dim 跟 file 按 markdown 顺序 zip
+//   - 都没有时回落到 H3 头括号里的 dim(粗粒度,如 schema/tdk)
 export function parseAgentOutput(md) {
+  if (!md) return [];
   const records = [];
-  if (!md) return records;
-  for (const raw of md.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const m = line.match(OUTPUT_LINE_RE);
-    if (!m) continue;
-    const [, icon, url, dimension, file] = m;
-    records.push({
-      icon,
-      url,
-      dimension,
-      file: file || null,
-      raw: line,
-    });
+  const lines = md.split(/\r?\n/);
+
+  let currentStatus = null; // ✅ | ⏭ | ❌ | null
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // H2 状态段
+    const h2 = line.match(/^##\s+(.+?)\s*$/);
+    if (h2) {
+      const txt = h2[1];
+      if (/^✅/.test(txt)) currentStatus = '✅';
+      else if (/^⏭/.test(txt)) currentStatus = '⏭';
+      else if (/^❌/.test(txt)) currentStatus = '❌';
+      else currentStatus = null;
+      i++;
+      continue;
+    }
+
+    if (!currentStatus) {
+      i++;
+      continue;
+    }
+
+    // H3 项:### N. {url} ({dim[+dim]})
+    const h3 = line.match(/^###\s+\d+\.\s+(\S+?)\s*\(([^)]+)\)\s*$/);
+    if (!h3) {
+      i++;
+      continue;
+    }
+
+    const url = h3[1];
+    const dimensionRaw = h3[2].trim();
+
+    // 项体内:抽 **维度** + **修复文件** + ⏭/❌ 跳过/失败原因
+    const dims = [];
+    const files = [];
+    let reason = null;
+    let j = i + 1;
+    while (j < lines.length && !/^##\s|^###\s/.test(lines[j])) {
+      const dimM = lines[j].match(/^\*\*维度\*\*\s*[:：]\s*`?([^`\n]+?)`?\s*(?:[-—–]\s*.*)?$/);
+      if (dimM) dims.push(dimM[1].trim());
+      const fileM = lines[j].match(/^\*\*修复文件\*\*\s*[:：]\s*`?([^`\n]+?)`?\s*$/);
+      if (fileM) files.push(fileM[1].trim());
+      const reasonM = lines[j].match(/^\*\*(?:跳过原因|失败原因)\*\*\s*[:：]\s*(.+?)\s*$/);
+      if (reasonM) reason = reasonM[1].trim();
+      j++;
+    }
+
+    // 项体里没明示 dim 时,回落到 H3 头里的(粗粒度)
+    const finalDims =
+      dims.length > 0
+        ? dims
+        : dimensionRaw
+            .split(/\s*[+,、,]\s*/)
+            .map((s) => s.replace(/^`|`$/g, '').trim())
+            .filter(Boolean);
+
+    const n = Math.max(finalDims.length, files.length, 1);
+    for (let k = 0; k < n; k++) {
+      records.push({
+        icon: currentStatus,
+        url,
+        dimension: finalDims[k] || finalDims[0] || dimensionRaw,
+        file: files[k] || files[0] || null,
+        reason,
+        raw: `${currentStatus} ${url} (${dimensionRaw})`,
+      });
+    }
+
+    i = j;
   }
+
   return records;
 }
 

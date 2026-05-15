@@ -558,7 +558,13 @@ async function main() {
     }
 
     log(`▶️  [${idx}/${runs.length}] ${run.community} #${run.geo_issue_number} — ${run.problems.length} problem(s), branch=${run.branch_name}`);
-    const result = { community: run.community, geo_issue_number: run.geo_issue_number };
+    // geo_issue_url 透到 result,让 comment-fix-summary 能把 "geo issue #N" 渲染成跨仓链接 —
+    // 否则 GitHub 会把裸 `#N` 自动解析成本仓的 issue/PR #N(误指)
+    const result = {
+      community: run.community,
+      geo_issue_number: run.geo_issue_number,
+      geo_issue_url: run.geo_issue_url,
+    };
     const tRun = Date.now();
 
     try {

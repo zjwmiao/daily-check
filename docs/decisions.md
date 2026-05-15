@@ -526,3 +526,63 @@
   - README pipeline 描述拉成 8 步;env 表 `GEO_BUILD_DISABLE` 现在同时关 baseline + post-agent build
   - 时长预算:baseline build 比 post-agent build 慢(要装 deps,首次 5-10min;后续 cache 命中 <1min);post-agent build 因为 deps 已装通常 30s-2min。/fix 整体 +5-15min(首次)/ +2-5min(cache 命中)
   - 后续观察:统计 baseline_failed 比例 → 高的话该催 portal 维护;统计 build_failed 比例 → 高且 stderr 看是语法错的话考虑加 D(self-heal)
+
+## ADR-0027: build 改 best-effort — 失败不阻 push,agent build 自检改可选(amends ADR-0026)
+
+- 日期: 2026-05-15
+- 状态: 已采纳(部分修正 ADR-0026)
+- 上下文: ADR-0026 把 baseline + post-agent build 列为硬卡:任一失败 → `status=baseline_failed / build_failed`,workflow 挂、PR 不推。线上跑了两次都挂在 build:第一次 husky `prepare` hook 在 self-hosted runner 上炸(HUSKY=0 修了),第二次 pnpm v11 的 `ERR_PNPM_IGNORED_BUILDS` 把"跳过 esbuild 等 postinstall"当 error 抛(deps 实际已装好)。两次都跟 agent 改动**完全无关**,但都把 /fix 整轮卡死。结论:**portal build 跟环境 / pnpm 版本 / 网络 / native deps 牵扯太深**,把它当硬卡反而妨碍主流程 — 真正能告诉我们"agent 有没有修对"的是 verify(源码层 sitemap+tdk + build 产物可选 schema+static_render)+ critic。
+- 选项:
+  - A. 维持 ADR-0026 硬卡 — 每个 build 边缘 case 都得修
+  - B. build 改 best-effort — 失败只 warn,reviewer 看 PR body 的 verify + critic 自行权衡是否 merge
+  - C. 完全移除 build 步骤,schema/static-render 全走 geo-poll 线上重验(回到 pre-ADR-0025)
+- 决定: B
+- 理由:
+  - build 通过时仍有价值(给 verify 提供 dist HTML 真验 schema/static-render),不该完全删
+  - build 失败的归因 portal build 本身,不应该让"修个 schema"的 PR 因为 husky 这种环境问题永远推不出去
+  - verify 的硬卡仍在(sitemap/tdk 源码层可验,不依赖 build),修对没修对仍有客观判定
+  - critic 仍能基于 git diff + agent_output 给出 verdict,不需要 build 也能 block 红线
+- 后果:
+  - `scripts/execute-fix-runs.js`:
+    - baseline build 失败 → ⚠ warn + 跳 post-agent build,verify schema/static-render → deferred(不写 status)
+    - post-agent build 失败 → ⚠ warn + buildOutputDir 设 null,verify 退到源码层,**仍继续 critic + push**
+    - `FAILED_STATES` 收窄回 `{error, verify_failed, critic_blocked}`(去 baseline_failed + build_failed)
+  - `.github/agents/geo-fix-prompt.md`:第 4 步"改完必须自检 build"改成"可选(非强制)" — 跑通信心更高、跑不通也不算修复失败
+  - `scripts/comment-fix-summary.js`:build 失败 `<details>`(改成默认折叠)贴 stderr,标"非阻断,reviewer 自行判";去掉 `baseline_failed`/`build_failed` 特殊文案
+  - `scripts/lib/portal-build.js`:加 `HUSKY=0 CI=1 npm_config_fail_on_ignored_builds=false` env;stdout+stderr 双通道捕获;`ERR_PNPM_IGNORED_BUILDS` 软放过(deps 已装,只是 postinstall 跳过)
+  - README pipeline 描述改"2 道硬护栏(verify+critic) + 2 个 best-effort build(baseline+post-agent)"
+  - 后续观察:如果 build 通过率长期 <30%(verify 一直只能 source-based),再考虑去掉 build 步省时间;通过率 >70% 就维持
+
+## ADR-0028: agent prompt 强制现网 recon + 数据来源追溯
+
+- 日期: 2026-05-15
+- 状态: 已采纳
+- 上下文: 前几次 /fix 跑出来的 agent 修复清单 — agent 只 grep portal 源码就动手改,凭源码现有字段状态拼 schema / tdk,字段值**没有数据来源追溯**(`name` 是从哪个 H1 来的?`description` 是哪段 HTML?),容易出"乱编字段值"和"改错文件"。analyze 是基于线上 URL 跑的,fix 也应当对得上线上现实,否则改完仍然不能解决"AI 引擎没看到这页"。
+- 选项:
+  - A. 维持简短 prompt,靠 critic 兜底
+  - B. prompt 强制 5 步法(recon → 定位 → 改 → 自检 → 报告),每步给具体工具 / 判定标准 / 失败映射
+  - C. 多 agent 流水线(recon agent + fix agent + verify agent),不同角色不同 prompt
+- 决定: B
+- 理由:
+  - C 编排复杂,opencode session 间传上下文不稳;A 已实测漏掉"现网真页"导致字段乱编
+  - 单 agent 多 phase 走 opencode 的 tool use 闭环就够 — 它有 curl / grep / file read,有能力做完整 recon
+  - 把"必须 curl 抓现网"和"每个 ✅ 项必须写字段值来源"两条写死,critic 就可以基于这两条审查 agent 是不是真做了 recon
+- 后果:
+  - `.github/agents/geo-fix-prompt.md` 从 95 行扩到 241 行:
+    - **关键原则** 4 条 — 数据从现网取 / 最小改动 / 不编造 / 可追溯
+    - **Step 1 强制 curl 抓现网 HTML**:7 个信号(title/meta description/h1/首段/已有 JSON-LD/SSR-or-SPA/canonical),抓不到 → ❌
+    - **Step 2 URL → 源码定位**:vitepress/nuxt/vue-router 三类框架的具体映射约定 + `rg` 验证 + 定位不到 → ❌
+    - **Step 3 按 dim 改** 给具体标准:
+      - schema @type 按页面性质选(Article/FAQPage/Organization/Service/CollectionPage 等 6 类映射)
+      - 字段值 **100% 从 Step 1 抓的 HTML 取**:`name`←H1、`description`←首段、`image`←og:image(没有就不写,不要乱给默认图)
+      - tdk.description 强制**直接复制现网首段**,不能跟 title 同文
+      - sitemap 静态 / 配置 / 路由生成三种约定
+      - static_render 纯 SPA 归 ⏭
+    - **Step 4 build 自检可选**(对齐 ADR-0027)
+    - **Step 5 output.md 严格模板** + 新增 `**字段值来源**: ...` 必填项 — 每个 ✅ 必须能反推到 HTML 哪段
+    - **格式硬约束**小节告诉 agent 哪些标记是 parser 依赖,不可改
+    - **5 类失败 case** 各自映射到 ⏭/❌ + 原因模板(curl 404 / 字段全空 / 定位不到 / 框架是 SPA / build 不过)
+  - parser(`scripts/checks/post-fix-verify.js`)不动,仍读 `## ✅/⏭/❌` + `### N. {url} ({dim})` + `**修复文件**` + `**维度**` 这几个固定标记
+  - critic prompt(`.github/agents/geo-critic-prompt.md`)已对 verify_checks 作 ground truth,现在多一道"字段值来源"是否真实可信的审查空间(critic 看 git diff 里的字段值能否在 agent_output 的"字段值来源"里反推到 HTML)
+  - 时长影响:每 URL 多 1 次 curl(~1-2s)+ 多分析 HTML;single run 多 ~10-30s,微不足道
+  - 后续观察:看 agent_output 里"字段值来源"行是否真写了 H1/meta 来源,critic verdict 是否更稳;如果 agent 还是不写或瞎写,prompt 再细化或转 C 多 agent

@@ -10,7 +10,8 @@
 //
 // 返回:{ checks: [{ url, dimension, before, after, status }], blocking: bool }
 //   status: 'fixed' | 'still_failing' | 'deferred' | 'unverifiable'
-//   blocking: 有 status === 'still_failing' 的就 true,上游用来决定是否阻止 push
+//   blocking: 仅在 fixed=0 && still_failing>0 时 true(零进展才阻断)
+//   — 部分进展(fixed>0 即使 still_failing>0)不 block,reviewer + critic 在 PR body 里看剩下的自己决策
 
 import fs from 'fs';
 import path from 'path';
@@ -430,7 +431,6 @@ export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community
     }
   }
 
-  const blocking = checks.some((c) => c.status === 'still_failing');
   const summary = {
     total: checks.length,
     fixed: checks.filter((c) => c.status === 'fixed').length,
@@ -438,5 +438,8 @@ export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community
     deferred: checks.filter((c) => c.status === 'deferred').length,
     unverifiable: checks.filter((c) => c.status === 'unverifiable').length,
   };
+  // 仅在 fixed=0 && still_failing>0 时 block — 零进展 / 全错才拒推
+  // 任何进展(fixed>=1)都允许推 PR,留下的 still_failing 让 reviewer + critic 看 verify 表自己决策
+  const blocking = summary.fixed === 0 && summary.still_failing > 0;
   return { checks, summary, blocking };
 }

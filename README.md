@@ -118,7 +118,8 @@ generate-report        Markdown 报告 + 末尾 geo-analysis-payload v1 JSON 折
 [5/8] portal build (post-agent) best-effort,同 baseline。挂了只 warn 不阻 push,reviewer 看 PR body / critic 自行判
 [6/8] pre-push verify  ⛳ 护栏1  sitemap.xml + tdk frontmatter 直接源码验
                                 schema/static-render:有 build dist 就真验,没有就 deferred 等 geo-poll 线上重验
-                                still_failing → status=verify_failed, 不 push
+                                **只在零进展(fixed=0 且 still_failing>0)时 block**;部分进展(fixed≥1)放行,
+                                reviewer + critic 看 PR body 里的 verify 表自决
 [7/8] critic  ⛳ 护栏2           第二次 opencode (skeptic 角色),输入: problems + agent_output + verify_checks + git diff
                                 critic verdict=block → status=critic_blocked, 不 push
                                 pass/warn 都允许 push,critic 输出贴到 PR body

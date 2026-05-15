@@ -662,14 +662,17 @@ async function main() {
         `  📊 verify: fixed=${verify.summary.fixed} still_failing=${verify.summary.still_failing} deferred=${verify.summary.deferred} unverifiable=${verify.summary.unverifiable}`
       );
 
-      // 任何静态可验维度仍 still_failing → 拒绝 push,本 run 标 verify_failed,
-      // workflow 末尾 throw 让整个 step 失败、`if:failure` 走回评分支
+      // verify 只在"零进展"时阻断:fixed=0 且 still_failing>0 → agent 改了但全没生效
+      // 部分进展(fixed>=1 即使 still_failing>0)允许推 PR,留下的让 reviewer + critic 看 verify 表自己定
       if (verify.blocking) {
         result.status = 'verify_failed';
-        result.error = `pre-push 自检不通过: ${verify.summary.still_failing} 个 still_failing(详见 verify.checks)`;
-        log(`  ❌ ${result.error},跳过 push`);
+        result.error = `pre-push verify 零进展:fixed=0 且 still_failing=${verify.summary.still_failing}(agent 改了但没一项落地);跳过 push 等人工排查`;
+        log(`  ❌ ${result.error}`);
         results.push(result);
         continue;
+      }
+      if (verify.summary.still_failing > 0) {
+        log(`  ⚠ verify 部分通过:fixed=${verify.summary.fixed} still_failing=${verify.summary.still_failing} — PR 仍推,reviewer + critic 自决`);
       }
 
       log('  [7/8] critic (反向审查;不阻断 push,只在 PR body 上贴结论)');

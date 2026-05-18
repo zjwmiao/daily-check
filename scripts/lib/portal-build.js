@@ -127,7 +127,7 @@ export async function buildPortal(
 
   if (pm === 'pnpm') {
     writeFileSync(path.join(workDir, 'pnpm-workspace.yaml'), `allowBuilds:
-  @parcel/watcher: true
+  "@parcel/watcher": true
   esbuild: true
   vue-demi: true`);
   }

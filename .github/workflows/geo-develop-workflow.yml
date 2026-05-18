@@ -138,6 +138,8 @@ jobs:
             -d "$(jq -nc --arg url "$RUN_URL" '{body: "❌ `/analyze` 失败,详见 \($url)"}')"
 
   fix:
+    env:
+      IN_GITHUB_ACTION: true
     if: |
       !github.event.issue.pull_request &&
       startsWith(github.event.issue.title, '[GEO优化]') &&

@@ -15,6 +15,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);
@@ -124,6 +125,13 @@ export async function buildPortal(
 
   log(`pm=${pm} build=${buildScript}`);
 
+  if (pm === 'pnpm') {
+    writeFileSync(path.join(workDir, 'pnpm-workspace.yaml'), `allowBuilds:
+  @parcel/watcher: true
+  esbuild: true
+  vue-demi: true`);
+  }
+
   // install — node_modules 已有就跳(workDir 是 portal 持久 cache,大多数情况下 deps 已就位)
   const nm = path.join(workDir, 'node_modules');
   if (!fs.existsSync(nm)) {
@@ -164,6 +172,22 @@ export async function buildPortal(
   }
 
   // build
+  let vitepressConfig = readFileSync(path.join(workDir, 'app/.vitepress/config.ts'), 'utf-8');
+  let configLines = vitepressConfig.split(/\r?\n/g);
+  // 跳过博客新闻页面，加速构建
+  writeFileSync(
+    path.join(workDir, 'app/.vitepress/config.ts'),
+    configLines
+      .flatMap(l => {
+        if (l.endsWith('lastUpdated: true,')) {
+          return [l, '  srcExclude: ["**/blog/**/*", "**/news/**/*],'];
+        }
+        return l;
+      })
+      .join('\n')
+  );
+  vitepressConfig = null;
+  configLines = null;
   const beforeBuild = Date.now();
   log(`🏗  ${pm} run ${buildScript}(timeout ${buildTimeoutMs / 1000}s)`);
   try {

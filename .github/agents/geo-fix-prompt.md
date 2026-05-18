@@ -66,8 +66,8 @@ grep -ozE '<script type="application/ld\+json">[^<]*</script>' /tmp/page.html
 
 - **vitepress**(openEuler-portal 是这个):
   - URL `/zh/security/xxx/` → `app/zh/security/xxx/index.md` 或 `app/zh/security/xxx.md`
-  - JSON-LD 字典在 `app/.vitepress/jsonld/{general,index,...}.ts`,按 URL path 取键
-  - TDK 在 `.md` frontmatter,或者 `app/.vitepress/tdks/{zh,en}.ts` 字典
+  - JSON-LD 字典在 `.geo/jsonld/{general,index,...}.ts`,按 URL path 取键
+  - TDK 在 `.md` frontmatter,或者 `.geo/tdks/{zh,en}.ts` 字典
   - sitemap 在 `app/.vitepress/config.ts` 里 sitemap / `transformPageData` 配置块
 - **nuxt**:URL `/about` → `pages/about.vue`;schema 在 `useSchemaOrg()` 或 `composables/`;sitemap 在 `nuxt.config.ts` / `@nuxtjs/sitemap`
 - **vue + vue-router**:`router/index.ts` 找 URL → component;sitemap 通常静态 / vite-plugin

@@ -388,11 +388,15 @@ export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community
 
     if (p.dimension === 'sitemap_inclusion') {
       const r = verifySitemap({ url: p.url, community }, sitemapLocs);
+      if (r.status === 'still_failing') {
+        console.log(`[post-fix-verify] sitemap still_failing: ${JSON.stringify(r, null, 2)}`);
+      }
       checks.push({ url: p.url, dimension: p.dimension, ...r });
     } else if (p.dimension && p.dimension.startsWith('tdk')) {
       // build 产物存在时优先用 build 后 HTML(frontmatter 改了但是否真生效要看渲染)
       if (outputDir) {
         const r = verifyFromBuiltHtml({ url: p.url, dimension: p.dimension, outputDir, beforeProblem: p });
+        console.log(`[post-fix-verify] verifyFromBuiltHtml1 still_failing: ${JSON.stringify(r, null, 2)}`);
         checks.push({ url: p.url, dimension: p.dimension, ...r });
       } else {
         const r = verifyTdk({
@@ -402,12 +406,14 @@ export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community
           workDir,
           beforeProblem: p,
         });
+        console.log(`[post-fix-verify] verifyTdk still_failing: ${JSON.stringify(r, null, 2)}`);
         checks.push({ url: p.url, dimension: p.dimension, ...r });
       }
     } else if (p.dimension === 'schema' || p.dimension === 'static_render') {
       if (outputDir) {
         // 有 build 产物 → 真验
         const r = verifyFromBuiltHtml({ url: p.url, dimension: p.dimension, outputDir, beforeProblem: p });
+        console.log(`[post-fix-verify] verifyFromBuiltHtml2 still_failing: ${JSON.stringify(r, null, 2)}`);
         checks.push({ url: p.url, dimension: p.dimension, ...r });
       } else {
         // 没 build(build_disabled / build 失败 / 仓没有 build 脚本)→ 延后到线上闭环

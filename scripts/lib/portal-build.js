@@ -33,8 +33,8 @@ function detectPm(workDir) {
 const BUILD_SCRIPT_CANDIDATES = ['build', 'docs:build', 'generate', 'build:prod'];
 const OUTPUT_DIR_CANDIDATES = [
   'dist',
+  'app/.vitepress/dist',
   '.vitepress/dist',
-  'docs/.vitepress/dist',
   '.output/public',
   '.nuxt/dist',
   '.next/out',

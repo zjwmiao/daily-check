@@ -180,7 +180,7 @@ export async function buildPortal(
     configLines
       .flatMap(l => {
         if (l.endsWith('lastUpdated: true,')) {
-          return [l, '  srcExclude: ["**/blog/**/*", "**/news/**/*],'];
+          return [l, '  srcExclude: ["**/blog/**/*", "**/news/**/*"],'];
         }
         return l;
       })

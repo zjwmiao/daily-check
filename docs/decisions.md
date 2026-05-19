@@ -586,3 +586,26 @@
   - critic prompt(`.github/agents/geo-critic-prompt.md`)已对 verify_checks 作 ground truth,现在多一道"字段值来源"是否真实可信的审查空间(critic 看 git diff 里的字段值能否在 agent_output 的"字段值来源"里反推到 HTML)
   - 时长影响:每 URL 多 1 次 curl(~1-2s)+ 多分析 HTML;single run 多 ~10-30s,微不足道
   - 后续观察:看 agent_output 里"字段值来源"行是否真写了 H1/meta 来源,critic verdict 是否更稳;如果 agent 还是不写或瞎写,prompt 再细化或转 C 多 agent
+
+## ADR-0029: pnpm install 遇 ignored builds 时执行 approve-builds --all
+
+- 日期: 2026-05-19
+- 状态: 已采纳
+- 上下文: ADR-0027 把 portal build 改为 best-effort,在 `ERR_PNPM_IGNORED_BUILDS` 时仅软放过(deps 已装,postinstall 被跳)。但 pnpm v10+ 的 approve 机制更严格 — 即使 `npm_config_fail_on_ignored_builds=false` 让 install 不报错,后续 `pnpm run build` 时若依赖的 native 包(esbuild / @parcel/watcher 等)未被批准,build 仍会失败。之前靠环境变量绕过 install 报错,但没解决根本问题:这些包的二进制脚本未被 pnpm 信任,build 阶段可能被拒执行。另外,node_modules 存在时跳 install 的判断过于乐观 — 持久 cache 的 deps 可能是旧版本或不完整,强制每次 install 更可靠。
+- 选项:
+  - A. 维持现状(软放过 install 报错,build 时再看是否真挂)
+  - B. install 遇 `ERR_PNPM_IGNORED_BUILDS` 且 pm=pnpm → 执行 `pnpm approve-builds --all` 批准所有被跳的构建脚本
+  - C. 手动维护 portal 仓的 `package.json.onlyBuiltDependencies` 列表(需改上游,不可控)
+- 决定: B
+- 理由:
+  - A 只是让 install 不报错,但 build 可能因未批准的脚本挂掉,用户得手动 SSH 到 runner 执行 approve — 不符合"自动化闭环"目标
+  - B 是 pnpm v10+ 的官方推荐做法:`approve-builds --all` 一次性批准当前依赖树的所有构建脚本,后续 build 不再被阻
+  - C 需要上游 portal 仓配合,我们无法控制,且每次加新 native 依赖都要追着改列表,维护成本高
+  - 强制每次执行 install(去掉 node_modules 存在跳过的判断)的好处:确保 deps 版本与 lockfile 一致,避免 cache 陈旧导致 build 异常;install 在 deps 已就位时通常 5-10s(只做 integrity check),额外开销可接受
+- 后果:
+  - `scripts/lib/portal-build.js` `buildPortal()`:
+    - 删除 `if (!fs.existsSync(nm))` 条件判断,每次都执行 install
+    - 在 `isPnpmIgnoredBuildsOnly()` 判断成立时,若 `pm === 'pnpm'` 则执行 `pnpm approve-builds --all` (30s timeout,失败仅 warn 不阻断)
+    - approve 成功 → 后续 build 可正常执行 native 脚本;approve 失败 → 继续流程,build 时再看是否真挂(已比原来多一道保护)
+  - 时长影响:每次 install 多 5-10s integrity check;遇 ignored builds 时多一次 approve(~1-5s);整体 +5-15s/run
+  - 后续观察:统计 approve-builds 执行频率;若频繁出现说明 portal 仓 native 依赖多,可考虑上游加 `onlyBuiltDependencies` 长期方案

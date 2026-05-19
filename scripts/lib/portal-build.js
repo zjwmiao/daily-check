@@ -30,7 +30,7 @@ function detectPm(workDir) {
   return null;
 }
 
-const BUILD_SCRIPT_CANDIDATES = ['build', 'docs:build', 'generate', 'build:prod'];
+const BUILD_SCRIPT_CANDIDATES = ['build:geo', 'build', 'docs:build', 'generate:geo', 'generate', 'build:prod'];
 const OUTPUT_DIR_CANDIDATES = [
   'dist',
   'app/.vitepress/dist',
@@ -125,69 +125,48 @@ export async function buildPortal(
 
   log(`pm=${pm} build=${buildScript}`);
 
-  if (pm === 'pnpm') {
-    writeFileSync(path.join(workDir, 'pnpm-workspace.yaml'), `allowBuilds:
-  "@parcel/watcher": true
-  esbuild: true
-  vue-demi: true`);
-  }
-
-  // install — node_modules 已有就跳(workDir 是 portal 持久 cache,大多数情况下 deps 已就位)
   const nm = path.join(workDir, 'node_modules');
-  if (!fs.existsSync(nm)) {
-    log(`📦 ${pm} install (--frozen-lockfile / --immutable / ci)`);
-    const t0 = Date.now();
-    try {
-      const cmd =
-        pm === 'pnpm' ? 'pnpm install --frozen-lockfile'
-        : pm === 'yarn' ? 'yarn install --immutable'
-        : 'npm ci';
-      sh(cmd, workDir, installTimeoutMs);
-      log(`✅ deps installed in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    } catch (err) {
-      // pnpm 在 lifecycle 脚本失败时常常把真错放 stdout(scripts 输出)而不是 stderr,要都抓
-      const stderr = err.stderr?.toString() || '';
-      const stdout = err.stdout?.toString() || '';
-      const merged = [stdout, stderr].filter(Boolean).join('\n--- stderr ---\n').trim() || err.message;
+  log(`📦 ${pm} install (--frozen-lockfile / --immutable / ci)`);
+  const t0 = Date.now();
+  try {
+    const cmd =
+      pm === 'pnpm' ? 'pnpm install --frozen-lockfile'
+      : pm === 'yarn' ? 'yarn install --immutable'
+      : 'npm ci';
+    sh(cmd, workDir, installTimeoutMs);
+    log(`✅ deps installed in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  } catch (err) {
+    const stderr = err.stderr?.toString() || '';
+    const stdout = err.stdout?.toString() || '';
+    const merged = [stdout, stderr].filter(Boolean).join('\n--- stderr ---\n').trim() || err.message;
 
-      // pnpm v10+ 的 ERR_PNPM_IGNORED_BUILDS:deps 其实装好了,只是 postinstall hook 被跳。
-      // 已经设了 npm_config_fail_on_ignored_builds=false,但如果 env 在某些 pnpm 版本上不生效,
-      // 这里再判一遍:错误体只含这一项 + node_modules 真有东西 → 视作软警告,继续 build
-      if (isPnpmIgnoredBuildsOnly(merged) && fs.existsSync(nm) && fs.readdirSync(nm).length > 0) {
-        log(`⚠ install 抛 ERR_PNPM_IGNORED_BUILDS 但 node_modules 已建立,视作软警告,继续 build`);
-        const ignored = merged.match(/Ignored build scripts:\s*([^\n]+)/)?.[1] || '?';
-        log(`  跳过的 postinstall:${ignored.slice(0, 200)}`);
-        log(`  ✅ deps installed (with warnings) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-      } else {
-        return {
-          ok: false,
-          phase: 'install',
-          error: `${pm} install failed (exit=${err.status ?? '?'}):\n${merged.slice(-2000)}`,
-          duration_ms: Date.now() - t0,
-        };
+    if (isPnpmIgnoredBuildsOnly(merged) && fs.existsSync(nm) && fs.readdirSync(nm).length > 0) {
+      log(`⚠ install 抛 ERR_PNPM_IGNORED_BUILDS 但 node_modules 已建立,视作软警告,继续 build`);
+      const ignored = merged.match(/Ignored build scripts:\s*([^\n]+)/)?.[1] || '?';
+      log(`  跳过的 postinstall:${ignored.slice(0, 200)}`);
+
+      if (pm === 'pnpm') {
+        log(`  🔧 执行 pnpm approve-builds --all 以批准被跳过的构建脚本`);
+        try {
+          sh('pnpm approve-builds --all', workDir, 30000);
+          log(`  ✅ approve-builds 完成`);
+        } catch (approveErr) {
+          log(`  ⚠ approve-builds 执行失败(非阻断): ${approveErr.message?.split('\n')[0]}`);
+        }
       }
+
+      log(`  ✅ deps installed (with warnings) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    } else {
+      return {
+        ok: false,
+        phase: 'install',
+        error: `${pm} install failed (exit=${err.status ?? '?'}):\n${merged.slice(-2000)}`,
+        duration_ms: Date.now() - t0,
+      };
     }
-  } else {
-    log(`♻️  node_modules 已存在,跳过 install`);
   }
 
   // build
-  let vitepressConfig = readFileSync(path.join(workDir, 'app/.vitepress/config.ts'), 'utf-8');
-  let configLines = vitepressConfig.split(/\r?\n/g);
-  // 跳过博客新闻页面，加速构建
-  writeFileSync(
-    path.join(workDir, 'app/.vitepress/config.ts'),
-    configLines
-      .flatMap(l => {
-        if (l.endsWith('lastUpdated: true,')) {
-          return [l, '  srcExclude: ["**/blog/**/*", "**/news/**/*"],'];
-        }
-        return l;
-      })
-      .join('\n')
-  );
-  vitepressConfig = null;
-  configLines = null;
   const beforeBuild = Date.now();
   log(`🏗  ${pm} run ${buildScript}(timeout ${buildTimeoutMs / 1000}s)`);
   try {

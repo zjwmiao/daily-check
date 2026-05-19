@@ -3,6 +3,11 @@ name: GEO Develop Workflow
 on:
   issue_comment:
     types: [created]
+  # sync-geo-issues.js 用 PAT(GEO_GITHUB_TOKEN)创建 tracker issue 时,
+  # issues.opened event 会 cascade 触发本 workflow → 自动跑一次 /analyze
+  # 用户手工开 [GEO优化]#N issue 也走这条路径
+  issues:
+    types: [opened]
 
 permissions:
   contents: write
@@ -18,10 +23,17 @@ env:
 
 jobs:
   analyze:
+    # 两种触发路径都接:
+    #   1) issue_comment: 用户(或 bot)在 [GEO优化] issue 下评论 /analyze
+    #   2) issues.opened: tracker issue 刚被(sync 用 PAT,或用户手工)创建
     if: |
       !github.event.issue.pull_request &&
       startsWith(github.event.issue.title, '[GEO优化]') &&
-      startsWith(github.event.comment.body, '/analyze')
+      (
+        (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/analyze'))
+        ||
+        (github.event_name == 'issues' && github.event.action == 'opened')
+      )
     runs-on: portal-x86
     timeout-minutes: 15
     concurrency:

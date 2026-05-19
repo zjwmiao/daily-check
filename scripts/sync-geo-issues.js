@@ -1,12 +1,18 @@
 #!/usr/bin/env node
-// 把 geo-workflow 仓的新 P0 issue 同步成本仓的 [GEO优化]#N issue(只创建,不自动 /analyze)
-// 也会用 BODY_MARKER 检测旧格式 tracker issue 并把 body PATCH 到当前格式(只刷自动生成段,不动手工评论)
+// 把 geo-workflow 仓的新 P0 issue 同步成本仓的 [GEO优化]#N issue
+// — 只同步 official_urls 非空(本仓 4 维度能跑)的 issue
+// — 全空(P1 内容空白类)→ 在上游 issue 评论一次"暂不接管"(带 skipped marker,幂等)
+// — createIssue 用 GEO_GITHUB_TOKEN(PAT),让 issues.opened cascade 能触发 analyze workflow
+// — 已有 tracker 用 BODY_MARKER 检测旧格式自动 PATCH
 
 import axios from 'axios';
+import { issueHasOfficialUrls } from './lib/geo-workflow-data.js';
 
-// body 末尾埋个隐藏 marker(HTML 注释,显示时不可见),用来识别 body 格式版本
-// — bump 版本号时,旧 marker 的 issue 会被识别为"需要刷"
+// tracker body 格式版本 marker — bump 这个版本号时,旧 tracker 会被 patch
 export const BODY_MARKER = '<!-- geo-sync-body v2 -->';
+
+// 上游 issue 上的"已通知本仓暂不接管"标记,幂等用 — 同一 upstream issue 只评论一次
+const UPSTREAM_SKIPPED_MARKER = '<!-- geo-sync-skipped v1 -->';
 
 function parseArgs(argv) {
   const out = {};
@@ -68,14 +74,48 @@ export function buildBody(src) {
     `- 创建时间: ${src.created_at}`,
     '',
     `## 下一步`,
-    `- 评论 \`/analyze\` 触发 4 维度分析`,
-    `- /analyze 后评论 \`/fix\` 触发自动修复`,
+    `- 自动:本 issue 创建时会自动触发一次 \`/analyze\`(由 \`issues.opened\` event 拉起)`,
+    `- 手工:评论 \`/analyze\` 重跑分析;\`/fix\` 触发自动修复`,
     `- 修复 PR merge 后,定时 poll(geo-poll workflow)会自动重验 + 关闭本 issue`,
     '',
     `<sub>该 issue 由 geo-poll 自动同步(ADR-0017)</sub>`,
     '',
     BODY_MARKER,
   ].join('\n');
+}
+
+function buildSkippedComment(check) {
+  return [
+    `> ℹ️ 本 issue 在 geo-develop-workflow **暂不接管**`,
+    `>`,
+    `> **原因**:${check.reason}`,
+    `>`,
+    `> geo-develop-workflow 跑的 4 维度分析(静态化 / Schema / TDK / Sitemap)都需要 \`official_urls\` 才有发力点;`,
+    `> P1 "内容空白" 类问题(没有任何 official_urls 可指)不在我们处理范围内。`,
+    `>`,
+    `> 若后续补上了 \`official_urls\`,下次 sync(每 4h cron)会自动接管。`,
+    '',
+    UPSTREAM_SKIPPED_MARKER,
+  ].join('\n');
+}
+
+async function hasSkippedCommentUpstream(client, srcRepo, issueNumber) {
+  // 翻所有 comment 找 marker — 通常 1 页够用,但保险翻到底
+  let page = 1;
+  while (true) {
+    const res = await retry(
+      () =>
+        client.get(`https://api.github.com/repos/${srcRepo}/issues/${issueNumber}/comments`, {
+          params: { per_page: 100, page },
+        }),
+      { label: `list ${srcRepo}#${issueNumber} comments p${page}` }
+    );
+    for (const c of res.data || []) {
+      if ((c.body || '').includes(UPSTREAM_SKIPPED_MARKER)) return true;
+    }
+    if (!res.data || res.data.length < 100) return false;
+    page++;
+  }
 }
 
 async function listAllIssues(client, repo, params) {
@@ -103,8 +143,8 @@ async function main() {
   }
   const srcToken = process.env.GEO_GITHUB_TOKEN;
   const tgtToken = process.env.GITHUB_TOKEN;
-  if (!srcToken) throw new Error('GEO_GITHUB_TOKEN not set(读 geo-workflow private 需要)');
-  if (!tgtToken) throw new Error('GITHUB_TOKEN not set(写本仓 issue 需要)');
+  if (!srcToken) throw new Error('GEO_GITHUB_TOKEN not set(读 geo-workflow private + 写跟踪 issue 都用它)');
+  if (!tgtToken) throw new Error('GITHUB_TOKEN not set(本仓 PATCH 已存在 tracker body 仍用 GITHUB_TOKEN)');
 
   log(`▶ scanning ${srcRepo} (label=geo-improvement, state=open) ...`);
   const srcOpen = await listAllIssues(gh(srcToken), srcRepo, {
@@ -125,58 +165,107 @@ async function main() {
 
   const created = [];
   const patched = [];
+  const skipped = []; // 上游 issue 无可用 official_urls,本仓不接管
   const errors = [];
+
   for (const src of srcOpen) {
     const desiredBody = buildBody(src);
     const tgt = existingByNum.get(src.number);
 
-    if (!tgt) {
-      // 没追踪过 → 创建
-      const title = `[GEO优化]#${src.number}: ${src.title}`;
+    // 分支 A:已有 tracker → 看是否要 patch body(BODY_MARKER 不在就刷)
+    if (tgt) {
+      const tgtBody = tgt.body || '';
+      if (tgtBody.includes(BODY_MARKER)) continue; // 已经是当前格式,跳过
       try {
-        const res = await retry(
+        await retry(
           () =>
-            gh(tgtToken).post(`https://api.github.com/repos/${tgtRepo}/issues`, {
-              title,
+            gh(tgtToken).patch(`https://api.github.com/repos/${tgtRepo}/issues/${tgt.number}`, {
               body: desiredBody,
             }),
-          { label: `create [GEO优化]#${src.number}` }
+          { label: `patch [GEO优化]#${src.number} (#${tgt.number})` }
         );
-        log(`✅ created #${res.data.number} for geo-workflow#${src.number}: ${src.title.slice(0, 50)}...`);
-        created.push({ src_number: src.number, tgt_number: res.data.number, tgt_url: res.data.html_url });
+        log(`🔄 patched body of #${tgt.number} for geo-workflow#${src.number}(从老格式刷成 v2)`);
+        patched.push({ src_number: src.number, tgt_number: tgt.number, tgt_url: tgt.html_url });
       } catch (err) {
-        log(`❌ create for geo-workflow#${src.number}: ${err.message}`);
-        errors.push({ src_number: src.number, error: err.message });
+        log(`⚠ patch body of #${tgt.number} failed: ${err.message}`);
+        errors.push({ src_number: src.number, error: `patch: ${err.message}` });
       }
       continue;
     }
 
-    // 已追踪 → 看 body 是不是新格式(认 BODY_MARKER);老格式才 PATCH,避免反复刷
-    const tgtBody = tgt.body || '';
-    if (tgtBody.includes(BODY_MARKER)) {
-      // body 已经是当前格式,跳过
+    // 分支 B:没追踪过 — 先看上游有没有 official_urls,有才同步,没有就在上游评论"暂不接管"
+    let check;
+    try {
+      check = await issueHasOfficialUrls(src);
+    } catch (err) {
+      log(`❌ check official_urls for ${srcRepo}#${src.number} failed: ${err.message}`);
+      errors.push({ src_number: src.number, error: `check: ${err.message}` });
       continue;
     }
+
+    if (check.hasUrls === false) {
+      // 上游 issue 没法在本仓处理 → 在上游评论一次说明(幂等)
+      try {
+        const already = await hasSkippedCommentUpstream(gh(srcToken), srcRepo, src.number);
+        if (already) {
+          log(`⏭ ${srcRepo}#${src.number} 已有 skipped marker,不重复评论`);
+        } else {
+          await retry(
+            () =>
+              gh(srcToken).post(
+                `https://api.github.com/repos/${srcRepo}/issues/${src.number}/comments`,
+                { body: buildSkippedComment(check) }
+              ),
+            { label: `comment skipped to ${srcRepo}#${src.number}` }
+          );
+          log(`📨 commented skipped on ${srcRepo}#${src.number}(${check.reason})`);
+        }
+        skipped.push({ src_number: src.number, reason: check.reason });
+      } catch (err) {
+        log(`⚠ comment skipped to ${srcRepo}#${src.number} failed: ${err.message}`);
+        errors.push({ src_number: src.number, error: `comment skipped: ${err.message}` });
+      }
+      continue;
+    }
+
+    if (check.hasUrls === null) {
+      // 抓 questions/issue-map 失败 — 谨慎,不创建 tracker 也不评论上游,等下轮 cron 重试
+      log(`⚠ ${srcRepo}#${src.number} 无法判定 official_urls 状况(${check.reason}),本轮跳过`);
+      skipped.push({ src_number: src.number, reason: `判定失败: ${check.reason}` });
+      continue;
+    }
+
+    // 有 official_urls → 创建 tracker
+    // 关键:用 GEO_GITHUB_TOKEN(PAT)而非 GITHUB_TOKEN —
+    // 这样 issues.opened event 才会 cascade 触发 analyze workflow(GITHUB_TOKEN 触发的 event 不级联)
+    const title = buildTitle(src);
     try {
-      await retry(
+      const res = await retry(
         () =>
-          gh(tgtToken).patch(`https://api.github.com/repos/${tgtRepo}/issues/${tgt.number}`, {
+          gh(srcToken).post(`https://api.github.com/repos/${tgtRepo}/issues`, {
+            title,
             body: desiredBody,
           }),
-        { label: `patch [GEO优化]#${src.number} (#${tgt.number})` }
+        { label: `create [GEO优化]#${src.number}` }
       );
-      log(`🔄 patched body of #${tgt.number} for geo-workflow#${src.number}(从老格式刷成 v2)`);
-      patched.push({ src_number: src.number, tgt_number: tgt.number, tgt_url: tgt.html_url });
+      log(`✅ created #${res.data.number} for geo-workflow#${src.number}: ${src.title.slice(0, 50)}...`);
+      log(`   (用 PAT 创建,issues.opened cascade 将自动触发 /analyze)`);
+      created.push({
+        src_number: src.number,
+        tgt_number: res.data.number,
+        tgt_url: res.data.html_url,
+        valid_question_count: check.valid_question_count,
+      });
     } catch (err) {
-      log(`⚠ patch body of #${tgt.number} failed: ${err.message}`);
-      errors.push({ src_number: src.number, error: `patch: ${err.message}` });
+      log(`❌ create for geo-workflow#${src.number}: ${err.message}`);
+      errors.push({ src_number: src.number, error: `create: ${err.message}` });
     }
   }
 
   log(
-    `🏁 sync done: created=${created.length}, patched=${patched.length}, errors=${errors.length}, already-current=${
-      srcOpen.length - created.length - patched.length - errors.length
-    }`
+    `🏁 sync done: created=${created.length}, patched=${patched.length}, ` +
+      `skipped(no official_urls)=${skipped.length}, errors=${errors.length}, ` +
+      `unchanged=${srcOpen.length - created.length - patched.length - skipped.length - errors.length}`
   );
 
   if (errors.length > 0) {

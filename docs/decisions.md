@@ -458,7 +458,7 @@
 
 - 日期: 2026-05-15
 - 状态: 已采纳
-- 上下文: ADR-0023 给 /fix 加了 pre-push 自检,但 schema / static-render 这两个维度被标 `deferred`,延后到 geo-poll 重验闭环兜底。geo-poll 是 cron(目前 weekly,生产 4h),延迟以小时/天计;而且需要 portal 那边先 merge + 部署 才能看到。"不能只依赖线上"是对的 — workDir 里就有完整源码,本来就可以本地 build 出产物 HTML,直接验 JSON-LD 是否真嵌入了、静态 HTML 是否真有内容。如果 build 都跑不起来,那基本说明 agent 改坏了,这本身就是必须 block push 的强信号。
+- 上下文: ADR-0023 给 /fix 加了 pre-push 自检,但 schema / static-render 这两个维度被标 `deferred`,延后到 geo-poll 重验闭环兜底。geo-poll 是 cron(目前 weekly,生产 4h),延迟以小时/天计;而且需要 portal 那边先 merge + 部署才能看到。"不能只依赖线上"是对的 — workDir 里就有完整源码,本来就可以本地 build 出产物 HTML,直接验 JSON-LD 是否真嵌入了、静态 HTML 是否真有内容。如果 build 都跑不起来,那基本说明 agent 改坏了,这本身就是必须 block push 的强信号。
 - 选项:
   - A. 维持 ADR-0023(schema/static-render 走 deferred)
   - B. /fix 加 build 步骤:agent 改完 → workDir 里 `pnpm install` + `pnpm run build` → 拿到 dist → 在 dist 里 resolve URL→HTML → 跑 checkSchema / checkTdk 以及静态化校验。build 失败 = agent 改坏了 = 直接 `status=build_failed` 不 push
@@ -609,3 +609,39 @@
     - approve 成功 → 后续 build 可正常执行 native 脚本;approve 失败 → 继续流程,build 时再看是否真挂(已比原来多一道保护)
   - 时长影响:每次 install 多 5-10s integrity check;遇 ignored builds 时多一次 approve(~1-5s);整体 +5-15s/run
   - 后续观察:统计 approve-builds 执行频率;若频繁出现说明 portal 仓 native 依赖多,可考虑上游加 `onlyBuiltDependencies` 长期方案
+
+## ADR-0030: sync 阶段 pre-filter `official_urls` + 上游回复"暂不接管" + tracker issue 创建自动触发 /analyze
+
+- 日期: 2026-05-20
+- 状态: 已采纳
+- 上下文: 当前 sync-geo-issues 一刀切同步所有 `state=open + label=geo-improvement` 的上游 P0 issue,不看 `official_urls`。结果:① 上游 P1"内容空白"类(关联 question 都没 `official_urls`)被同步进本仓,本仓 4 维度分析跑不出任何东西(走 ADR-0019 跳过路径,但已经污染了 tracker 列表);② sync 完用户得手动评论 `/analyze` 才能触发分析,user-facing 麻烦。本仓既然不接管 P1 类,应该让上游知道(否则上游不知道我们看见了没、做了没)。
+- 选项:
+  - A. 维持现状(全 sync,用户手动 /analyze)
+  - B. sync 阶段 pre-filter `official_urls` 非空才同步;空的直接在上游 issue 评论"暂不接管"(带 marker 幂等);新 tracker 创建后用 `issues: [opened]` cascade 自动触发 /analyze
+  - C. 只做 pre-filter,不评论上游(上游看不到我们的判定)
+- 决定: B
+- 理由:
+  - pre-filter 让本仓 tracker 列表只装"真能处理"的 issue,不刷无用噪音
+  - 给上游回评 = 评估侧维护人知道哪些 issue 不进我们的管线,以及为啥 — 闭环透明
+  - 自动 /analyze:用户开了 tracker(或 sync 创了 tracker)立刻就分析,不用手动催;失败(verify_failed / critic_blocked)会回评,成功就直接给报告
+- 后果:
+  - 新增 `scripts/lib/geo-workflow-data.js` 共享 helper:`fetchQuestionsJson` / `fetchIssueMap` / `fetchIssue` / `extractQuestionIdsFromBody` / `extractCommunityFromTitle` / `issueHasOfficialUrls`(后者综合判定上游 issue 是否有可处理的 URL)
+  - 重构 `scripts/fetch-geo-issues.js`:删除内联 helpers,改 import lib
+  - 重构 `scripts/sync-geo-issues.js`:
+    - 新 issue(本仓没追踪过)走 `issueHasOfficialUrls(src)`:
+      - `hasUrls: true` → 创建 tracker(关键:用 `GEO_GITHUB_TOKEN` PAT 而非 `GITHUB_TOKEN`,**让 issues.opened event cascade 生效**)
+      - `hasUrls: false` → 不创建 tracker;在上游 geo-workflow issue 上 POST 一条 "暂不接管 + 原因" 评论,末尾埋 `<!-- geo-sync-skipped v1 -->` marker,后续 sync 看到 marker 就不再重复评论(幂等)
+      - `hasUrls: null`(抓 questions/issue-map 失败)→ 保守:不创建也不评论,等下轮 cron 重试
+    - 已有 tracker 的 patch 路径不变(走 `BODY_MARKER v2` 检测)
+    - sync 完输出 `created / patched / skipped / errors / unchanged` 五类计数
+  - `.github/workflows/geo-develop-workflow.yml`:
+    - 新增 `issues: [opened]` 触发器
+    - `analyze` job 的 `if:` 适配两种 event:`issue_comment with /analyze` OR `issues.opened`
+    - fix job 不动(只接 `issue_comment with /fix`,opened 不会误触)
+  - 关键依赖:**`GEO_GITHUB_TOKEN` 必须有 geo-develop-workflow 仓的 `issues:write` 权限**(用户已确认 PAT 是 repo 全作用域,覆盖两仓)— 否则 cascade 不会触发(GitHub 用 `GITHUB_TOKEN` 创的 event 不级联工作流,为防递归)
+  - 注意 fix job 仍用 `GITHUB_TOKEN`,因为 fix 不需要任何"创建后下游级联",自己跑完就是终点
+  - tracker body 更新提示语:把"评论 /analyze 触发"改成"自动 /analyze + 手工补救",反映新行为
+  - 后续观察:
+    - 上游 skipped 评论是否被维护人看到 + 是否补 official_urls 后下次 sync 自动接管(预期工作)
+    - issues.opened cascade 是否真的触发了 analyze(若不生效说明 PAT 缺 issues:write,要换 secret)
+    - 用户手工开 `[GEO优化]#N` 时分析报告是否如期生成(全链路验证)

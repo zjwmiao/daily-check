@@ -2,11 +2,14 @@
 
 import fs from 'fs';
 import path from 'path';
-import axios from 'axios';
 import { SUPPORTED_COMMUNITIES } from './lib/community-map.js';
-
-const GEO_REPO = process.env.GEO_WORKFLOW_REPO || 'opensourceways/geo-workflow';
-const GH_API = 'https://api.github.com';
+import {
+  GEO_REPO,
+  fetchQuestionsJson,
+  fetchIssueMap,
+  fetchIssue,
+  extractQuestionIdsFromBody,
+} from './lib/geo-workflow-data.js';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -24,78 +27,6 @@ function parseArgs(argv) {
 function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);
   console.error(`[${ts}] ${msg}`);
-}
-
-function gh() {
-  const token = process.env.GITHUB_TOKEN;
-  return axios.create({
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'geo-develop-workflow',
-    },
-    timeout: 30000,
-  });
-}
-
-async function retry(fn, { label, max = 3, baseDelayMs = 1000 } = {}) {
-  let lastErr;
-  for (let i = 0; i < max; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      const status = err.response?.status;
-      const retryable = !status || status >= 500 || status === 429;
-      if (!retryable || i === max - 1) {
-        log(`❌ ${label} 终止(尝试 ${i + 1}/${max}, status=${status || 'network'}): ${err.message}`);
-        throw err;
-      }
-      const delay = baseDelayMs * Math.pow(2, i);
-      log(`⚠ ${label} 重试(${i + 1}/${max} 失败 ${status || 'network'}, ${delay}ms 后再试): ${err.message.slice(0, 120)}`);
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-  throw lastErr;
-}
-
-async function fetchJsonFile(community, filename) {
-  return retry(
-    async () => {
-      const res = await gh().get(`${GH_API}/repos/${GEO_REPO}/contents/assessments/${community}/${filename}`);
-      const content = Buffer.from(res.data.content, 'base64').toString('utf-8');
-      return JSON.parse(content);
-    },
-    { label: `fetch ${community}/${filename}` }
-  );
-}
-
-async function fetchQuestionsJson(community) {
-  const data = await fetchJsonFile(community, 'questions.json');
-  return data.questions || data;
-}
-
-async function fetchIssueMap(community) {
-  const data = await fetchJsonFile(community, 'issue-map.json');
-  return data.issues || data;
-}
-
-async function fetchIssue(issueNumber) {
-  return retry(
-    async () => {
-      const res = await gh().get(`${GH_API}/repos/${GEO_REPO}/issues/${issueNumber}`);
-      return res.data;
-    },
-    { label: `fetch issue #${issueNumber}` }
-  );
-}
-
-function extractQuestionIdsFromBody(body) {
-  if (!body) return [];
-  const ids = new Set();
-  for (const m of body.matchAll(/`(q_\d+)`/g)) ids.add(m[1]);
-  for (const m of body.matchAll(/- `?(q_\d+)`?/g)) ids.add(m[1]);
-  return [...ids];
 }
 
 async function buildIssueForCommunity(community, targetIssueNumber) {

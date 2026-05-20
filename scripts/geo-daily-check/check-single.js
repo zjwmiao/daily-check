@@ -417,26 +417,16 @@ async function generateConfig(workDir, mdPath, type, args, buildOutputDir) {
   
   let prompt;
   if (buildHtmlPath) {
-    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。
-页面源文件路径: ${fullPath}
-页面构建产物 HTML: ${buildHtmlPath}
-页面URL路径: ${pageUrl}
-输出配置文件路径: ${outputPath}
-
-请先阅读构建产物 HTML 文件 ${buildHtmlPath} 的内容，分析页面的实际渲染结果，然后使用 ${skill} skill 生成合适的配置。`;
+    prompt = `为页面 ${buildHtmlPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。使用 ${skill} skill 完成任务。`;
   } else {
-    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。
-页面文件路径: ${fullPath}
-页面URL路径: ${pageUrl}
-输出文件路径: ${outputPath}
-请使用 ${skill} skill 完成任务。`;
+    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。请使用 ${skill} skill 完成任务。`;
   }
   
   try {
     fs.mkdirSync(outputDir, { recursive: true });
     
-    const cmd = `echo "${prompt.replace(/"/g, '\\"')}" | opencode run - --model "${model}" --agent "${agent}" --skill "${skill}" ${extraArgs}`;
-    log(`  执行: opencode run --skill ${skill} ...`);
+    const cmd = `echo "${prompt.replace(/"/g, '\\"')}" | stdbuf -oL -eL opencode run --model "${model}" --agent "${agent}" ${extraArgs}`;
+    log(`  执行: opencode run ...`);
     
     runCmd(cmd, workDir, { timeout: 300000 });
     

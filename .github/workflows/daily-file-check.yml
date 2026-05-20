@@ -1,0 +1,161 @@
+name: Daily File Check
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: '仓库 URL (支持多个，逗号分隔，如 https://atomgit.com/owner/repo.git 或 owner/repo)'
+        required: false
+        default: ''
+      branch:
+        description: '分支'
+        required: false
+        default: ''
+      since:
+        description: '时间范围 (如 "2 days ago")'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run (不实际生成配置)'
+        required: false
+        type: boolean
+        default: false
+      skip_generate:
+        description: '跳过配置生成'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  DEFAULT_REPO: ${{ vars.DAILY_CHECK_REPO || 'https://atomgit.com/example/repo.git' }}
+  DEFAULT_BRANCH: ${{ vars.DAILY_CHECK_BRANCH || 'main' }}
+  OPENCODE_MODEL: ${{ vars.AI_MODEL || 'alibaba-cn/glm-5' }}
+  OPENCODE_AGENT: ${{ vars.AI_AGENT || 'build' }}
+  OPENCODE_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}
+
+jobs:
+  check:
+    runs-on: portal-x86
+    timeout-minutes: 90
+    steps:
+      - name: Checkout geo-develop
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify opencode
+        shell: bash
+        timeout-minutes: 2
+        run: |
+          echo "=== opencode 环境 ==="
+          which opencode
+          opencode --version
+
+      - name: Check new pages
+        id: check
+        shell: bash
+        env:
+          REPO: ${{ inputs.repo || env.DEFAULT_REPO }}
+          BRANCH: ${{ inputs.branch || env.DEFAULT_BRANCH }}
+          SINCE: ${{ inputs.since || '' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          SKIP_GENERATE: ${{ inputs.skip_generate || 'false' }}
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          OUTPUT_DIR: ${{ runner.temp }}
+        run: |
+          node scripts/geo-check.js \
+            --repo="$REPO" \
+            --branch="$BRANCH" \
+            ${SINCE:+--since="$SINCE"} \
+            ${DRY_RUN:+--dryRun} \
+            ${SKIP_GENERATE:+--skipGenerate} \
+            --output="${OUTPUT_DIR}/check-result"
+          
+          echo "=== 检查结果 ==="
+          
+          TOTAL_NEEDS=0
+          for result_file in "${OUTPUT_DIR}/check-result-"*.json; do
+            if [ -f "$result_file" ] && [ "$result_file" != "${OUTPUT_DIR}/check-result-summary.json" ]; then
+              repo_name=$(basename "$result_file" .json | sed 's/check-result-//')
+              needs_config=$(jq '.summary.needsConfig' "$result_file" 2>/dev/null || echo 0)
+              TOTAL_NEEDS=$((TOTAL_NEEDS + needs_config))
+              
+              echo ""
+              echo "--- $repo_name ---"
+              jq '.summary' "$result_file"
+            fi
+          done
+          
+          echo "total_needs_config=$TOTAL_NEEDS" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        shell: bash
+        env:
+          OUTPUT_DIR: ${{ runner.temp }}
+        run: |
+          for result_file in "${OUTPUT_DIR}/check-result-"*.json; do
+            if [ -f "$result_file" ] && [ "$result_file" != "${OUTPUT_DIR}/check-result-summary.json" ]; then
+              repo_name=$(basename "$result_file" .json | sed 's/check-result-//')
+              needs_config=$(jq '.summary.needsConfig' "$result_file" 2>/dev/null || echo 0)
+              
+              if [ "$needs_config" != "0" ]; then
+                echo "### $repo_name - 需要生成配置的页面" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                jq -r '.pages[] | select(.needsJsonld or .needsTdk) | "- `\(.file)` (JSON-LD: \(.needsJsonld), TDK: \(.needsTdk))"' \
+                  "$result_file" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
+
+      - name: Commit generated configs
+        if: inputs.dry_run != true && inputs.skip_generate != true
+        shell: bash
+        env:
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          OUTPUT_DIR: ${{ runner.temp }}
+        run: |
+          for result_file in "${OUTPUT_DIR}/check-result-"*.json; do
+            if [ -f "$result_file" ] && [ "$result_file" != "${OUTPUT_DIR}/check-result-summary.json" ]; then
+              project_dir=$(jq -r '.projectDir' "$result_file")
+              project=$(jq -r '.project' "$result_file")
+              
+              if [ -z "$project_dir" ] || [ -z "$project" ]; then
+                continue
+              fi
+              
+              cd "$project_dir"
+              git config user.name "geo-bot"
+              git config user.email "geo-bot@atomgit.com"
+              
+              if git diff --quiet && git diff --staged --quiet; then
+                echo "[$project] 无变更需要提交"
+              else
+                git add .geo/
+                git commit -m "chore: auto-generate TDK and JSON-LD configs [skip ci]"
+                
+                OWNER=$(echo "$project" | cut -d'/' -f1)
+                REPO=$(echo "$project" | cut -d'/' -f2)
+                REPO_URL="https://oauth2:${ATOMGIT_TOKEN}@atomgit.com/${OWNER}/${REPO}.git"
+                git push "$REPO_URL" HEAD:$(git branch --show-current)
+                echo "[$project] ✅ 已提交配置变更"
+              fi
+              
+              cd "${OUTPUT_DIR}"
+            fi
+          done
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-result
+          path: ${{ runner.temp }}/check-result-*.json
+          retention-days: 7

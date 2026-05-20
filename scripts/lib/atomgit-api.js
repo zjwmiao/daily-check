@@ -170,6 +170,20 @@ export async function updatePullRequest({ owner, repo, number, title, body }) {
   );
 }
 
+// PATCH state=closed 关闭 PR(不 merge,纯关)
+export async function closePullRequest({ owner, repo, number }) {
+  return retry(
+    async () => {
+      const res = await client().patch(`${API_PREFIX}/repos/${owner}/${repo}/pulls/${number}`, {
+        state: 'closed',
+      });
+      rejectOn4xx(res, 'closePullRequest');
+      return res.data;
+    },
+    { label: `closePullRequest(${owner}/${repo}#${number})` }
+  );
+}
+
 export async function getPullRequest({ owner, repo, number }) {
   return retry(
     async () => {

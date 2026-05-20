@@ -645,3 +645,73 @@
     - 上游 skipped 评论是否被维护人看到 + 是否补 official_urls 后下次 sync 自动接管(预期工作)
     - issues.opened cascade 是否真的触发了 analyze(若不生效说明 PAT 缺 issues:write,要换 secret)
     - 用户手工开 `[GEO优化]#N` 时分析报告是否如期生成(全链路验证)
+
+## ADR-0031: portal 仓失效 PR 自动关 — geo-poll cron 加 housekeeping pass
+
+- 日期: 2026-05-20
+- 状态: 已采纳
+- 上下文: 本仓 tracker issue 跟 portal 仓 PR 的对应关系是 `[GEO优化]#{N}` 关联 `branch=geo/fix-{community}-{N}` → PR;branch_name 按 geo-workflow# 编号命名。**当 tracker title 改了 geo-workflow#(例如从 #21 改成 #18)/ tracker 被人手工关 / 上游评估 target 变了 时**,旧 branch + 旧 PR 就成了"失效":没人去更它(因为新一轮 fix 用新的 geo-workflow# = 新 branch = 新 PR),portal 维护人看到一个 stale-open PR 也不知道是不是仍然在跟进。实际线上撞到:PR 3085(`geo/fix-openeuler-21`)还 open 但 tracker 早已指向 geo-workflow#18,PR 3086 才是当前活跃修复 — 3085 成失效。
+- 选项:
+  - A. 不加机制,人工清理
+  - B. geo-poll cron 加 cleanup pass — 扫 portal 仓 open PR,head 以 `geo/fix-{community}-` 开头但 geo-workflow# 不在本仓 active tracker 集合里 → close + 评论说明 + 留 marker
+  - C. /fix 跑完顺手扫同 community 的旧 PR(仅 /fix 路径生效,cron 不动)
+- 决定: B(选 geo-poll cron 集中管理 housekeeping)
+- 理由:
+  - geo-poll 本来就在每 4h 扫 portal PR 状态,顺道做 cleanup 不增加额外的 cron / 工具
+  - cron 路径让 cleanup 不依赖 /fix 是否被触发 — 即使 tracker 被关后没人再 /fix,cron 也会及时清失效
+  - 误删风险:active set 用本仓 **open** tracker 的 geo-workflow# 集,只要 tracker 一开,对应 PR 就 active 状态;close PR 前先评论解释 + 留 `<!-- geo-stale-closed v1 -->` marker,可追溯
+- 后果:
+  - `scripts/lib/atomgit-api.js` 加 `closePullRequest({owner, repo, number})` — PATCH state=closed
+  - `scripts/poll-portal-status.js`:
+    - 新增 `extractActiveGeoNums(trackerIssues)`:从本仓 open `[GEO优化]#N` title 抽 geo-workflow# 集合
+    - 新增 `cleanupStalePrs(activeGeoNums)`:对每个 community 的 portal 仓 listPullRequests(state=open),按 `geo/fix-{community}-(\d+)` 正则解 branch,提取的 N 不在 active set → close + 评论 + marker
+    - `main()` 末尾(在已有 close/comment 逻辑之后)调用 cleanup pass
+  - 评论体含:① 关闭原因 ② "重启方式"(新开 `[GEO优化]#N` 或评论 `/analyze`)③ `<!-- geo-stale-closed v1 geo-workflow=N at=ISO -->` marker
+  - 不动 atomgit/gitcode 上 head 非 `geo/fix-*` 前缀的 PR(只清我们自己建的)
+  - 不动 MindSpore 等其他 community(默认 SUPPORTED_COMMUNITIES 全跑,但每个仓独立判)
+  - 边界:tracker 被刚关瞬间 cron 不会立刻清(timing race) — 因为该 tracker 已不在 open 集,对应 PR 立刻判失效;短期可接受,如果需要保护可以加"最近 N 天关闭的 tracker 也算 active"宽限,本期不做
+  - smoke test(dry-run):active={18} 时正确识别 PR 3085 为 stale(geo-workflow#21 不在 active),PR 3086 保持 active
+
+## ADR-0032: Verify 显性化 + 去掉 Build / Critic 独立列 + 三者 inline(amends ADR-0023)
+
+- 日期: 2026-05-20
+- 状态: 已采纳(部分修正 ADR-0023)
+- 上下文: 之前 trigger issue 修复结果表 + portal PR body 各自给 Build / Verify / Critic 三个独立 badge / 列。用户反馈:Build 是 verify 的过程(给 schema/static-render 提供 dist 产物),不是单独结果,不该跟 Verify 平级列 — 之前 PR 3086 出现"build 实际跑了但 PR body 老内容显示 build 未跑"的诡异 case,正是因为 Build/Verify 分开容易让人误读。同时 "verify 的过程和结果都该显性化体现在 trigger comment 和 portal PR body 里"。
+
+  > 注:本 ADR 起草过程有一次走弯路 — 一度把 critic verdict 跟 ADR-0024 取消的 problem severity 混为一谈,简化成 pass/block 二档。但两者是不同概念,**critic 三档保留**(详情见下方"关于 critic 分级" 小节)。
+- 选项:
+  - A. 维持 ADR-0023 三 badge + 三独立列
+  - B. Build / Critic 都 inline 进 Verify 行,trigger 表只剩 5 列;critic verdict 三档保留
+  - C. 完全删 Critic 步骤(只靠 verify)
+- 决定: B
+- 理由:
+  - Build 是 verify 数据源之一(schema/static-render 维度依赖 build dist HTML 抽数据)— 把 build 状态 inline 进 Verify 注解里更准确反映"verify 的过程",而不是另起一行让 reviewer 自己关联
+  - critic verdict 也 inline 进 Verify 注解 — reviewer 一行看全"修复落地 + build 状态 + LLM 二审" 三件事
+  - C 太激进:critic 仍能捕获 verify 兜不住的 scope/造假/范围异常,直接删会丢这一层兜底
+- 关于 critic 分级(说明跟 ADR-0024 的区别):
+  - **ADR-0024 取消的是 /analyze 阶段的 problem severity(critical/important/minor)**:analyzer 出的 problem 是确定性规则判出的(sitemap 收没收录、TDK 长度达没达标),要么有问题要么没,不存在"中度问题"灰度 — 所以分级没价值,取消
+  - **critic 阶段的 verdict 仍三档 keep**:critic 是 LLM 二审,判定本身是模糊的 — "agent 把 description 改得太模板化"可能是问题但不至于阻断,这种"warn 但 push"的灰度对 reviewer 是有价值的
+  - 两者本质不同:problem severity = 确定性规则的人为分级(无用),critic verdict = LLM 自身的模糊判定(有用)
+- 后果:
+  - `.github/agents/geo-critic-prompt.md`:
+    - 顶部新增"这里的分级 vs /analyze problem severity"说明小节,讲清楚为什么 critic 保留三档
+    - verdict 输出仍是 `pass | warn | block`(不变)
+  - `scripts/execute-fix-runs.js`:
+    - `verdict === 'block'` 阻断 push(走 `status=critic_blocked`),`warn` / `pass` 都允许 push;unknown verdict 保守按 block
+    - `renderBuildBadge` 删,`renderVerifyBadge(verify, buildInfo, critic)` 接 build + critic 三个数据源,把 build 状态 + critic verdict 都 inline 进 Verify 行
+    - `buildPrBody` 顶部状态行只剩 `**Verify**: ...`,内含 build + critic 注解;Critic 块的 `<summary>` 行带 verdict badge(`📋 critic 反向审查: 🟢 pass`)
+  - `scripts/comment-fix-summary.js`:
+    - trigger issue 表头从 `| Community | geo issue | 状态 | Build | Verify | Critic | PR |` 改成 `| Community | geo issue | 状态 | Verify | PR |`(5 列)
+    - 抽 `renderBuildInline(r)` + `renderVerifyCell(r)`:Verify 列展示 fixed/still_failing/deferred 计数 + build 状态 + critic verdict 都作为括号注解
+    - 模板注释顶部同步更新
+  - critic verdict 顺道带上 reason("一句话总判",从 critic 输出里抽),让 reviewer 不展开 critic 块就读到原因
+  - smoke test 5 用例:
+    - A 全过 + critic pass → `✅ 已修复 7 项(改完后构建通过 240s · LLM 二审 🟢 通过)`
+    - B baseline 挂 + 无 critic → `⏭ 暂未校验 5 项(改前基线构建失败(装依赖阶段))`
+    - C 部分修复 + critic warn → `✅ 已修复 3 项 / ⏭ 暂未校验 2 项(改完后构建通过 120s · LLM 二审 🟡 有可疑点(不阻断):多个 URL 的 description 看起来是同一模板复制…)`
+    - D critic block → `✅ 已修复 5 项(改完后构建通过 200s · LLM 二审 🔴 阻断:agent 改了页面正文,超出白名单)`
+    - E build 跳过 → `⏭ 暂未校验 3 项(构建跳过)`
+  - 影响:
+    - PR body 顶部更紧凑,一行 Verify 行就传达"修复落地了多少 + build 用 dist 验过没有 + critic 二审 verdict" 三件事
+    - 之前 "Build/Verify/Critic 三列" 数据可能彼此不同步的诡异 case 自然消除
+    - critic warn 仍是常态(不阻断),只在 PR body / trigger 评论里展示 LLM 的可疑点,reviewer 自决

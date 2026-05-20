@@ -7,12 +7,20 @@
  *
  *   ## 🛠 修复结果
  *
- *   | Community | geo issue | 状态 | Build | Verify | Critic | PR |
- *   | --- | --- | --- | --- | --- | --- | --- |
- *   | openEuler | [#18](https://github.com/opensourceways/geo-workflow/issues/18) | `pr_created` / `verify_failed` / `critic_blocked` / `skipped` / `error` | ✅ Ns / ⏭ skipped / ❌ phase | ✅n/❌m/⏭k | 🟢pass / 🟡warn / 🔴block | [#3085](https://atomgit.com/openeuler/openEuler-portal/merge_requests/3085) (created/updated) |
+ *   | Community | geo issue | 状态 | Verify | PR |
+ *   | --- | --- | --- | --- | --- |
+ *   | openEuler | [#18](https://github.com/opensourceways/geo-workflow/issues/18) | `pr_created` / `verify_failed` / `critic_blocked` / `skipped` / `error` | ✅ 已修复 N 项(改完后构建通过 Ms · LLM 二审 🟢 通过) | [#3085](...) (created/updated) |
+ *
+ *   Verify 文案字段:
+ *   - 计数:`✅ 已修复 N 项` / `❌ 仍未修复 N 项` / `⏭ 暂未校验 N 项` / `❓ 无法定位 N 项`
+ *   - build 状态(verify 数据源):`改完后构建通过 Ms` / `改前基线构建失败(装依赖阶段)` / `构建跳过`
+ *   - critic verdict(LLM 二审):`LLM 二审 🟢 通过` / `🟡 有可疑点(不阻断):<一句话原因>` / `🔴 阻断:<原因>`
  *
  *   注意:
  *   - geo issue / PR 列**必须用完整 markdown 链接**,否则 GitHub 把裸 `#N` 解析到本仓的 issue/PR
+ *   - Verify 是结果,Build 是 verify 的数据源(给 schema/static-render 提供 dist 产物),**不单独成列**;同样 critic 也 inline 不单独列
+ *   - critic 三档(pass/warn/block)跟 ADR-0024 取消的 problem severity 是不同概念 — critic 是 LLM 主观判定需要灰度,problem 是确定性规则判定不需要灰度
+ *   - critic block 时,状态走 `status` 列 `critic_blocked`;warn 仍 push 不阻断
  *
  *   (可选)build 失败(任一阶段) → <details>(默认折叠)贴 stderr 尾段 2000 字符
  *
@@ -72,12 +80,59 @@ async function commentOnGithub(repo, issueNumber, body) {
   );
 }
 
+// build 状态 inline 到 Verify 列 — schema/static-render 维度依赖 build 产物作数据源
+function renderBuildInline(r) {
+  const phaseMap = { install: '装依赖阶段', build: '构建阶段', 'detect-output': '探测产物阶段' };
+  if (r.baseline_build && !r.baseline_build.ok && !r.baseline_build.skipped) {
+    return `改前基线构建失败(${phaseMap[r.baseline_build.phase] || r.baseline_build.phase || '未知阶段'})`;
+  }
+  const b = r.build;
+  if (!b) return null;
+  if (b.ok) return `改完后构建通过 ${(b.duration_ms / 1000).toFixed(0)}s`;
+  if (b.skipped) return '构建跳过';
+  return `改完后构建失败(${phaseMap[b.phase] || b.phase || '未知阶段'})`;
+}
+
+function renderCriticInline(r) {
+  if (!r.critic?.verdict) return null;
+  const map = {
+    pass: 'LLM 二审 🟢 通过',
+    warn: 'LLM 二审 🟡 有可疑点(不阻断)',
+    block: 'LLM 二审 🔴 阻断',
+  };
+  const head = map[r.critic.verdict] || `LLM 二审 ❓ ${r.critic.verdict}`;
+  if (r.critic.verdict !== 'pass' && r.critic.reason) {
+    return `${head}:${r.critic.reason.slice(0, 60)}${r.critic.reason.length > 60 ? '…' : ''}`;
+  }
+  return head;
+}
+
+function renderVerifyCell(r) {
+  if (!r.verify?.summary) return '-';
+  const s = r.verify.summary;
+  const segs = [];
+  if (s.fixed > 0) segs.push(`✅ 已修复 ${s.fixed} 项`);
+  if (s.still_failing > 0) segs.push(`❌ 仍未修复 ${s.still_failing} 项`);
+  if (s.deferred > 0) segs.push(`⏭ 暂未校验 ${s.deferred} 项`);
+  if (s.unverifiable > 0) segs.push(`❓ 无法定位 ${s.unverifiable} 项`);
+  const main = segs.length > 0
+    ? segs.join(' / ')
+    : (s.total === 0 ? '(无可校验项)' : `总计 ${s.total} 项`);
+
+  const notes = [];
+  const buildNote = renderBuildInline(r);
+  if (buildNote) notes.push(buildNote);
+  const criticNote = renderCriticInline(r);
+  if (criticNote) notes.push(criticNote);
+  return notes.length > 0 ? `${main}(${notes.join(' · ')})` : main;
+}
+
 function buildTriggerComment(results, runUrl) {
   const lines = [
     `## 🛠 修复结果`,
     '',
-    `| Community | geo issue | 状态 | Build | Verify | Critic | PR |`,
-    `| --- | --- | --- | --- | --- | --- | --- |`,
+    `| Community | geo issue | 状态 | Verify | PR |`,
+    `| --- | --- | --- | --- | --- |`,
   ];
   for (const r of results) {
     const pr = r.pr_url ? `[#${r.pr_number}](${r.pr_url})` : '-';
@@ -86,25 +141,9 @@ function buildTriggerComment(results, runUrl) {
     const geoIssue = r.geo_issue_url
       ? `[#${r.geo_issue_number}](${r.geo_issue_url})`
       : `#${r.geo_issue_number}`;
-    // baseline_failed 时整个 run 还没进 build 步,baseline_build 才是失败现场
-    const buildInfo = r.baseline_build && !r.baseline_build.ok && !r.baseline_build.skipped
-      ? r.baseline_build
-      : r.build;
-    const build = !buildInfo
-      ? '-'
-      : buildInfo.ok
-        ? `✅ ${(buildInfo.duration_ms / 1000).toFixed(0)}s`
-        : buildInfo.skipped
-          ? `⏭ ${buildInfo.reason || 'skipped'}`
-          : `❌ ${buildInfo.phase || 'failed'}`;
-    const verify = r.verify?.summary
-      ? `✅${r.verify.summary.fixed}/❌${r.verify.summary.still_failing}/⏭${r.verify.summary.deferred}`
-      : '-';
-    const critic = r.critic?.verdict
-      ? { pass: '🟢 pass', warn: '🟡 warn', block: '🔴 block' }[r.critic.verdict] || r.critic.verdict
-      : '-';
+    const verify = renderVerifyCell(r);
     lines.push(
-      `| ${r.community} | ${geoIssue} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${build} | ${verify} | ${critic} | ${pr}${action} |`
+      `| ${r.community} | ${geoIssue} | \`${r.status}\`${r.error ? ` (${r.error.slice(0, 80)})` : ''} | ${verify} | ${pr}${action} |`
     );
   }
   lines.push('');

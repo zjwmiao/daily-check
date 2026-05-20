@@ -273,13 +273,74 @@ const VERIFY_ICON = {
   unverifiable: '❓',
 };
 
-function buildPrBody(run, verify, critic) {
+// 渲染 Verify summary — verify 是"结果",build 是 verify 的数据来源(给 schema/static-render 出 dist),
+// critic 是 LLM 二审,都 inline 到一行,reviewer 不用打开 PR 详情就能读懂"修复成功几项 + 失败原因"
+function renderVerifyBadge(verify, buildInfo, critic) {
+  if (!verify?.summary) return null;
+  const s = verify.summary;
+  const segs = [];
+  if (s.fixed > 0) segs.push(`✅ 已修复 ${s.fixed} 项`);
+  if (s.still_failing > 0) segs.push(`❌ 仍未修复 ${s.still_failing} 项`);
+  if (s.deferred > 0) segs.push(`⏭ 暂未校验 ${s.deferred} 项`);
+  if (s.unverifiable > 0) segs.push(`❓ 无法定位 ${s.unverifiable} 项`);
+
+  const main = segs.length > 0
+    ? segs.join(' / ')
+    : (s.total === 0 ? '(无可校验项)' : `总计 ${s.total} 项`);
+
+  const notes = [];
+  const buildNote = renderBuildNote(buildInfo);
+  if (buildNote) notes.push(buildNote);
+  const criticNote = renderCriticNote(critic);
+  if (criticNote) notes.push(criticNote);
+  return notes.length > 0 ? `${main}(${notes.join(' · ')})` : main;
+}
+
+function renderBuildNote(buildInfo) {
+  if (!buildInfo) return null;
+  const { baseline, postAgent } = buildInfo;
+  // 只展示 post-agent build 状态(它直接给 verify 提供 dist 产物)。baseline 的失败会传染到 post-agent
+  function oneLine(b, when) {
+    if (!b) return null;
+    if (b.ok) return `${when}构建通过 ${(b.duration_ms / 1000).toFixed(0)}s`;
+    if (b.skipped) return `${when}构建跳过`;
+    const phaseMap = { install: '装依赖阶段', build: '构建阶段', 'detect-output': '探测产物阶段' };
+    return `${when}构建失败(${phaseMap[b.phase] || b.phase || '未知阶段'})`;
+  }
+  const post = oneLine(postAgent, '改完后');
+  if (post) return post;
+  return oneLine(baseline, '改前基线');
+}
+
+function renderCriticNote(critic) {
+  if (!critic?.verdict) return null;
+  // pass 时只标"通过",reason 通常是"修复全 OK"之类的空话,不展示;
+  // warn / block 时把 reason 显出来,让 reviewer 直接看到 LLM 为什么这么判
+  const map = {
+    pass: 'LLM 二审 🟢 通过',
+    warn: 'LLM 二审 🟡 有可疑点(不阻断)',
+    block: 'LLM 二审 🔴 阻断',
+  };
+  const head = map[critic.verdict] || `LLM 二审 ❓ ${critic.verdict}`;
+  if (critic.verdict !== 'pass' && critic.reason) {
+    // reason 截断防止表格被撑爆(可点 PR critic 块看完整)
+    return `${head}:${critic.reason.slice(0, 60)}${critic.reason.length > 60 ? '…' : ''}`;
+  }
+  return head;
+}
+
+function buildPrBody(run, verify, critic, buildInfo) {
   // 顶部一行关联只贴对外可见、对维护人有用的:geo-workflow 原始 issue + portal issue。
   // 内部触发 issue(geo-develop)不外露 — 维护人不关心我们的协调仓。
   const relations = [
     `[geo-workflow #${run.geo_issue_number}](${run.geo_issue_url})`,
     run.portal_issue_url ? `[portal issue #${run.portal_issue_number}](${run.portal_issue_url})` : null,
   ].filter(Boolean);
+
+  // Verify summary 一行 — 把 build 状态(verify 的过程注解)+ critic verdict 都 inline 进去,
+  // reviewer 一眼把"修复落地 + build 状态 + LLM 二审" 三件事看全;critic 详情在下方的 critic 块
+  const verifyBadge = renderVerifyBadge(verify, buildInfo, critic);
+  const statusLine = verifyBadge ? `\n**Verify**: ${verifyBadge}\n` : '';
 
   const tableRows = run.problems.map((p) => {
     const dim = p.dimension || p.category || '-';
@@ -309,17 +370,16 @@ function buildPrBody(run, verify, critic) {
     }
   }
 
-  // Critic 块 — 反向审查结论 + 详情(折叠默认展开,reviewer 一眼看到)
+  // Critic 块 — 反向审查详情,折叠默认展开。verdict 标在 summary 行 — pass/warn/block 三档
+  // (注:这跟 ADR-0024 取消的 /analyze problem severity 是两个不同概念,critic 分级 keep)
   const criticBlock = [];
   if (critic && critic.body) {
     const verdictBadge =
       { pass: '🟢 pass', warn: '🟡 warn', block: '🔴 block' }[critic.verdict] ||
-      `❓ ${critic.verdict}`;
-    criticBlock.push('');
-    criticBlock.push(`**Critic (反向审查)**: ${verdictBadge}`);
+      `❓ ${critic.verdict || 'unknown'}`;
     criticBlock.push('');
     criticBlock.push('<details open>');
-    criticBlock.push('<summary>📋 critic 输出</summary>');
+    criticBlock.push(`<summary>📋 critic 反向审查:${verdictBadge}</summary>`);
     criticBlock.push('');
     criticBlock.push(critic.body);
     criticBlock.push('');
@@ -332,7 +392,7 @@ function buildPrBody(run, verify, critic) {
 
   return [
     `**关联**: ${relations.join(' · ')}`,
-    '',
+    statusLine,
     `| Dimension | URL | Description |`,
     `| --- | --- | --- |`,
     ...tableRows,
@@ -405,11 +465,26 @@ async function runCritic(run, workDir, ctxDir, agentOutput, verify) {
   if (fs.existsSync(criticOut)) body = fs.readFileSync(criticOut, 'utf-8').slice(0, 4000);
   const verdictMatch = body.match(/Critic 结论\s*[:：]\s*(pass|warn|block)/i);
   const verdict = (verdictMatch && verdictMatch[1].toLowerCase()) || 'unknown';
-  log(`  🧐 critic verdict=${verdict}`);
-  return { ok: true, body, verdict };
+
+  // 提取 verdict 行后第一段非空非标题文本作为 reason("一句话总判") — 显性化到 Verify cell
+  // 让 reviewer 不用展开 critic 块就知道 verdict 的原因
+  let reason = null;
+  if (verdictMatch) {
+    const tail = body.slice(body.indexOf(verdictMatch[0]) + verdictMatch[0].length);
+    for (const line of tail.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      if (t.startsWith('#')) break; // 下一节标题
+      // 剥掉首尾括号(prompt 模板里"(一句话总判)"的格式)
+      reason = t.replace(/^[(（]/, '').replace(/[)）]$/, '').trim();
+      break;
+    }
+  }
+  log(`  🧐 critic verdict=${verdict}${reason ? ` — ${reason.slice(0, 80)}` : ''}`);
+  return { ok: true, body, verdict, reason };
 }
 
-async function pushAndPr(run, workDir, verify, critic) {
+async function pushAndPr(run, workDir, verify, critic, buildInfo) {
   // 双保险:即使 agent 没遵守 output_file,在 workDir 根写了 output.md / output-*.md,也清掉再 git add
   for (const f of fs.readdirSync(workDir)) {
     if (/^output(-.*)?\.md$/i.test(f)) {
@@ -438,7 +513,7 @@ async function pushAndPr(run, workDir, verify, critic) {
 
   log('  🔍 list existing PRs');
   const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;
-  const prBody = buildPrBody(run, verify, critic);
+  const prBody = buildPrBody(run, verify, critic, buildInfo);
 
   // AtomGit 的 head 过滤只认裸 branch,不认 GitHub 的 owner:branch — 传裸 branch
   const existing = await listPullRequests({
@@ -520,6 +595,32 @@ async function pushAndPr(run, workDir, verify, critic) {
     pr.url ||
     `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/merge_requests/${pr.number}`;
   log(`  ✅ PR ${action}: ${prUrl}`);
+
+  // Post-PATCH sanity check:再 GET 一次 PR,比对 body 是否真落地。
+  // 之前线上撞过 "log 显示 PR updated 但实际 body 仍是上一轮老内容" 的诡异 case(原因不明,可能 atomgit 那边状态飘),
+  // 在 workflow log 里 surface 一下,reviewer 看到 verify table 跟 body 不符时不至于摸不着头脑
+  try {
+    const live = await getPullRequest({
+      owner: run.portal_owner,
+      repo: run.portal_repo,
+      number: pr.number,
+    });
+    const liveBody = live?.body || '';
+    if (liveBody.length === 0 && prBody.length > 0) {
+      log(`  ⚠ post-PATCH 校验:GET 回的 body 是空,但我们发的是 ${prBody.length} 字符 — atomgit 可能 silent 失败`);
+    } else if (Math.abs(liveBody.length - prBody.length) > 50) {
+      // 容忍小幅差异(atomgit 可能加 trailing newline / normalize 等)
+      log(
+        `  ⚠ post-PATCH 校验:body 长度不匹配 sent=${prBody.length} live=${liveBody.length} — ` +
+          `下一轮可见可能仍是旧 body,reviewer 注意`
+      );
+    } else {
+      log(`  🔎 post-PATCH 校验:body 长度对齐(${liveBody.length}/${prBody.length})`);
+    }
+  } catch (e) {
+    log(`  ⚠ post-PATCH GET 校验失败(不阻断):${e.message}`);
+  }
+
   return { has_changes: true, pr_url: prUrl, pr_number: pr.number, pr_action: action };
 }
 
@@ -684,20 +785,30 @@ async function main() {
         process.env.CRITIC_DISABLE === '1'
           ? null
           : await runCritic(run, workDir, ctxDir, result.agent_output || '', verify);
-      if (critic) result.critic = { verdict: critic.verdict, body_len: critic.body?.length || 0 };
+      if (critic) result.critic = { verdict: critic.verdict, reason: critic.reason, body_len: critic.body?.length || 0 };
 
-      // critic 判 block → 阻断 push(罕见,但 prompt 明确说只在红线问题确凿才 block)
-      if (critic?.verdict === 'block') {
+      // critic 三档(pass/warn/block,跟 /analyze problem severity 不是一件事 — 见 critic prompt 顶部说明):
+      // - verdict='pass' → 没毛病,push
+      // - verdict='warn' → 有可疑但不阻断,push,reviewer 在 PR body / trigger 评论看 critic 详情自决
+      // - verdict='block' → 红线确凿,阻断 push,trigger issue status=critic_blocked
+      // - verdict 未知(opencode 失败 / 解析失败)→ 保守按 block 处理
+      if (critic && critic.verdict !== 'pass' && critic.verdict !== 'warn') {
         result.status = 'critic_blocked';
-        result.error = `critic 判 block,详见 PR 不会推、issue 评论里有 critic 输出`;
+        result.error = `critic 判 ${critic.verdict || 'unknown'} → PR 不推,详见 issue 评论 critic 输出`;
         result.critic_body = critic.body;
         log(`  ⛔ ${result.error}`);
         results.push(result);
         continue;
       }
+      if (critic?.verdict === 'warn') {
+        log(`  ⚠ critic 判 warn(有可疑点但不阻断 push)— PR body 含 critic 详情,reviewer 自决`);
+      }
 
       log('  [8/8] pushAndPr');
-      const prRes = await pushAndPr(run, workDir, verify, critic);
+      const prRes = await pushAndPr(run, workDir, verify, critic, {
+        baseline: result.baseline_build,
+        postAgent: result.build,
+      });
       Object.assign(result, prRes);
 
       result.status = prRes.has_changes ? 'pr_created' : 'no_changes';

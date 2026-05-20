@@ -6,7 +6,13 @@
 
 import fs from 'fs';
 import axios from 'axios';
-import { getPullRequest } from './lib/atomgit-api.js';
+import {
+  getPullRequest,
+  listPullRequests,
+  closePullRequest,
+  addIssueComment,
+} from './lib/atomgit-api.js';
+import { COMMUNITY_MAP, SUPPORTED_COMMUNITIES } from './lib/community-map.js';
 import { analyzeUrl } from './analyze-discoverability.js';
 import { PAYLOAD_MARKER } from './generate-report.js';
 
@@ -141,6 +147,86 @@ function countUrls(payload) {
   let n = 0;
   for (const i of payload.issues || []) for (const q of i.questions || []) n += (q.official_urls || []).length;
   return n;
+}
+
+// 从本仓所有 open [GEO优化] tracker issue 提取它们关联的 geo-workflow# set
+// 用来判定 portal 仓 `geo/fix-{community}-{N}` open PR 是不是失效(stale)
+function extractActiveGeoNums(trackerIssues) {
+  const set = new Set();
+  for (const issue of trackerIssues) {
+    // tracker title 形如 `[GEO优化]#42` 或 `[GEO优化]#42: ...`,N 是 geo-workflow 编号
+    const m = (issue.title || '').match(/\[GEO优化\]#?(\d+)/);
+    if (m) set.add(Number(m[1]));
+  }
+  return set;
+}
+
+// 扫 portal 仓里所有 head=geo/fix-{community}-N 的 open PR;
+// 如果 N 不在 active set(失效),close 它 + 评论说明
+async function cleanupStalePrs(activeGeoNums) {
+  const closedList = [];
+  for (const community of SUPPORTED_COMMUNITIES) {
+    const cfg = COMMUNITY_MAP[community];
+    if (!cfg) continue;
+
+    let openPrs;
+    try {
+      // listPullRequests 不传 head 就 list 所有 open
+      openPrs = await listPullRequests({
+        owner: cfg.portal_owner,
+        repo: cfg.portal_repo,
+        state: 'open',
+      });
+    } catch (err) {
+      log(`  ⚠ list open PRs in ${cfg.portal_owner}/${cfg.portal_repo}: ${err.message}`);
+      continue;
+    }
+    if (!Array.isArray(openPrs)) continue;
+
+    const branchRe = new RegExp(`^geo/fix-${community.toLowerCase()}-(\\d+)$`);
+    for (const pr of openPrs) {
+      const ref = pr.head?.ref || '';
+      const m = ref.match(branchRe);
+      if (!m) continue; // 不是我们建的 geo/fix-* 分支,跳
+      const geoN = Number(m[1]);
+      if (activeGeoNums.has(geoN)) continue; // 仍在 active tracker → 不动
+
+      log(`  🧹 stale PR ${cfg.portal_owner}/${cfg.portal_repo}#${pr.number} (branch=${ref}, geo-workflow#${geoN} 已不在本仓 active tracker) → close`);
+      try {
+        // 先评论解释(关后 atomgit 仍可加评论,但放前面更稳)
+        await addIssueComment({
+          owner: cfg.portal_owner,
+          repo: cfg.portal_repo,
+          issue_number: pr.number,
+          body: [
+            `🧹 本 PR 由 \`geo-develop-workflow\` 自动关闭(housekeeping)`,
+            ``,
+            `**原因**: 对应的 geo-workflow #${geoN} 已不在 \`geo-develop-workflow\` 仓的 active tracker(可能 tracker issue 已关、或上游评估 target 已变更),本 PR 已无对应跟踪 issue。`,
+            ``,
+            `**重启方式**: 如仍需修复,在 \`geo-develop-workflow\` 仓新开 \`[GEO优化]#${geoN}\` issue 或评论 \`/analyze\`,我们会重新生成 fix payload。`,
+            ``,
+            `<!-- geo-stale-closed v1 geo-workflow=${geoN} at=${new Date().toISOString()} -->`,
+          ].join('\n'),
+        });
+        await closePullRequest({
+          owner: cfg.portal_owner,
+          repo: cfg.portal_repo,
+          number: pr.number,
+        });
+        log(`    ✅ closed`);
+        closedList.push({
+          community,
+          portal: `${cfg.portal_owner}/${cfg.portal_repo}`,
+          pr_number: pr.number,
+          branch: ref,
+          geo_workflow_number: geoN,
+        });
+      } catch (err) {
+        log(`    ❌ close ${cfg.portal_owner}/${cfg.portal_repo}#${pr.number} failed: ${err.message}`);
+      }
+    }
+  }
+  return closedList;
 }
 
 async function main() {
@@ -316,6 +402,22 @@ async function main() {
   }
 
   log(`\n🏁 poll done: closed=${closed}, commented=${noticed}, errors=${errors.length}`);
+
+  // Housekeeping: portal 仓里跑过 /fix 但已没对应 active tracker 的失效 PR,自动关
+  // 比如 tracker 的 title 改了 geo-workflow# / tracker 被关了 / 上游评估 target 改了
+  log(`\n▶ stale PR cleanup ...`);
+  // 用更宽的 active 集合:open + 最近关闭的(避免刚关的 tracker 来不及反应就被误判失效)
+  // 简单起见:只用 open tracker,如有刚关的 case 后面再扩
+  const activeGeoNums = extractActiveGeoNums(trackerIssues);
+  log(`  active geo-workflow numbers from open trackers: ${[...activeGeoNums].sort((a, b) => a - b).join(', ') || '(无)'}`);
+  let staleClosed = [];
+  try {
+    staleClosed = await cleanupStalePrs(activeGeoNums);
+  } catch (err) {
+    log(`  ❌ cleanup stale PRs failed: ${err.message}`);
+  }
+  log(`  closed ${staleClosed.length} stale PR(s)`);
+
   if (errors.length > 0) {
     throw new Error(`poll-portal-status 有 ${errors.length} 个 issue 处理失败`);
   }

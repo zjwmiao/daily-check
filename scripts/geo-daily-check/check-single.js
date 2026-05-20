@@ -394,9 +394,16 @@ async function generateConfig(workDir, mdPath, type, args, buildOutputDir) {
   
   const skill = type === 'jsonld' ? 'schema-markup-generator' : 'meta-tags-optimizer';
   const configDir = type === 'jsonld' ? '.geo/jsonld' : '.geo/tdks';
-  const mdBaseName = path.basename(mdPath, '.md');
-  const mdRelDir = path.dirname(mdPath).replace(/^app\/?/, '');
-  const outputDir = path.join(workDir, configDir, mdRelDir, mdBaseName);
+  
+  // 计算输出路径
+  // a/b/c.md -> .geo/jsonld/a/b/c/index.json
+  // a/b/c/index.md -> .geo/jsonld/a/b/c/index.json
+  let relPath = mdPath.replace(/^app\/?/, '').replace(/\.md$/, '');
+  if (relPath.endsWith('/index') || relPath === 'index') {
+    relPath = relPath.replace(/\/index$/, '').replace(/^index$/, '');
+    if (relPath === '') relPath = 'index';
+  }
+  const outputDir = path.join(workDir, configDir, relPath);
   const outputPath = path.join(outputDir, 'index.json');
   
   const buildHtmlPath = mdPathToBuildHtml(mdPath, buildOutputDir);
@@ -415,17 +422,24 @@ async function generateConfig(workDir, mdPath, type, args, buildOutputDir) {
   const agent = args.agent || 'build';
   const extraArgs = args.extraArgs || '--dangerously-skip-permissions';
   
+  log(`
+页面源文件: ${fullPath}
+页面构建产物: ${buildHtmlPath || 'none'}
+页面URL路径: ${pageUrl}
+输出文件: ${outputPath}`);
   let prompt;
   if (buildHtmlPath) {
-    prompt = `为页面 ${buildHtmlPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。使用 ${skill} skill 完成任务。`;
+    prompt = `为页面 ${buildHtmlPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。使用 ${skill} skill 生成合适的配置。`;
   } else {
-    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。请使用 ${skill} skill 完成任务。`;
+    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。然后使用 ${skill} skill 生成合适的配置。`;
   }
-  
+
+  log(`prompt: ${prompt}`);
+
   try {
     fs.mkdirSync(outputDir, { recursive: true });
     
-    const cmd = `echo "${prompt.replace(/"/g, '\\"')}" | stdbuf -oL -eL opencode run --model "${model}" --agent "${agent}" ${extraArgs}`;
+    const cmd = `echo "${prompt.replace(/"/g, '\\"')}" | opencode run - --model "${model}" --agent "${agent}" ${extraArgs}`;
     log(`  执行: opencode run ...`);
     
     runCmd(cmd, workDir, { timeout: 300000 });

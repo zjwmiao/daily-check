@@ -426,12 +426,15 @@ async function pushAndPr(run, workDir, verify, critic) {
   log(`  📝 agent made ${status.split('\n').length} file change(s)`);
 
   log('  📦 git add + commit + push');
-  sh('git add -A', { cwd: workDir });
+  sh('git add -A \':!pnpm-workspace.yaml\'', { cwd: workDir });
   const msg = `feat(geo): fix discoverability for #${run.geo_issue_number} (${run.community})`;
   sh(`git commit -m "${msg}"`, { cwd: workDir });
   const t0 = Date.now();
   sh(`git push -f origin HEAD:${run.branch_name}`, { cwd: workDir });
   log(`  ✅ pushed to ${run.branch_name} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  if (sh('git status')?.includes('pnpm-workspace.yaml')) {
+    sh(`git restore pnpm-workspace.yaml`, { cwd: workDir });
+  }
 
   log('  🔍 list existing PRs');
   const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;

@@ -8,10 +8,10 @@
  *   3. 检测页面是否缺少 TDK 和 JSON-LD 配置
  *   4. 构建项目获取渲染产物
  *   5. 调用 opencode CLI 生成缺失的配置
- *   6. 向 atomgit 提 issue 报告问题
+ *   6. 向 atomgit 提 issue 报告问题并创建 PR
  * 
  * 使用方式:
- *   node check-single.js --repo=<repo_url> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun]
+ *   node check-single.js --repo=<repo_url> [--branch=<branch>] [--since=<time>] [--dryRun]
  * 
  * 参数说明:
  *   --repo=<url>        必填。Git 仓库 URL，支持格式:
@@ -20,23 +20,10 @@
  *   --branch=<branch>   可选。指定分支，默认自动检测或 'main'
  *   --since=<time>      可选。检查时间范围，默认 '1 day ago'
  *                         示例: '2 days ago', '2024-01-01'
- *   --output=<file>     可选。输出结果 JSON 文件路径
- *   --dryRun            可选。仅检查不生成配置、不提 issue
+ *   --dryRun            可选。仅检查不生成配置、不提 issue、不创建 PR
  *   --model=<model>     可选。opencode 模型，默认从环境变量读取
  *   --agent=<agent>     可选。opencode agent，默认 'build'
  *   --extraArgs=<args>  可选。opencode 额外参数
- * 
- * 输出文件:
- *   JSON 格式，包含以下字段:
- *   - run_at: 执行时间
- *   - project: owner/repo
- *   - branch: 分支名
- *   - projectDir: 本地项目目录路径
- *   - since: 时间范围
- *   - summary: { totalNewFiles, needsConfig, missingJsonld, missingTdk }
- *   - pages: 各页面检测结果数组
- *   - issue: 提交的 issue 信息 (如有)
- *   - build: 构建结果信息 (如有)
  * 
  * 环境变量:
  *   ATOMGIT_TOKEN       atomgit OAuth2 token (必需)
@@ -47,7 +34,7 @@
  * 示例:
  *   node check-single.js --repo=https://atomgit.com/openEuler/portal.git
  *   node check-single.js --repo=openEuler/portal --branch=dev --since="3 days ago"
- *   node check-single.js --repo=openEuler/portal --dryRun --output=result.json
+ *   node check-single.js --repo=openEuler/portal --dryRun
  */
 
 import fs from 'fs';
@@ -262,9 +249,12 @@ function hasFrontmatterConfig(frontmatter, type) {
 
 function checkConfigExists(workDir, mdPath, type) {
   const configDir = type === 'jsonld' ? '.geo/jsonld' : '.geo/tdks';
-  const mdBaseName = path.basename(mdPath, '.md');
-  const mdRelDir = path.dirname(mdPath).replace(/^app\/?/, '');
-  const configPath = path.join(workDir, configDir, mdRelDir, mdBaseName, 'index.json');
+  let relPath = mdPath.replace(/^app\/?/, '').replace(/\.md$/, '');
+  if (relPath.endsWith('/index') || relPath === 'index') {
+    relPath = relPath.replace(/\/index$/, '').replace(/^index$/, '');
+    if (relPath === '') relPath = 'index';
+  }
+  const configPath = path.join(workDir, configDir, relPath, 'index.json');
   return fs.existsSync(configPath);
 }
 
@@ -425,7 +415,6 @@ async function createPullRequestForFix(owner, repo, workDir, issueNumber, needsC
   try {
     log(`\n提交代码变更...`);
     
-    // 先检查是否有变更
     runCmd(`git add .geo/`, workDir);
     const hasChanges = runCmd(`git diff --staged --name-only`, workDir, { silent: true });
     if (!hasChanges || hasChanges.trim() === '') {
@@ -433,7 +422,6 @@ async function createPullRequestForFix(owner, repo, workDir, issueNumber, needsC
       return { skipped: true, reason: 'no changes' };
     }
     
-    // 创建新分支并提交
     runCmd(`git checkout ${baseBranch}`, workDir, { silent: true });
     runCmd(`git checkout -b ${branchName}`, workDir);
     
@@ -512,9 +500,6 @@ async function generateConfig(workDir, mdPath, type, args, buildOutputDir) {
   const skill = type === 'jsonld' ? 'schema-markup-generator' : 'meta-tags-optimizer';
   const configDir = type === 'jsonld' ? '.geo/jsonld' : '.geo/tdks';
   
-  // 计算输出路径
-  // a/b/c.md -> .geo/jsonld/a/b/c/index.json
-  // a/b/c/index.md -> .geo/jsonld/a/b/c/index.json
   let relPath = mdPath.replace(/^app\/?/, '').replace(/\.md$/, '');
   if (relPath.endsWith('/index') || relPath === 'index') {
     relPath = relPath.replace(/\/index$/, '').replace(/^index$/, '');
@@ -539,20 +524,26 @@ async function generateConfig(workDir, mdPath, type, args, buildOutputDir) {
   const agent = args.agent || 'build';
   const extraArgs = args.extraArgs || '--dangerously-skip-permissions';
   
-  log(`
-页面源文件: ${fullPath}
-页面构建产物: ${buildHtmlPath || 'none'}
-页面URL路径: ${pageUrl}
-输出文件: ${outputPath}`);
   let prompt;
   if (buildHtmlPath) {
-    prompt = `为页面 ${buildHtmlPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。使用 ${skill} skill 生成合适的配置。`;
+    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。
+
+页面源文件: ${fullPath}
+页面构建产物: ${buildHtmlPath}
+页面URL路径: ${pageUrl}
+输出文件: ${outputPath}
+
+请先阅读构建产物 HTML 文件的内容，分析页面的实际渲染结果，然后使用 ${skill} skill 生成合适的配置。`;
   } else {
-    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。生成合适的配置保存到 ${outputPath}。然后使用 ${skill} skill 生成合适的配置。`;
+    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。
+
+页面源文件: ${fullPath}
+页面URL路径: ${pageUrl}
+输出文件: ${outputPath}
+
+请阅读页面源文件内容，然后使用 ${skill} skill 生成合适的配置。`;
   }
-
-  log(`prompt: ${prompt}`);
-
+  
   try {
     fs.mkdirSync(outputDir, { recursive: true });
     
@@ -573,7 +564,6 @@ async function main() {
   const repoUrl = args.repo;
   const branch = args.branch || null;
   const since = args.since || null;
-  const outputFile = args.output || null;
   const dryRun = args.dryRun || false;
   const model = args.model || process.env.OPENCODE_MODEL || 'alibaba-cn/glm-5';
   const agent = args.agent || process.env.OPENCODE_AGENT || 'build';
@@ -614,28 +604,10 @@ async function main() {
   log(`发现 ${newMdFiles.length} 个新增的 md 页面文件`);
 
   if (newMdFiles.length === 0) {
-    const output = {
-      run_at: new Date().toISOString(),
-      repo_url: repoUrl,
-      project: `${owner}/${repo}`,
-      branch: actualBranch,
-      projectDir: workDir,
-      since: since || '1 day ago',
-      summary: {
-        totalNewFiles: 0,
-        needsConfig: 0,
-        missingJsonld: 0,
-        missingTdk: 0,
-      },
-      pages: [],
-    };
-    
-    const json = JSON.stringify(output, null, 2);
-    if (outputFile) {
-      fs.mkdirSync(path.dirname(path.resolve(outputFile)), { recursive: true });
-      fs.writeFileSync(outputFile, json);
-    }
-    console.log(json);
+    log(`\n=== 检查完成 ===`);
+    log(`项目: ${owner}/${repo}`);
+    log(`新增页面: 0`);
+    log(`需要配置: 0`);
     return;
   }
 
@@ -678,25 +650,9 @@ async function main() {
 
   const needsConfig = results.filter(r => r.needsJsonld || r.needsTdk);
 
-  const output = {
-    run_at: new Date().toISOString(),
-    project: `${owner}/${repo}`,
-    branch: actualBranch,
-    projectDir: workDir,
-    since: since || '1 day ago',
-    summary: {
-      totalNewFiles: newMdFiles.length,
-      needsConfig: needsConfig.length,
-      missingJsonld,
-      missingTdk,
-    },
-    pages: results,
-  };
-
   if (needsConfig.length > 0 && !dryRun) {
     log(`\n创建 issue 报告缺失配置...`);
     const issueResult = await createOrUpdateIssue(owner, repo, needsConfig);
-    output.issue = issueResult;
     
     log(`\n构建项目以获取渲染产物...`);
     
@@ -706,17 +662,13 @@ async function main() {
       if (buildResult.ok) {
         buildOutputDir = buildResult.output_dir;
         log(`✅ 构建完成: ${buildResult.output_dir_rel} (${(buildResult.duration_ms / 1000).toFixed(1)}s)`);
-        output.build = { output_dir: buildOutputDir, duration_ms: buildResult.duration_ms };
       } else if (buildResult.skipped) {
         log(`⚠ 构建跳过: ${buildResult.reason}`);
-        output.build = { skipped: true, reason: buildResult.reason };
       } else {
         log(`⚠ 构建失败: ${buildResult.error}`);
-        output.build = { failed: true, error: buildResult.error };
       }
     } catch (err) {
       log(`⚠ 构建异常: ${err.message}`);
-      output.build = { failed: true, error: err.message };
     }
     
     log(`\n开始为 ${needsConfig.length} 个页面生成配置...`);
@@ -735,23 +687,10 @@ async function main() {
       }
     }
     
-    // 提交代码并创建 PR
     if (issueResult.success && issueResult.number) {
       log(`\n提交代码并创建 Pull Request...`);
-      const prResult = await createPullRequestForFix(owner, repo, workDir, issueResult.number, needsConfig, actualBranch);
-      output.pullRequest = prResult;
+      await createPullRequestForFix(owner, repo, workDir, issueResult.number, needsConfig, actualBranch);
     }
-    
-    if (outputFile) {
-      fs.writeFileSync(outputFile, JSON.stringify(output, null, 2));
-    }
-  }
-  
-  // dryRun 或无 needsConfig 时也保存输出
-  if (outputFile && (dryRun || needsConfig.length === 0)) {
-    fs.mkdirSync(path.dirname(path.resolve(outputFile)), { recursive: true });
-    fs.writeFileSync(outputFile, JSON.stringify(output, null, 2));
-    log(`✅ 结果已保存到: ${outputFile}`);
   }
 
   log(`\n=== 检查完成 ===`);

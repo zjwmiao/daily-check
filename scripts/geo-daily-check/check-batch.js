@@ -7,7 +7,7 @@
  *   支持逗号分隔的多个仓库 URL，顺序执行避免输出混乱
  * 
  * 使用方式:
- *   node check-batch.js --repo=<repo_urls> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun]
+ *   node check-batch.js --repo=<repo_urls> [--branch=<branch>] [--since=<time>] [--dryRun]
  * 
  * 参数说明:
  *   --repo=<urls>       必填。Git 仓库 URL，支持多个(逗号分隔):
@@ -15,22 +15,10 @@
  *                         - owner1/repo1,owner2/repo2
  *   --branch=<branch>   可选。指定分支，应用于所有仓库，默认 'main'
  *   --since=<time>      可选。检查时间范围，默认 '1 day ago'
- *   --output=<file>     可选。输出结果文件路径前缀
- *                         实际输出: {prefix}-{owner}-{repo}.json 和 {prefix}-summary.json
  *   --dryRun            可选。仅检查不生成配置、不提 issue
  *   --model=<model>     可选。opencode 模型
  *   --agent=<agent>     可选。opencode agent
  *   --extraArgs=<args>  可选。opencode 额外参数
- * 
- * 输出文件:
- *   1. 每个仓库结果: {outputPrefix}-{owner}-{repo}.json (同 check-single.js 输出格式)
- *   2. 汇总文件: {outputPrefix}-summary.json，包含:
- *      - run_at: 执行时间
- *      - total_repos: 仓库总数
- *      - succeeded: 成功数
- *      - failed: 失败数
- *      - duration_seconds: 总耗时
- *      - results: 各仓库执行结果摘要
  * 
  * 环境变量:
  *   ATOMGIT_TOKEN       atomgit OAuth2 token (必需)
@@ -41,12 +29,11 @@
  * 示例:
  *   node check-batch.js --repo=https://atomgit.com/openEuler/portal.git
  *   node check-batch.js --repo=openEuler/portal,openeuler/docs
- *   node check-batch.js --repo=openEuler/portal,openeuler/docs --since="3 days ago" --output=result
+ *   node check-batch.js --repo=openEuler/portal,openeuler/docs --since="3 days ago"
  */
 
 import { spawn } from 'child_process';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -97,14 +84,6 @@ async function runCheckSingle(repoUrl, baseArgs, index, total) {
   if (baseArgs.agent) cmdArgs.push(`--agent=${baseArgs.agent}`);
   if (baseArgs.extraArgs) cmdArgs.push(`--extraArgs=${baseArgs.extraArgs}`);
   
-  let outputFile = null;
-  if (baseArgs.output) {
-    const outputDir = path.dirname(baseArgs.output);
-    const repoName = getRepoName(repoUrl);
-    outputFile = path.join(outputDir, `${baseArgs.output}-${repoName}.json`);
-    cmdArgs.push(`--output=${outputFile}`);
-  }
-  
   log(prefix, `仓库: ${repoUrl}`);
   log(prefix, `执行: node check-single.js ...`);
   
@@ -122,7 +101,6 @@ async function runCheckSingle(repoUrl, baseArgs, index, total) {
         repoName: getRepoName(repoUrl),
         success,
         code,
-        outputFile,
       });
     });
     
@@ -133,7 +111,6 @@ async function runCheckSingle(repoUrl, baseArgs, index, total) {
         repoName: getRepoName(repoUrl),
         success: false,
         error: err.message,
-        outputFile,
       });
     });
   });
@@ -152,7 +129,6 @@ async function main() {
     log('', `可选参数:`);
     log('', `  --branch=<branch>        指定分支 (默认: main)`);
     log('', `  --since=<time>           时间范围 (默认: 1 day ago)`);
-    log('', `  --output=<file>          输出结果文件前缀`);
     log('', `  --dryRun                 仅检查不生成配置、不提 issue`);
     process.exit(1);
   }
@@ -191,24 +167,6 @@ async function main() {
     for (const f of failed) {
       log('', `  - ${f.repoName}: ${f.error || `exit code ${f.code}`}`);
     }
-  }
-  
-  if (args.output) {
-    const outputDir = path.dirname(args.output);
-    const summaryPath = `${args.output}-summary.json`;
-    
-    const summary = {
-      run_at: new Date().toISOString(),
-      total_repos: repos.length,
-      succeeded: succeeded.length,
-      failed: failed.length,
-      duration_seconds: parseFloat(duration),
-      results,
-    };
-    
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
-    log('', `汇总结果: ${summaryPath}`);
   }
   
   if (failed.length > 0) {

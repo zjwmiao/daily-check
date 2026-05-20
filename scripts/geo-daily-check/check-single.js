@@ -54,7 +54,7 @@ import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import { parse as parseYaml } from 'yaml';
-import { createIssue, findIssueByTitlePrefix, updateIssue } from '../lib/atomgit-api.js';
+import { createIssue, findIssueByTitlePrefix, updateIssue, createPullRequest, updatePullRequest, listPullRequests } from '../lib/atomgit-api.js';
 import { buildPortal } from '../lib/portal-build.js';
 
 const CACHE_BASE_DIR = '/tmp/.cache/geo-bot/projects';
@@ -388,6 +388,120 @@ async function createOrUpdateIssue(owner, repo, pages) {
   }
 }
 
+async function createPullRequestForFix(owner, repo, workDir, issueNumber, needsConfig, baseBranch) {
+  if (!issueNumber) {
+    log(`⚠ 无 issue number，跳过创建 PR`);
+    return { skipped: true, reason: 'no issue number' };
+  }
+  
+  const branchName = `geo-fix-${issueNumber}-${Date.now()}`;
+  const prTitle = `[GEO] fix #${issueNumber}: ${needsConfig.length} pages need SEO/GEO config`;
+  
+  const prBodyLines = [
+    `**关联 Issue**: #${issueNumber}`,
+    '',
+    '### 修复内容',
+    '',
+    '本次修复为以下页面添加了 SEO/GEO 配置:',
+    '',
+  ];
+  
+  for (const page of needsConfig) {
+    prBodyLines.push(`- ${page.file}`);
+    if (page.tdkGenerated?.success) prBodyLines.push(`  - ✅ TDK 配置已生成`);
+    if (page.jsonldGenerated?.success) prBodyLines.push(`  - ✅ JSON-LD 配置已生成`);
+  }
+  
+  prBodyLines.push('');
+  prBodyLines.push('### 配置文件路径');
+  prBodyLines.push('');
+  prBodyLines.push('- TDK: `.geo/tdks/{页面路径}/index.json`');
+  prBodyLines.push('- JSON-LD: `.geo/jsonld/{页面路径}/index.json`');
+  prBodyLines.push('');
+  prBodyLines.push('<sub>由 geo-develop 自动生成</sub>');
+  
+  const prBody = prBodyLines.join('\n');
+  
+  try {
+    log(`\n提交代码变更...`);
+    
+    // 先检查是否有变更
+    runCmd(`git add .geo/`, workDir);
+    const hasChanges = runCmd(`git diff --staged --name-only`, workDir, { silent: true });
+    if (!hasChanges || hasChanges.trim() === '') {
+      log(`⚠ 无变更需要提交`);
+      return { skipped: true, reason: 'no changes' };
+    }
+    
+    // 创建新分支并提交
+    runCmd(`git checkout ${baseBranch}`, workDir, { silent: true });
+    runCmd(`git checkout -b ${branchName}`, workDir);
+    
+    runCmd(`git add .geo/`, workDir);
+    
+    const commitMsg = `feat(geo): add TDK and JSON-LD config for #${issueNumber}`;
+    runCmd(`git commit -m "${commitMsg}"`, workDir);
+    
+    const repoUrl = getRepoUrl(owner, repo);
+    runCmd(`git push "${repoUrl}" HEAD:${branchName}`, workDir);
+    log(`✅ 已推送到分支: ${branchName}`);
+    
+    log(`\n创建 Pull Request...`);
+    
+    const existing = await listPullRequests({
+      owner,
+      repo,
+      head: branchName,
+      state: 'open',
+    });
+    
+    let pr, action;
+    if (Array.isArray(existing) && existing.length > 0) {
+      log(`♻️  PR 已存在 (#${existing[0].number})，更新内容`);
+      pr = await updatePullRequest({
+        owner,
+        repo,
+        number: existing[0].number,
+        title: prTitle,
+        body: prBody,
+      });
+      action = 'updated';
+      if (!pr) pr = existing[0];
+    } else {
+      log(`✨ 创建新 PR`);
+      pr = await createPullRequest({
+        owner,
+        repo,
+        title: prTitle,
+        body: prBody,
+        head: branchName,
+        base: baseBranch,
+      });
+      action = 'created';
+    }
+    
+    const prUrl = pr.html_url || pr.url || `https://atomgit.com/${owner}/${repo}/pulls/${pr.number}`;
+    log(`✅ PR ${action}: ${prUrl}`);
+    
+    return {
+      success: true,
+      url: prUrl,
+      number: pr.number,
+      action,
+      branch: branchName,
+    };
+  } catch (err) {
+    log(`❌ 创建 PR 失败: ${err.message}`);
+    
+    try {
+      runCmd(`git checkout ${baseBranch}`, workDir, { silent: true });
+      runCmd(`git branch -D ${branchName}`, workDir, { silent: true });
+    } catch {}
+    
+    return { success: false, error: err.message };
+  }
+}
+
 async function generateConfig(workDir, mdPath, type, args, buildOutputDir) {
   const fullPath = path.join(workDir, mdPath);
   const pageUrl = mdPathToPageUrl(mdPath);
@@ -580,19 +694,7 @@ async function main() {
     log(`\n创建 issue 报告缺失配置...`);
     const issueResult = await createOrUpdateIssue(owner, repo, needsConfig);
     output.issue = issueResult;
-  }
-
-  const json = JSON.stringify(output, null, 2);
-
-  if (outputFile) {
-    fs.mkdirSync(path.dirname(path.resolve(outputFile)), { recursive: true });
-    fs.writeFileSync(outputFile, json);
-    log(`✅ 结果已保存到: ${outputFile}`);
-  } else {
-    console.log(json);
-  }
-
-  if (needsConfig.length > 0 && !dryRun) {
+    
     log(`\n构建项目以获取渲染产物...`);
     
     let buildOutputDir = null;
@@ -630,9 +732,23 @@ async function main() {
       }
     }
     
+    // 提交代码并创建 PR
+    if (issueResult.success && issueResult.number) {
+      log(`\n提交代码并创建 Pull Request...`);
+      const prResult = await createPullRequestForFix(owner, repo, workDir, issueResult.number, needsConfig, actualBranch);
+      output.pullRequest = prResult;
+    }
+    
     if (outputFile) {
       fs.writeFileSync(outputFile, JSON.stringify(output, null, 2));
     }
+  }
+  
+  // dryRun 或无 needsConfig 时也保存输出
+  if (outputFile && (dryRun || needsConfig.length === 0)) {
+    fs.mkdirSync(path.dirname(path.resolve(outputFile)), { recursive: true });
+    fs.writeFileSync(outputFile, JSON.stringify(output, null, 2));
+    log(`✅ 结果已保存到: ${outputFile}`);
   }
 
   log(`\n=== 检查完成 ===`);

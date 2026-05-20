@@ -437,6 +437,9 @@ async function createPullRequestForFix(owner, repo, workDir, issueNumber, needsC
     runCmd(`git checkout ${baseBranch}`, workDir, { silent: true });
     runCmd(`git checkout -b ${branchName}`, workDir);
     
+    runCmd(`git config user.name "geo-bot"`, workDir, { silent: true });
+    runCmd(`git config user.email "geo-bot@atomgit.com"`, workDir, { silent: true });
+    
     runCmd(`git add .geo/`, workDir);
     
     const commitMsg = `feat(geo): add TDK and JSON-LD config for #${issueNumber}`;

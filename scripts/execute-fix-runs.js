@@ -188,7 +188,14 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
     // 1. cat $promptFile | opencode ... :stdin 来源是真正的 bash pipe(不是 node writable stream)
     // 2. stdbuf -oL -eL :强制 opencode stdout/stderr 行缓冲,避免 4KB block buffer 导致 workflow 日志看起来卡死
     // 3. detached: true 保留 — 进程组 SIGKILL 兜底机制不变
-    const bashCmd = `stdbuf -oL -eL ${opencode} ${argsShell} < "${promptFile}"`;
+    // 4. captureStdoutTo:critic 这类只读 agent 不会(也不该)写文件,审查结果只走 stdout —
+    //    用 tee 双写,workflow log 仍能看到 opencode 输出,同时文件兜底落盘给 runCritic 解析
+    const stdoutSink = options.captureStdoutTo
+      ? ` | tee "${options.captureStdoutTo}"`
+      : '';
+    // pipefail:opencode 在 pipe 左侧,若不开 pipefail,tee 退 0 就吞掉 opencode 的非 0 退出码
+    const pipefail = stdoutSink ? 'set -o pipefail; ' : '';
+    const bashCmd = `${pipefail}stdbuf -oL -eL ${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
     const child = spawn('bash', ['-c', bashCmd], {
       stdio: ['ignore', 'inherit', 'inherit'],
       cwd: workDir,
@@ -455,7 +462,10 @@ async function runCritic(run, workDir, ctxDir, agentOutput, verify) {
   const oc = await runOpencode(run, workDir, criticPrompt, criticContextFile, criticOut, {
     label: 'critic',
     timeoutMs: 5 * 60 * 1000,
-    taskLine: `你是 critic,只审不改。请把审查结论(Markdown)写入 ${criticOut}。**不要执行任何 git 操作、不要修改任何文件**。`,
+    // critic 只读,prompt 不允许它写文件 — 审查结果只能走 stdout。
+    // captureStdoutTo 让 runOpencode 用 tee 把 stdout 兜底落到 criticOut,workflow log 仍正常可见
+    captureStdoutTo: criticOut,
+    taskLine: `你是 critic,只审不改。**不要执行任何 git 操作、不要修改任何文件**,审查结论(Markdown)直接 print 到 stdout 即可。`,
   });
   if (!oc.ok) {
     log(`  ⚠ critic opencode 退出非 0(失败/超时),不阻断 push`);

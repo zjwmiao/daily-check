@@ -1,4 +1,49 @@
 #!/usr/bin/env node
+/**
+ * GEO 页面配置检查脚本 - 批量版本
+ * 
+ * 功能说明:
+ *   批量检查多个仓库的页面配置情况，作为入口脚本调用 check-single.js
+ *   支持逗号分隔的多个仓库 URL，顺序执行避免输出混乱
+ * 
+ * 使用方式:
+ *   node check-batch.js --repo=<repo_urls> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun] [--skipGenerate]
+ * 
+ * 参数说明:
+ *   --repo=<urls>       必填。Git 仓库 URL，支持多个(逗号分隔):
+ *                         - https://atomgit.com/owner1/repo1.git,https://atomgit.com/owner2/repo2.git
+ *                         - owner1/repo1,owner2/repo2
+ *   --branch=<branch>   可选。指定分支，应用于所有仓库，默认 'main'
+ *   --since=<time>      可选。检查时间范围，默认 '1 day ago'
+ *   --output=<file>     可选。输出结果文件路径前缀
+ *                         实际输出: {prefix}-{owner}-{repo}.json 和 {prefix}-summary.json
+ *   --dryRun            可选。仅检查不生成配置
+ *   --skipGenerate      可选。跳过配置生成步骤
+ *   --model=<model>     可选。opencode 模型
+ *   --agent=<agent>     可选。opencode agent
+ *   --extraArgs=<args>  可选。opencode 额外参数
+ * 
+ * 输出文件:
+ *   1. 每个仓库结果: {outputPrefix}-{owner}-{repo}.json (同 check-single.js 输出格式)
+ *   2. 汇总文件: {outputPrefix}-summary.json，包含:
+ *      - run_at: 执行时间
+ *      - total_repos: 仓库总数
+ *      - succeeded: 成功数
+ *      - failed: 失败数
+ *      - duration_seconds: 总耗时
+ *      - results: 各仓库执行结果摘要
+ * 
+ * 环境变量:
+ *   ATOMGIT_TOKEN       atomgit OAuth2 token (必需)
+ *   OPENCODE_MODEL      opencode 模型
+ *   OPENCODE_AGENT      opencode agent
+ *   OPENCODE_EXTRA_ARGS opencode 额外参数
+ * 
+ * 示例:
+ *   node check-batch.js --repo=https://atomgit.com/openEuler/portal.git
+ *   node check-batch.js --repo=openEuler/portal,openeuler/docs
+ *   node check-batch.js --repo=openEuler/portal,openeuler/docs --since="3 days ago" --output=result
+ */
 
 import { spawn } from 'child_process';
 import path from 'path';
@@ -41,8 +86,8 @@ function getRepoName(repoUrl) {
   return url.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
-async function runCheckNewFiles(repoUrl, baseArgs, index, total) {
-  const scriptPath = path.join(__dirname, 'check-new-files.js');
+async function runCheckSingle(repoUrl, baseArgs, index, total) {
+  const scriptPath = path.join(__dirname, 'check-single.js');
   const prefix = `[${index}/${total}]`;
   
   const cmdArgs = [`--repo=${repoUrl}`];
@@ -58,14 +103,12 @@ async function runCheckNewFiles(repoUrl, baseArgs, index, total) {
   if (baseArgs.output) {
     const outputDir = path.dirname(baseArgs.output);
     const repoName = getRepoName(repoUrl);
-    
-    // 始终生成带 repo 名的结果文件
-    outputFile = path.join(outputDir, `check-result-${repoName}.json`);
+    outputFile = path.join(outputDir, `${baseArgs.output}-${repoName}.json`);
     cmdArgs.push(`--output=${outputFile}`);
   }
   
   log(prefix, `仓库: ${repoUrl}`);
-  log(prefix, `执行: node check-new-files.js ${cmdArgs.slice(0, 3).join(' ')} ...`);
+  log(prefix, `执行: node check-single.js ...`);
   
   const child = spawn('node', [scriptPath, ...cmdArgs], {
     stdio: 'inherit',
@@ -103,7 +146,7 @@ async function main() {
   
   if (!args.repo) {
     log('', `❌ 缺少必要参数: --repo`);
-    log('', `用法: node geo-check.js --repo=<repo_url>`);
+    log('', `用法: node check-batch.js --repo=<repo_urls>`);
     log('', `支持多个仓库，用逗号分隔:`);
     log('', `  --repo=https://atomgit.com/owner1/repo1.git,https://atomgit.com/owner2/repo2.git`);
     log('', `  --repo=owner1/repo1,owner2/repo2`);
@@ -111,7 +154,7 @@ async function main() {
     log('', `可选参数:`);
     log('', `  --branch=<branch>        指定分支 (默认: main)`);
     log('', `  --since=<time>           时间范围 (默认: 1 day ago)`);
-    log('', `  --output=<file>          输出结果文件 (多个仓库时自动追加 repo 名)`);
+    log('', `  --output=<file>          输出结果文件前缀`);
     log('', `  --dryRun                 仅检查不生成`);
     log('', `  --skipGenerate           跳过配置生成`);
     process.exit(1);
@@ -128,10 +171,9 @@ async function main() {
   
   const startTime = Date.now();
   
-  // 顺序执行避免输出混乱
   const results = [];
   for (let i = 0; i < repos.length; i++) {
-    const result = await runCheckNewFiles(repos[i], args, i + 1, repos.length);
+    const result = await runCheckSingle(repos[i], args, i + 1, repos.length);
     results.push(result);
   }
   
@@ -154,7 +196,6 @@ async function main() {
     }
   }
   
-  // 始终生成汇总文件
   if (args.output) {
     const outputDir = path.dirname(args.output);
     const summaryPath = `${args.output}-summary.json`;

@@ -70,7 +70,7 @@ jobs:
           ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
           OUTPUT_DIR: ${{ runner.temp }}
         run: |
-          node scripts/geo-check.js \
+          node scripts/geo-daily-check/check-batch.js \
             --repo="$REPO" \
             --branch="$BRANCH" \
             ${SINCE:+--since="$SINCE"} \

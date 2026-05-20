@@ -1,11 +1,62 @@
 #!/usr/bin/env node
+/**
+ * GEO 页面配置检查脚本 - 单仓库版本
+ * 
+ * 功能说明:
+ *   1. 克隆/更新指定的 VitePress 项目仓库
+ *   2. 检查近期新增的 app/**/*.md 页面文件
+ *   3. 检测页面是否缺少 TDK 和 JSON-LD 配置
+ *   4. 构建项目获取渲染产物
+ *   5. 调用 opencode CLI 生成缺失的配置
+ *   6. 向 atomgit 提 issue 报告问题
+ * 
+ * 使用方式:
+ *   node check-single.js --repo=<repo_url> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun] [--skipGenerate]
+ * 
+ * 参数说明:
+ *   --repo=<url>        必填。Git 仓库 URL，支持格式:
+ *                         - https://atomgit.com/owner/repo.git
+ *                         - owner/repo (简写格式)
+ *   --branch=<branch>   可选。指定分支，默认自动检测或 'main'
+ *   --since=<time>      可选。检查时间范围，默认 '1 day ago'
+ *                         示例: '2 days ago', '2024-01-01'
+ *   --output=<file>     可选。输出结果 JSON 文件路径
+ *   --dryRun            可选。仅检查不生成配置
+ *   --skipGenerate      可选。跳过配置生成步骤
+ *   --model=<model>     可选。opencode 模型，默认从环境变量读取
+ *   --agent=<agent>     可选。opencode agent，默认 'build'
+ *   --extraArgs=<args>  可选。opencode 额外参数
+ * 
+ * 输出文件:
+ *   JSON 格式，包含以下字段:
+ *   - run_at: 执行时间
+ *   - project: owner/repo
+ *   - branch: 分支名
+ *   - projectDir: 本地项目目录路径
+ *   - since: 时间范围
+ *   - summary: { totalNewFiles, needsConfig, missingJsonld, missingTdk }
+ *   - pages: 各页面检测结果数组
+ *   - issue: 提交的 issue 信息 (如有)
+ *   - build: 构建结果信息 (如有)
+ * 
+ * 环境变量:
+ *   ATOMGIT_TOKEN       atomgit OAuth2 token (必需)
+ *   OPENCODE_MODEL      opencode 模型
+ *   OPENCODE_AGENT      opencode agent
+ *   OPENCODE_EXTRA_ARGS opencode 额外参数
+ * 
+ * 示例:
+ *   node check-single.js --repo=https://atomgit.com/openEuler/portal.git
+ *   node check-single.js --repo=openEuler/portal --branch=dev --since="3 days ago"
+ *   node check-single.js --repo=openEuler/portal --dryRun --output=result.json
+ */
 
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import { parse as parseYaml } from 'yaml';
-import { createIssue, findIssueByTitlePrefix, updateIssue } from './lib/atomgit-api.js';
-import { buildPortal } from './lib/portal-build.js';
+import { createIssue, findIssueByTitlePrefix, updateIssue } from '../lib/atomgit-api.js';
+import { buildPortal } from '../lib/portal-build.js';
 
 const CACHE_BASE_DIR = '/tmp/.cache/geo-bot/projects';
 
@@ -50,18 +101,13 @@ function parseRepoUrl(repoUrl) {
   
   let url = repoUrl.trim();
   
-  // 移除 oauth2:token@ 前缀
   url = url.replace(/^https:\/\/oauth2:[^@]+@/, 'https://');
-  
-  // 移除 .git 后缀
   url = url.replace(/\.git$/, '');
   
-  // 解析 URL
   try {
     const parsed = new URL(url);
     const host = parsed.hostname;
     
-    // 支持 atomgit.com 和 git.atomgit.com
     if (host !== 'atomgit.com' && host !== 'git.atomgit.com') {
       log(`⚠ 非标准 atomgit.com 域名: ${host}`);
     }
@@ -76,7 +122,6 @@ function parseRepoUrl(repoUrl) {
     
     return { owner, repo, host };
   } catch (err) {
-    // 尝试简单解析: owner/repo 格式
     const simpleMatch = url.match(/^([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/);
     if (simpleMatch) {
       return { owner: simpleMatch[1], repo: simpleMatch[2], host: 'atomgit.com' };
@@ -417,7 +462,7 @@ async function main() {
 
   if (!repoUrl) {
     log(`❌ 缺少必要参数: --repo`);
-    log(`用法: node check-new-files.js --repo=<repo_url>`);
+    log(`用法: node check-single.js --repo=<repo_url>`);
     log(`示例: --repo=https://atomgit.com/owner/repo.git`);
     log(`或: --repo=owner/repo`);
     process.exit(1);

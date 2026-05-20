@@ -6,7 +6,10 @@ import axios from 'axios';
 export const GEO_REPO = process.env.GEO_WORKFLOW_REPO || 'opensourceways/geo-workflow';
 const GH_API = 'https://api.github.com';
 
-export function ghClient(token = process.env.GEO_GITHUB_TOKEN) {
+// Token fallback:GEO_GITHUB_TOKEN 是首选(语义清晰 — "读 geo-workflow 的 PAT"),
+// 但兼容 GITHUB_TOKEN 命名,避免 workflow env 名字一旦写错就触发 GitHub 反枚举 404,
+// 让人误以为是文件路径错(实际上是 axios 不带 Authorization)
+export function ghClient(token = process.env.GEO_GITHUB_TOKEN || process.env.GITHUB_TOKEN) {
   return axios.create({
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),

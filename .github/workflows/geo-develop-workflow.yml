@@ -79,10 +79,12 @@ jobs:
         env:
           # geo-workflow 是 private 仓,内置 secrets.GITHUB_TOKEN 无权读取
           # 需要在仓库 secrets 配置 GEO_GITHUB_TOKEN (拥有 geo-workflow 读权限的 PAT)
-          GITHUB_TOKEN: ${{ secrets.GEO_GITHUB_TOKEN }}
+          # 注意:env 名跟脚本 process.env.GEO_GITHUB_TOKEN 对齐 — 名字错位时 axios 不带 Authorization,
+          # private repo 会返回 404(反枚举),跟"文件不存在"完全无法区分,排障困难
+          GEO_GITHUB_TOKEN: ${{ secrets.GEO_GITHUB_TOKEN }}
         shell: bash
         run: |
-          if [ -z "$GITHUB_TOKEN" ]; then
+          if [ -z "$GEO_GITHUB_TOKEN" ]; then
             echo "❌ secret GEO_GITHUB_TOKEN 未配置 — geo-workflow 是 private 仓,需 PAT 读取"
             exit 1
           fi

@@ -85,7 +85,7 @@ function runCmd(cmd, cwd, options = {}) {
       encoding: 'utf-8',
       stdio: options.silent ? ['pipe', 'pipe', 'pipe'] : 'inherit',
       timeout: options.timeout || 60000,
-    }).trim();
+    })?.trim() || '';
   } catch (err) {
     if (options.silent) return '';
     throw err;

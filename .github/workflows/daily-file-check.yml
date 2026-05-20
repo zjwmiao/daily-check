@@ -18,12 +18,7 @@ on:
         required: false
         default: ''
       dry_run:
-        description: 'Dry run (不实际生成配置)'
-        required: false
-        type: boolean
-        default: false
-      skip_generate:
-        description: '跳过配置生成'
+        description: 'Dry run (仅检查，不生成配置)'
         required: false
         type: boolean
         default: false
@@ -66,16 +61,20 @@ jobs:
           BRANCH: ${{ inputs.branch || env.DEFAULT_BRANCH }}
           SINCE: ${{ inputs.since || '' }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
-          SKIP_GENERATE: ${{ inputs.skip_generate || 'false' }}
           ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
           OUTPUT_DIR: ${{ runner.temp }}
         run: |
+          DRY_RUN_ARG=""
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            DRY_RUN_ARG="--dryRun"
+          fi
+          
           node scripts/geo-daily-check/check-batch.js \
             --repo="$REPO" \
             --branch="$BRANCH" \
             ${SINCE:+--since="$SINCE"} \
-            ${DRY_RUN:+--dryRun} \
-            ${SKIP_GENERATE:+--skipGenerate} \
+            $DRY_RUN_ARG \
             --output="${OUTPUT_DIR}/check-result"
           
           echo "=== 检查结果 ==="
@@ -116,7 +115,7 @@ jobs:
           done
 
       - name: Commit generated configs
-        if: inputs.dry_run != true && inputs.skip_generate != true
+        if: inputs.dry_run != true
         shell: bash
         env:
           ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}

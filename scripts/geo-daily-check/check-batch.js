@@ -7,7 +7,7 @@
  *   支持逗号分隔的多个仓库 URL，顺序执行避免输出混乱
  * 
  * 使用方式:
- *   node check-batch.js --repo=<repo_urls> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun] [--skipGenerate]
+ *   node check-batch.js --repo=<repo_urls> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun]
  * 
  * 参数说明:
  *   --repo=<urls>       必填。Git 仓库 URL，支持多个(逗号分隔):
@@ -17,8 +17,7 @@
  *   --since=<time>      可选。检查时间范围，默认 '1 day ago'
  *   --output=<file>     可选。输出结果文件路径前缀
  *                         实际输出: {prefix}-{owner}-{repo}.json 和 {prefix}-summary.json
- *   --dryRun            可选。仅检查不生成配置
- *   --skipGenerate      可选。跳过配置生成步骤
+ *   --dryRun            可选。仅检查不生成配置、不提 issue
  *   --model=<model>     可选。opencode 模型
  *   --agent=<agent>     可选。opencode agent
  *   --extraArgs=<args>  可选。opencode 额外参数
@@ -94,7 +93,6 @@ async function runCheckSingle(repoUrl, baseArgs, index, total) {
   if (baseArgs.branch) cmdArgs.push(`--branch=${baseArgs.branch}`);
   if (baseArgs.since) cmdArgs.push(`--since=${baseArgs.since}`);
   if (baseArgs.dryRun) cmdArgs.push('--dryRun');
-  if (baseArgs.skipGenerate) cmdArgs.push('--skipGenerate');
   if (baseArgs.model) cmdArgs.push(`--model=${baseArgs.model}`);
   if (baseArgs.agent) cmdArgs.push(`--agent=${baseArgs.agent}`);
   if (baseArgs.extraArgs) cmdArgs.push(`--extraArgs=${baseArgs.extraArgs}`);
@@ -155,8 +153,7 @@ async function main() {
     log('', `  --branch=<branch>        指定分支 (默认: main)`);
     log('', `  --since=<time>           时间范围 (默认: 1 day ago)`);
     log('', `  --output=<file>          输出结果文件前缀`);
-    log('', `  --dryRun                 仅检查不生成`);
-    log('', `  --skipGenerate           跳过配置生成`);
+    log('', `  --dryRun                 仅检查不生成配置、不提 issue`);
     process.exit(1);
   }
   

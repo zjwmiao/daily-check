@@ -11,7 +11,7 @@
  *   6. 向 atomgit 提 issue 报告问题
  * 
  * 使用方式:
- *   node check-single.js --repo=<repo_url> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun] [--skipGenerate]
+ *   node check-single.js --repo=<repo_url> [--branch=<branch>] [--since=<time>] [--output=<file>] [--dryRun]
  * 
  * 参数说明:
  *   --repo=<url>        必填。Git 仓库 URL，支持格式:
@@ -21,8 +21,7 @@
  *   --since=<time>      可选。检查时间范围，默认 '1 day ago'
  *                         示例: '2 days ago', '2024-01-01'
  *   --output=<file>     可选。输出结果 JSON 文件路径
- *   --dryRun            可选。仅检查不生成配置
- *   --skipGenerate      可选。跳过配置生成步骤
+ *   --dryRun            可选。仅检查不生成配置、不提 issue
  *   --model=<model>     可选。opencode 模型，默认从环境变量读取
  *   --agent=<agent>     可选。opencode agent，默认 'build'
  *   --extraArgs=<args>  可选。opencode 额外参数
@@ -455,7 +454,6 @@ async function main() {
   const since = args.since || null;
   const outputFile = args.output || null;
   const dryRun = args.dryRun || false;
-  const skipGenerate = args.skipGenerate || false;
   const model = args.model || process.env.OPENCODE_MODEL || 'alibaba-cn/glm-5';
   const agent = args.agent || process.env.OPENCODE_AGENT || 'build';
   const extraArgs = args.extraArgs || process.env.OPENCODE_EXTRA_ARGS || '--dangerously-skip-permissions';
@@ -574,7 +572,7 @@ async function main() {
     pages: results,
   };
 
-  if (needsConfig.length > 0) {
+  if (needsConfig.length > 0 && !dryRun) {
     log(`\n创建 issue 报告缺失配置...`);
     const issueResult = await createOrUpdateIssue(owner, repo, needsConfig);
     output.issue = issueResult;
@@ -590,7 +588,7 @@ async function main() {
     console.log(json);
   }
 
-  if (needsConfig.length > 0 && !skipGenerate) {
+  if (needsConfig.length > 0 && !dryRun) {
     log(`\n构建项目以获取渲染产物...`);
     
     let buildOutputDir = null;

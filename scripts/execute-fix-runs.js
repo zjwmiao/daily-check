@@ -234,6 +234,7 @@ async function runCritic(run, workDir, ctxDir, agentOutput, verify) {
     problems: run.problems,
     agent_output: agentOutput || '(empty)',
     verify_summary: verify?.summary || null,
+    verify_checks: verify?.checks || [],
     git_diff: diff,
   };
   const criticContextFile = path.join(ctxDir, `critic-context-${run.community}-${run.geo_issue_number}.json`);

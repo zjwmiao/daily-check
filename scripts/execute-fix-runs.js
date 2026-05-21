@@ -437,10 +437,10 @@ async function main() {
   };
 
   try {
-    log('  [1/6] clonePortal');
+    log('  [1/7] clonePortal');
     const workDir = clonePortal(run);
 
-    log('  [2/6] baseline build');
+    log('  [2/7] baseline build');
     let buildOutputDir = null;
     let baselineSkipped = false;
     const baseline = await buildPortal(workDir);
@@ -461,11 +461,12 @@ async function main() {
     const outputMd = path.join(ctxDir, `output-${run.community}-${run.geo_issue_number}.md`);
     fs.writeFileSync(contextFile, JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2));
 
-    log('  [3/6] runOpencode');
+    log('  [3/7] runOpencode');
     const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
     result.agent_ok = ocRes.ok;
+    let agentOutput = '';
     if (fs.existsSync(outputMd)) {
-      result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
+      agentOutput = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
     }
     if (!ocRes.ok) {
       result.status = 'agent_failed';
@@ -474,7 +475,7 @@ async function main() {
       return;
     }
 
-    log('  [4/6] post-agent build');
+    log('  [4/7] post-agent build');
     if (baselineSkipped) {
       result.build = { skipped: true, reason: 'baseline-skipped' };
     } else {
@@ -488,10 +489,10 @@ async function main() {
       }
     }
 
-    log('  [5/6] verify');
+    log('  [5/7] verify');
     const verify = verifyFixesInWorkDir({
       workDir,
-      agentOutput: result.agent_output || '',
+      agentOutput: agentOutput || '',
       problems: run.problems,
       community: run.community,
       outputDir: buildOutputDir,
@@ -506,8 +507,8 @@ async function main() {
       return;
     }
 
-    log('  [6/6] critic');
-    const critic = process.env.CRITIC_DISABLE === '1' ? null : await runCritic(run, workDir, ctxDir, result.agent_output || '', verify);
+    log('  [6/7] critic');
+    const critic = process.env.CRITIC_DISABLE === '1' ? null : await runCritic(run, workDir, ctxDir, agentOutput || '', verify);
     if (critic) result.critic = { verdict: critic.verdict, reason: critic.reason };
 
     if (critic && critic.verdict !== 'pass' && critic.verdict !== 'warn') {

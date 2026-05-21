@@ -63,3 +63,12 @@ export function canonicalizeUrlHost(community, url) {
     return url;
   }
 }
+
+export function inferCommunityFromRepoName(owner, repo) {
+  const repoLower = repo.toLowerCase();
+  for (const [name, cfg] of Object.entries(COMMUNITY_MAP)) {
+    if (cfg.portal_repo.toLowerCase() === repoLower) return name;
+    if (cfg.portal_owner.toLowerCase() === owner.toLowerCase() && repoLower.includes(name.toLowerCase())) return name;
+  }
+  return null;
+}

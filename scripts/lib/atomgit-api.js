@@ -93,18 +93,35 @@ export async function updateIssue({ owner, repo, issue_number, title, body, labe
 
 // 按 title 前缀查找已存在的 issue,用于去重
 // AtomGit/Gitee 风格:GET /api/v5/repos/{owner}/{repo}/issues?state=all
-export async function findIssueByTitlePrefix({ owner, repo, prefix, state = 'all' }) {
+export async function listIssues({ owner, repo, state = 'open' }) {
   return retry(
     async () => {
       const res = await client().get(`${API_PREFIX}/repos/${owner}/${repo}/issues`, {
         params: { state, per_page: 100 },
       });
       rejectOn4xx(res, 'listIssues');
-      const list = Array.isArray(res.data) ? res.data : [];
-      return list.find((i) => typeof i.title === 'string' && i.title.startsWith(prefix)) || null;
+      return Array.isArray(res.data) ? res.data : [];
     },
-    { label: `findIssueByTitlePrefix(${owner}/${repo})` }
+    { label: `listIssues(${owner}/${repo})` }
   );
+}
+
+export async function listIssueComments({ owner, repo, issue_number }) {
+  return retry(
+    async () => {
+      const res = await client().get(`${API_PREFIX}/repos/${owner}/${repo}/issues/${issue_number}/comments`, {
+        params: { per_page: 100 },
+      });
+      rejectOn4xx(res, 'listIssueComments');
+      return Array.isArray(res.data) ? res.data : [];
+    },
+    { label: `listIssueComments(${owner}/${repo}#${issue_number})` }
+  );
+}
+
+export async function findIssueByTitlePrefix({ owner, repo, prefix, state = 'all' }) {
+  const list = await listIssues({ owner, repo, state });
+  return list.find((i) => typeof i.title === 'string' && i.title.startsWith(prefix)) || null;
 }
 
 export async function addIssueComment({ owner, repo, issue_number, body }) {

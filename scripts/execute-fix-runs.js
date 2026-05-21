@@ -12,8 +12,8 @@ import {
 } from './lib/atomgit-api.js';
 import { verifyFixesInWorkDir } from './checks/post-fix-verify.js';
 import { buildPortal } from './lib/portal-build.js';
+import { parseArgs, readInput } from './lib/utils.js';
 
-// 用 env 控制 git 作者/提交者身份,不污染 repo 级 git config
 process.env.GIT_AUTHOR_NAME = process.env.GIT_AUTHOR_NAME || 'geo-develop-bot';
 process.env.GIT_AUTHOR_EMAIL = process.env.GIT_AUTHOR_EMAIL || 'geo-develop-bot@noreply.local';
 process.env.GIT_COMMITTER_NAME = process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME;
@@ -24,55 +24,6 @@ function log(msg) {
   const t = ((Date.now() - T0) / 1000).toFixed(1);
   const ts = new Date().toISOString().slice(11, 19);
   console.error(`[${ts} +${t}s] ${msg}`);
-}
-
-function planRunsFromPayload(payload) {
-  const runs = [];
-  for (const issue of payload.issues || []) {
-    const flatProblems = [];
-    for (const q of issue.questions || []) {
-      for (const u of q.official_urls || []) {
-        for (const p of u.problems || []) {
-          flatProblems.push({
-            question_id: q.id,
-            question_text: q.question,
-            url: u.url,
-            ...p,
-          });
-        }
-      }
-    }
-    if (flatProblems.length === 0) {
-      runs.push({ ...issue, skip: true, skip_reason: 'no problems to fix' });
-      continue;
-    }
-    runs.push({
-      community: issue.community,
-      geo_issue_number: issue.geo_issue_number,
-      geo_issue_url: issue.geo_issue_url,
-      geo_issue_title: issue.geo_issue_title,
-      portal_owner: issue.portal.owner,
-      portal_repo: issue.portal.repo,
-      portal_base_branch: issue.portal.default_branch || 'master',
-      portal_issue_url: issue.portal_issue_url || null,
-      portal_issue_number: issue.portal_issue_number || null,
-      branch_name: `geo/fix-${issue.community.toLowerCase()}-${issue.geo_issue_number}`,
-      problems: flatProblems,
-      issue_payload: issue,
-    });
-  }
-  return runs;
-}
-
-function parseArgs(argv) {
-  const out = { _: [] };
-  for (const a of argv) {
-    if (a.startsWith('--')) {
-      const [k, v] = a.replace(/^--/, '').split('=');
-      out[k] = v ?? true;
-    }
-  }
-  return out;
 }
 
 function sh(cmd, opts = {}) {
@@ -89,10 +40,51 @@ function tryRun(cmd, opts) {
   }
 }
 
+function parsePayload(input) {
+  if (input.skip) {
+    return { skip: true, skip_reason: input.skip_reason, ...input };
+  }
+  
+  if (!input.urls || input.urls.length === 0) {
+    return { skip: true, skip_reason: '无待修复URLs', ...input };
+  }
+
+  const issues = input.issues || [];
+  const firstIssue = issues[0] || input.issue;
+  
+  if (!firstIssue && !input.portal) {
+    throw new Error('payload格式错误: 缺少issue或portal信息');
+  }
+
+  const portal = input.portal || {};
+  const community = input.community || 'unknown';
+  const issueNum = firstIssue?.number || input.issue_number || 0;
+
+  const problems = (input.problems || []).map(p => ({
+    dimension: p.dimension || 'all',
+    description: p.description || '',
+    url: p.url,
+    suggestion: p.suggestion,
+  }));
+
+  return {
+    skip: false,
+    community,
+    portal_owner: portal.owner,
+    portal_repo: portal.repo,
+    portal_base_branch: portal.base_branch || 'master',
+    geo_issue_number: issueNum,
+    geo_issue_url: firstIssue?.url || input.issue_url,
+    geo_issue_title: firstIssue?.title || input.issue_title || `[GEO] #${issueNum}`,
+    branch_name: `geo/fix-${community.toLowerCase()}-${issueNum}`,
+    urls: input.urls,
+    problems,
+    portal,
+  };
+}
+
 function portalCacheDir(run) {
-  const base =
-    process.env.GEO_PORTAL_CACHE_DIR ||
-    path.join(process.env.HOME || '/tmp', '.cache/geo-bot/portals');
+  const base = process.env.GEO_PORTAL_CACHE_DIR || path.join(process.env.HOME || '/tmp', '.cache/geo-bot/portals');
   return path.join(base, `${run.portal_owner}-${run.portal_repo}`);
 }
 
@@ -109,31 +101,20 @@ function clonePortal(run) {
   const hasCache = fs.existsSync(path.join(workDir, '.git'));
   if (hasCache) {
     log('  ♻️  cache exists, refreshing...');
-    log('     - git remote set-url origin');
-    const okRemote = tryRun(`git remote set-url origin ${url}`, { cwd: workDir });
-    log(`     - git fetch --depth=1 origin ${base}`);
-    const okFetch = okRemote && tryRun(`git fetch --depth=1 origin ${base}`, { cwd: workDir });
-    log(`     - git checkout -B ${base} origin/${base}`);
-    const okCheckout = okFetch && tryRun(`git checkout -B ${base} origin/${base}`, { cwd: workDir });
-    log(`     - git reset --hard origin/${base}`);
-    const okReset = okCheckout && tryRun(`git reset --hard origin/${base}`, { cwd: workDir });
-    log('     - git clean -fdx');
-    const okClean = okReset && tryRun(`git clean -fdx`, { cwd: workDir });
-    if (okClean) {
+    tryRun(`git remote set-url origin ${url}`, { cwd: workDir });
+    tryRun(`git fetch --depth=1 origin ${base}`, { cwd: workDir });
+    tryRun(`git checkout -B ${base} origin/${base}`, { cwd: workDir });
+    tryRun(`git reset --hard origin/${base}`, { cwd: workDir });
+    tryRun(`git clean -fdx`, { cwd: workDir });
+    try {
       const leftovers = sh(`git for-each-ref --format='%(refname:short)' refs/heads/`, { cwd: workDir })
-        .split('\n')
-        .map((s) => s.trim())
-        .filter((b) => b && b !== base);
+        .split('\n').map(s => s.trim()).filter(b => b && b !== base);
       for (const b of leftovers) tryRun(`git branch -D ${b}`, { cwd: workDir });
-      log(`  ✅ cache reused (cleaned ${leftovers.length} stale branch)`);
-    } else {
-      log('  ⚠️  cache corrupt, will re-clone');
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
+    } catch {}
   }
 
   if (!fs.existsSync(path.join(workDir, '.git'))) {
-    log(`  📥 fresh clone: --depth=1 --branch=${base} (这一步可能耗时长,大仓需几分钟)`);
+    log(`  📥 fresh clone: --depth=1 --branch=${base}`);
     const t0 = Date.now();
     sh(`git clone --depth=1 --branch=${base} ${url} ${workDir}`);
     log(`  ✅ cloned in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -145,57 +126,30 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
   const opencode = process.env.OPENCODE_BIN || 'opencode';
   const model = process.env.AI_MODEL || 'alibaba-cn/glm-5';
   const agent = process.env.AI_AGENT || 'build';
-  // 默认带 --dangerously-skip-permissions:opencode 的 build agent 在 CI 无 TTY 环境下,
-  // 任何文件读写都会触发交互确认 → 永远 hang。参考 openEuler-portal-mirror 仓的实现。
-  // 注意用 || 而非 ?? — workflow 把 vars.AI_EXTRA_ARGS 未设时映射为 ''(空串),?? 不会触发 fallback
   const extra = process.env.AI_EXTRA_ARGS || '--dangerously-skip-permissions';
-  // 大仓(如 openEuler-portal)glob/grep + LLM 思考累计可能十几分钟,默认 25min;真挂死靠进程组 SIGKILL 兜底
-  // critic 只读,5min 够用,允许外部 override
-  const timeoutMs =
-    options.timeoutMs ?? Number(process.env.OPENCODE_TIMEOUT_MS || 25 * 60 * 1000);
+  const timeoutMs = options.timeoutMs ?? Number(process.env.OPENCODE_TIMEOUT_MS || 25 * 60 * 1000);
   const label = options.label || 'fix';
-  const taskLine =
-    options.taskLine ||
-    `请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
+  const taskLine = options.taskLine || `请在 ${workDir} 内执行修复,并将处理清单写入 ${outputFile}。`;
 
   const prompt = `${fs.readFileSync(agentFile, 'utf-8')}\n\n## 上下文\n\n${fs.readFileSync(contextFile, 'utf-8')}\n\n${taskLine}`;
 
-  // prompt 落盘,失败时可在 runner 上手工 replay
   const ctxDir = path.dirname(contextFile);
   const promptFile = path.join(ctxDir, `opencode-prompt-${label}-${run.community}-${run.geo_issue_number}.txt`);
   fs.writeFileSync(promptFile, prompt);
 
   const opencodeArgs = ['run', '-', '--model', model, '--agent', agent, ...(extra ? extra.split(' ').filter(Boolean) : [])];
-  const argsShell = opencodeArgs.map((a) => (/[\s'"]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(' ');
+  const argsShell = opencodeArgs.map(a => (/[\s'"]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(' ');
 
   log(`  🤖 starting opencode [${label}] (timeout=${timeoutMs / 1000}s)`);
-  log(`     bin: ${opencode}`);
-  log(`     args: ${JSON.stringify(opencodeArgs)}`);
-  log(`     cwd:  ${workDir}`);
-  log(`     prompt: ${prompt.length} chars → ${promptFile}`);
-  log(`     📋 replay (runner SSH 后可贴):`);
-  log(`        cd ${workDir} && cat ${promptFile} | ${opencode} ${argsShell}`);
-  // 关键 env 透传(opencode 模型/网关认证常依赖这些)
-  for (const k of ['OPENCODE_API_KEY', 'OPENCODE_TOKEN', 'OPENCODE_CONFIG']) {
-    if (process.env[k]) log(`     env ${k}=<set, len=${process.env[k].length}>`);
-  }
+  log(`     bin: ${opencode}, args: ${JSON.stringify(opencodeArgs)}`);
+
+  const stdoutSink = options.captureStdoutTo ? ` | tee "${options.captureStdoutTo}"` : '';
+  const pipefail = stdoutSink ? 'set -o pipefail; ' : '';
+  const bashCmd = `${pipefail}stdbuf -oL -eL ${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
 
   const t0 = Date.now();
-
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     let timedOut = false;
-    // 用 bash + 管道 + stdbuf 启动 opencode — 匹配 SSH 手跑 / 参考仓 self-edit-workflow.yml 的形式
-    // 1. cat $promptFile | opencode ... :stdin 来源是真正的 bash pipe(不是 node writable stream)
-    // 2. stdbuf -oL -eL :强制 opencode stdout/stderr 行缓冲,避免 4KB block buffer 导致 workflow 日志看起来卡死
-    // 3. detached: true 保留 — 进程组 SIGKILL 兜底机制不变
-    // 4. captureStdoutTo:critic 这类只读 agent 不会(也不该)写文件,审查结果只走 stdout —
-    //    用 tee 双写,workflow log 仍能看到 opencode 输出,同时文件兜底落盘给 runCritic 解析
-    const stdoutSink = options.captureStdoutTo
-      ? ` | tee "${options.captureStdoutTo}"`
-      : '';
-    // pipefail:opencode 在 pipe 左侧,若不开 pipefail,tee 退 0 就吞掉 opencode 的非 0 退出码
-    const pipefail = stdoutSink ? 'set -o pipefail; ' : '';
-    const bashCmd = `${pipefail}stdbuf -oL -eL ${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
     const child = spawn('bash', ['-c', bashCmd], {
       stdio: ['ignore', 'inherit', 'inherit'],
       cwd: workDir,
@@ -204,60 +158,113 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
 
     const timer = setTimeout(() => {
       timedOut = true;
-      log(`  ⏱  opencode 超时 ${timeoutMs / 1000}s,SIGKILL 整个进程组(pid=-${child.pid})`);
-      try {
-        process.kill(-child.pid, 'SIGKILL');
-      } catch (err) {
-        log(`     kill 失败: ${err.message}`);
-        try { child.kill('SIGKILL'); } catch {}
-      }
+      log(`  ⏱ opencode 超时 ${timeoutMs / 1000}s, SIGKILL`);
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
     }, timeoutMs);
 
-    child.on('error', (err) => {
+    child.on('error', err => {
       clearTimeout(timer);
       log(`  ❌ opencode spawn error: ${err.message}`);
-      resolve(false);
+      resolve({ ok: false, error: err.message });
     });
+
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
       const dur = ((Date.now() - t0) / 1000).toFixed(1);
-      const meta = { promptFile, opencode, argsShell };
       if (timedOut) {
-        log(`  ❌ opencode TIMEOUT after ${dur}s (limit: ${timeoutMs / 1000}s)`);
-        resolve({ ok: false, ...meta });
+        log(`  ❌ TIMEOUT after ${dur}s`);
+        resolve({ ok: false, error: 'timeout' });
       } else if (signal) {
-        log(`  ❌ opencode killed by signal=${signal} after ${dur}s`);
-        resolve({ ok: false, ...meta });
+        log(`  ❌ killed by signal=${signal} after ${dur}s`);
+        resolve({ ok: false, error: `signal: ${signal}` });
       } else {
         log(`  ✅ opencode exit=${code} in ${dur}s`);
-        resolve({ ok: code === 0, ...meta });
+        resolve({ ok: code === 0, promptFile });
       }
     });
   });
 }
 
-// 给 opencode 的精简上下文 — 去除冗余字段
-// 之前实测:analysis 字段跟 problems 数据重复(占 1100+ 字符),agent 不需要 question_text/category 等
-// 按 URL 聚合 problems,agent 一眼就知道每个 URL 要修什么
 function buildSlimContext(run, workDir, outputFile) {
   const byUrl = new Map();
-  for (const p of run.problems || []) {
-    if (!byUrl.has(p.url)) byUrl.set(p.url, { url: p.url, issues: [] });
-    byUrl.get(p.url).issues.push({
-      dimension: p.dimension,
-      description: p.description,
-      ...(p.suggestion ? { suggestion: p.suggestion } : {}),
+  for (const u of run.urls || []) {
+    const url = u.url;
+    if (!byUrl.has(url)) byUrl.set(url, { url, issues: [] });
+    byUrl.get(url).issues.push({
+      question_id: u.question_id,
+      question_text: u.question_text,
     });
+  }
+  for (const p of run.problems || []) {
+    if (byUrl.has(p.url)) {
+      byUrl.get(p.url).issues.push({
+        dimension: p.dimension,
+        description: p.description,
+      });
+    }
   }
   return {
     portal: { owner: run.portal_owner, repo: run.portal_repo, work_dir: workDir, base_branch: run.portal_base_branch },
     fixes: [...byUrl.values()],
-    // output 写到 portal 仓外,避免 `git add -A` 把清单一起 commit 进 PR(只走 issue 评论)
     output_file: outputFile,
   };
 }
 
-// 把长 URL 截短给表格用 — 避免在 atomgit UI 里把表格撑爆
+async function runCritic(run, workDir, ctxDir, agentOutput, verify) {
+  const criticPrompt = process.env.CRITIC_AGENT_FILE;
+  if (!criticPrompt || !fs.existsSync(criticPrompt)) {
+    log(`  ⚠ critic prompt 未配置,跳过`);
+    return null;
+  }
+
+  let diff = '';
+  try { diff = sh('git diff --no-color HEAD', { cwd: workDir }); } catch {}
+  if (diff.length > 20000) diff = diff.slice(0, 20000) + `\n\n... (截断)`;
+
+  const contextPayload = {
+    portal: { owner: run.portal_owner, repo: run.portal_repo, base_branch: run.portal_base_branch },
+    urls: run.urls,
+    problems: run.problems,
+    agent_output: agentOutput || '(empty)',
+    verify_summary: verify?.summary || null,
+    git_diff: diff,
+  };
+  const criticContextFile = path.join(ctxDir, `critic-context-${run.community}-${run.geo_issue_number}.json`);
+  fs.writeFileSync(criticContextFile, JSON.stringify(contextPayload, null, 2));
+
+  const criticOut = path.join(ctxDir, `critic-output-${run.community}-${run.geo_issue_number}.md`);
+  const oc = await runOpencode(run, workDir, criticPrompt, criticContextFile, criticOut, {
+    label: 'critic',
+    timeoutMs: 5 * 60 * 1000,
+    captureStdoutTo: criticOut,
+    taskLine: '你是 critic,只审不改。不要执行任何 git 操作、不要修改任何文件,审查结论(Markdown)直接 print 到 stdout。',
+  });
+
+  if (!oc.ok) {
+    log(`  ⚠ critic opencode 失败`);
+    return { ok: false, verdict: 'unknown' };
+  }
+
+  let body = '';
+  if (fs.existsSync(criticOut)) body = fs.readFileSync(criticOut, 'utf-8').slice(0, 4000);
+  const verdictMatch = body.match(/Critic 结论\s*[:：]\s*(pass|warn|block)/i);
+  const verdict = (verdictMatch && verdictMatch[1].toLowerCase()) || 'unknown';
+
+  let reason = null;
+  if (verdictMatch) {
+    const tail = body.slice(body.indexOf(verdictMatch[0]) + verdictMatch[0].length);
+    for (const line of tail.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      if (t.startsWith('#')) break;
+      reason = t.replace(/^[(（]/, '').replace(/[)）]$/, '').trim();
+      break;
+    }
+  }
+  log(`  🧐 critic verdict=${verdict}${reason ? ` — ${reason.slice(0, 80)}` : ''}`);
+  return { ok: true, body, verdict, reason };
+}
+
 function shortUrl(u, max = 64) {
   if (!u || u.length <= max) return u;
   try {
@@ -268,241 +275,51 @@ function shortUrl(u, max = 64) {
   }
 }
 
-// 安全地用在 markdown 表格单元格里 — 转义 `|` 和换行
 function cell(s) {
   return String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
-const VERIFY_ICON = {
-  fixed: '✅',
-  still_failing: '❌',
-  deferred: '⏭',
-  unverifiable: '❓',
-};
-
-// 渲染 Verify summary — verify 是"结果",build 是 verify 的数据来源(给 schema/static-render 出 dist),
-// critic 是 LLM 二审,都 inline 到一行,reviewer 不用打开 PR 详情就能读懂"修复成功几项 + 失败原因"
-function renderVerifyBadge(verify, buildInfo, critic) {
-  if (!verify?.summary) return null;
-  const s = verify.summary;
-  const segs = [];
-  if (s.fixed > 0) segs.push(`✅ 已修复 ${s.fixed} 项`);
-  if (s.still_failing > 0) segs.push(`❌ 仍未修复 ${s.still_failing} 项`);
-  if (s.deferred > 0) segs.push(`⏭ 暂未校验 ${s.deferred} 项`);
-  if (s.unverifiable > 0) segs.push(`❓ 无法定位 ${s.unverifiable} 项`);
-
-  const main = segs.length > 0
-    ? segs.join(' / ')
-    : (s.total === 0 ? '(无可校验项)' : `总计 ${s.total} 项`);
-
-  const notes = [];
-  const buildNote = renderBuildNote(buildInfo);
-  if (buildNote) notes.push(buildNote);
-  const criticNote = renderCriticNote(critic);
-  if (criticNote) notes.push(criticNote);
-  return notes.length > 0 ? `${main}(${notes.join(' · ')})` : main;
-}
-
-function renderBuildNote(buildInfo) {
-  if (!buildInfo) return null;
-  const { baseline, postAgent } = buildInfo;
-  // 只展示 post-agent build 状态(它直接给 verify 提供 dist 产物)。baseline 的失败会传染到 post-agent
-  function oneLine(b, when) {
-    if (!b) return null;
-    if (b.ok) return `${when}构建通过 ${(b.duration_ms / 1000).toFixed(0)}s`;
-    if (b.skipped) return `${when}构建跳过`;
-    const phaseMap = { install: '装依赖阶段', build: '构建阶段', 'detect-output': '探测产物阶段' };
-    return `${when}构建失败(${phaseMap[b.phase] || b.phase || '未知阶段'})`;
-  }
-  const post = oneLine(postAgent, '改完后');
-  if (post) return post;
-  return oneLine(baseline, '改前基线');
-}
-
-function renderCriticNote(critic) {
-  if (!critic?.verdict) return null;
-  // pass 时只标"通过",reason 通常是"修复全 OK"之类的空话,不展示;
-  // warn / block 时把 reason 显出来,让 reviewer 直接看到 LLM 为什么这么判
-  const map = {
-    pass: 'LLM 二审 🟢 通过',
-    warn: 'LLM 二审 🟡 有可疑点(不阻断)',
-    block: 'LLM 二审 🔴 阻断',
-  };
-  const head = map[critic.verdict] || `LLM 二审 ❓ ${critic.verdict}`;
-  if (critic.verdict !== 'pass' && critic.reason) {
-    // reason 截断防止表格被撑爆(可点 PR critic 块看完整)
-    return `${head}:${critic.reason.slice(0, 60)}${critic.reason.length > 60 ? '…' : ''}`;
-  }
-  return head;
-}
-
 function buildPrBody(run, verify, critic, buildInfo) {
-  // 顶部一行关联只贴对外可见、对维护人有用的:geo-workflow 原始 issue + portal issue。
-  // 内部触发 issue(geo-develop)不外露 — 维护人不关心我们的协调仓。
-  const relations = [
-    `[geo-workflow #${run.geo_issue_number}](${run.geo_issue_url})`,
-    run.portal_issue_url ? `[portal issue #${run.portal_issue_number}](${run.portal_issue_url})` : null,
-  ].filter(Boolean);
+  const relations = [run.geo_issue_url ? `[issue #${run.geo_issue_number}](${run.geo_issue_url})` : null].filter(Boolean);
 
-  // Verify summary 一行 — 把 build 状态(verify 的过程注解)+ critic verdict 都 inline 进去,
-  // reviewer 一眼把"修复落地 + build 状态 + LLM 二审" 三件事看全;critic 详情在下方的 critic 块
-  const verifyBadge = renderVerifyBadge(verify, buildInfo, critic);
-  const statusLine = verifyBadge ? `\n**Verify**: ${verifyBadge}\n` : '';
+  const verifyBadge = verify?.summary ? [
+    verify.summary.fixed > 0 ? `✅ 已修复 ${verify.summary.fixed}` : null,
+    verify.summary.still_failing > 0 ? `❌ 未修复 ${verify.summary.still_failing}` : null,
+    verify.summary.deferred > 0 ? `⏭ 跳过 ${verify.summary.deferred}` : null,
+  ].filter(Boolean).join(' / ') : null;
 
-  const tableRows = run.problems.map((p) => {
-    const dim = p.dimension || p.category || '-';
-    const urlMd = `[${shortUrl(p.url)}](${p.url})`;
-    return `| ${cell(dim)} | ${urlMd} | ${cell(p.description)} |`;
-  });
+  const lines = [
+    `**关联**: ${relations.join(' · ') || '(无)'}`,
+    verifyBadge ? `\n**Verify**: ${verifyBadge}\n` : '',
+    `| URL | 问题 |`,
+    `| --- | --- |`,
+    ...run.urls.map(u => `| [${shortUrl(u.url)}](${u.url}) | ${u.question_id || '-'} |`),
+  ];
 
-  // Before / After 自检表 — 让 reviewer 一眼看到这次改动是不是真把问题修了
-  const verifyBlock = [];
-  if (verify && verify.checks && verify.checks.length > 0) {
-    verifyBlock.push('');
-    verifyBlock.push(`**Pre-push 自检 (Before → After)**`);
-    verifyBlock.push('');
-    verifyBlock.push(`| 状态 | Dimension | URL | Before | After |`);
-    verifyBlock.push(`| --- | --- | --- | --- | --- |`);
+  if (verify?.checks?.length > 0) {
+    lines.push('', '**Verify详情**', '', '| URL | 状态 | Before | After |', '| --- | --- | --- | --- |');
     for (const c of verify.checks) {
-      const icon = VERIFY_ICON[c.status] || '·';
-      verifyBlock.push(
-        `| ${icon} ${c.status} | ${cell(c.dimension)} | [${shortUrl(c.url)}](${c.url}) | ${cell(c.before)} | ${cell(c.after)} |`
-      );
-    }
-    if (verify.summary?.deferred || verify.summary?.unverifiable) {
-      verifyBlock.push('');
-      verifyBlock.push(
-        `<sub>deferred 由 geo-poll 闭环重验兜底;unverifiable = agent 没给出可定位的改动位置。</sub>`
-      );
+      const icon = { fixed: '✅', still_failing: '❌', deferred: '⏭', unverifiable: '❓' }[c.status] || '·';
+      lines.push(`| [${shortUrl(c.url)}](${c.url}) | ${icon} ${c.status} | ${cell(c.before || '-')} | ${cell(c.after || '-')} |`);
     }
   }
 
-  // Critic 块 — 反向审查详情,折叠默认展开。verdict 标在 summary 行 — pass/warn/block 三档
-  // (注:这跟 ADR-0024 取消的 /analyze problem severity 是两个不同概念,critic 分级 keep)
-  const criticBlock = [];
-  if (critic && critic.body) {
-    const verdictBadge =
-      { pass: '🟢 pass', warn: '🟡 warn', block: '🔴 block' }[critic.verdict] ||
-      `❓ ${critic.verdict || 'unknown'}`;
-    criticBlock.push('');
-    criticBlock.push('<details open>');
-    criticBlock.push(`<summary>📋 critic 反向审查:${verdictBadge}</summary>`);
-    criticBlock.push('');
-    criticBlock.push(critic.body);
-    criticBlock.push('');
-    criticBlock.push('</details>');
+  if (critic?.body) {
+    const verdictBadge = { pass: '🟢', warn: '🟡', block: '🔴' }[critic.verdict] || '❓';
+    lines.push('', '<details open>', `<summary>📋 Critic: ${verdictBadge} ${critic.verdict}</summary>`, '', critic.body.slice(0, 3000), '', '</details>');
   }
 
-  // closes 引用让 atomgit 合并 PR 时自动关 portal issue;放在 body 末尾不破坏可读性
-  const closes =
-    run.portal_issue_number != null ? `\nCloses #${run.portal_issue_number}` : '';
-
-  return [
-    `**关联**: ${relations.join(' · ')}`,
-    statusLine,
-    `| Dimension | URL | Description |`,
-    `| --- | --- | --- |`,
-    ...tableRows,
-    ...verifyBlock,
-    ...criticBlock,
-    '',
-    `<sub>由 geo-develop 自动化生成 · 改动应限于 \`schema\` / \`tdk\` / \`sitemap\` / \`prerender\` 等可发现性配置,review 时若发现正文/业务逻辑变动请直接 reject。</sub>`,
-    closes,
-  ].join('\n');
-}
-
-// 把 portal build 的失败 stderr 尾段打到 workflow log(免得每次都翻 trigger issue 评论)
-function logBuildErrorTail(label, build) {
-  if (!build?.error) return;
-  log(`  --- ${label} error (phase=${build.phase}) ---`);
-  for (const line of build.error.split('\n').slice(-30)) log(`    ${line}`);
-  log(`  --- end ${label} error ---`);
-}
-
-// 运行 critic agent — 输入 analysis + agent output + git diff + verify,产出 markdown 审查报告
-// critic 只读,有自己的 prompt(geo-critic-prompt.md),走同一 opencode 二开机制
-async function runCritic(run, workDir, ctxDir, agentOutput, verify) {
-  const criticPrompt = process.env.CRITIC_AGENT_FILE;
-  if (!criticPrompt || !fs.existsSync(criticPrompt)) {
-    log(`  ⚠ critic prompt 未配置(CRITIC_AGENT_FILE),跳过 critic`);
-    return null;
-  }
-
-  // 取 working tree 跟 HEAD 的 diff(agent 改完还没 commit,所以是工作树差异)
-  // 体积控制在 ~20k 字符(critic 上下文容量),超出截断
-  let diff = '';
-  try {
-    diff = sh('git diff --no-color HEAD', { cwd: workDir });
-  } catch {
-    diff = '(git diff 失败)';
-  }
-  if (diff.length > 20000) {
-    diff = diff.slice(0, 20000) + `\n\n... (截断,完整 diff 共 ${diff.length} 字符,见 runner artifact)`;
-  }
-
-  const contextPayload = {
-    portal: { owner: run.portal_owner, repo: run.portal_repo, base_branch: run.portal_base_branch },
-    problems: run.problems,
-    agent_output: agentOutput || '(empty)',
-    verify_summary: verify?.summary || null,
-    verify_checks: verify?.checks || [],
-    git_diff: diff,
-  };
-  const criticContextFile = path.join(
-    ctxDir,
-    `critic-context-${run.community}-${run.geo_issue_number}.json`
-  );
-  fs.writeFileSync(criticContextFile, JSON.stringify(contextPayload, null, 2));
-
-  const criticOut = path.join(
-    ctxDir,
-    `critic-output-${run.community}-${run.geo_issue_number}.md`
-  );
-
-  const oc = await runOpencode(run, workDir, criticPrompt, criticContextFile, criticOut, {
-    label: 'critic',
-    timeoutMs: 5 * 60 * 1000,
-    // critic 只读,prompt 不允许它写文件 — 审查结果只能走 stdout。
-    // captureStdoutTo 让 runOpencode 用 tee 把 stdout 兜底落到 criticOut,workflow log 仍正常可见
-    captureStdoutTo: criticOut,
-    taskLine: `你是 critic,只审不改。**不要执行任何 git 操作、不要修改任何文件**,审查结论(Markdown)直接 print 到 stdout 即可。`,
-  });
-  if (!oc.ok) {
-    log(`  ⚠ critic opencode 退出非 0(失败/超时),不阻断 push`);
-    return { ok: false, body: null, verdict: 'unknown' };
-  }
-  let body = '';
-  if (fs.existsSync(criticOut)) body = fs.readFileSync(criticOut, 'utf-8').slice(0, 4000);
-  const verdictMatch = body.match(/Critic 结论\s*[:：]\s*(pass|warn|block)/i);
-  const verdict = (verdictMatch && verdictMatch[1].toLowerCase()) || 'unknown';
-
-  // 提取 verdict 行后第一段非空非标题文本作为 reason("一句话总判") — 显性化到 Verify cell
-  // 让 reviewer 不用展开 critic 块就知道 verdict 的原因
-  let reason = null;
-  if (verdictMatch) {
-    const tail = body.slice(body.indexOf(verdictMatch[0]) + verdictMatch[0].length);
-    for (const line of tail.split(/\r?\n/)) {
-      const t = line.trim();
-      if (!t) continue;
-      if (t.startsWith('#')) break; // 下一节标题
-      // 剥掉首尾括号(prompt 模板里"(一句话总判)"的格式)
-      reason = t.replace(/^[(（]/, '').replace(/[)）]$/, '').trim();
-      break;
-    }
-  }
-  log(`  🧐 critic verdict=${verdict}${reason ? ` — ${reason.slice(0, 80)}` : ''}`);
-  return { ok: true, body, verdict, reason };
+  lines.push('', '<sub>由 geo-develop 自动化生成</sub>');
+  return lines.join('\n');
 }
 
 async function pushAndPr(run, workDir, verify, critic, buildInfo) {
-  // 双保险:即使 agent 没遵守 output_file,在 workDir 根写了 output.md / output-*.md,也清掉再 git add
   for (const f of fs.readdirSync(workDir)) {
     if (/^output(-.*)?\.md$/i.test(f)) {
-      const p = path.join(workDir, f);
-      try { fs.unlinkSync(p); log(`  🧹 dropped rogue ${f} (agent wrote into work_dir; output 不进 PR)`); } catch {}
+      try { fs.unlinkSync(path.join(workDir, f)); } catch {}
     }
   }
-  log('  🔍 checking git status...');
+
   const status = sh('git status --porcelain', { cwd: workDir }).trim();
   if (!status) {
     log('  ⏭ no changes from agent, skipping push');
@@ -512,20 +329,14 @@ async function pushAndPr(run, workDir, verify, critic, buildInfo) {
 
   log('  📦 git add + commit + push');
   sh('git add -A \':!pnpm-workspace.yaml\'', { cwd: workDir });
-  const msg = `feat(geo): fix discoverability for #${run.geo_issue_number} (${run.community})`;
+  const msg = `feat(geo): fix discoverability for issue #${run.geo_issue_number} (${run.community})`;
   sh(`git commit -m "${msg}"`, { cwd: workDir });
-  const t0 = Date.now();
   sh(`git push -f origin HEAD:${run.branch_name}`, { cwd: workDir });
-  log(`  ✅ pushed to ${run.branch_name} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  if (sh('git status')?.includes('pnpm-workspace.yaml')) {
-    sh(`git restore pnpm-workspace.yaml`, { cwd: workDir });
-  }
+  log(`  ✅ pushed to ${run.branch_name}`);
 
-  log('  🔍 list existing PRs');
   const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;
   const prBody = buildPrBody(run, verify, critic, buildInfo);
 
-  // AtomGit 的 head 过滤只认裸 branch,不认 GitHub 的 owner:branch — 传裸 branch
   const existing = await listPullRequests({
     owner: run.portal_owner,
     repo: run.portal_repo,
@@ -533,37 +344,17 @@ async function pushAndPr(run, workDir, verify, critic, buildInfo) {
     state: 'open',
   });
 
-  // 兜底:atomgit PATCH 偶尔返回空 body / 字段不全 → 强制把 number 补回去,
-  // 后续 prUrl fallback 才能拼出有效链接(否则 #undefined / merge_requests/undefined)
-  async function updateExisting(number) {
-    let pr;
-    let action;
-    try {
-      const updated = await updatePullRequest({
-        owner: run.portal_owner,
-        repo: run.portal_repo,
-        number,
-        title: prTitle,
-        body: prBody,
-      });
-      pr = { ...(updated || {}), number: (updated && updated.number) || number };
-      action = 'updated';
-    } catch (err) {
-      log(`  ⚠ updatePullRequest failed, reusing existing: ${err.message}`);
-      pr = { number };
-      action = 'reused';
-    }
-    return { pr, action };
-  }
-
-  let pr;
-  let action;
+  let pr, action;
   if (Array.isArray(existing) && existing.length > 0) {
-    log(`  ♻️  PR existed (#${existing[0].number}), updating title/body`);
-    ({ pr, action } = await updateExisting(existing[0].number));
-    // 补全 url 字段:update 接口的返回有时不带 html_url,从 list 结果兜底
-    if (!pr.html_url && existing[0].html_url) pr.html_url = existing[0].html_url;
-    if (!pr.url && existing[0].url) pr.url = existing[0].url;
+    log(`  ♻️ PR existed (#${existing[0].number}), updating`);
+    pr = await updatePullRequest({
+      owner: run.portal_owner,
+      repo: run.portal_repo,
+      number: existing[0].number,
+      title: prTitle,
+      body: prBody,
+    }) || existing[0];
+    action = 'updated';
   } else {
     log('  ✨ creating new PR');
     try {
@@ -577,286 +368,170 @@ async function pushAndPr(run, workDir, verify, critic, buildInfo) {
       });
       action = 'created';
     } catch (err) {
-      // 竞态/lookup 漏:atomgit 已认为同源分支有 open MR,直接路由到 update;
-      // 顺便 GET 一次拿规范 html_url,避免评论表格里 PR 链接是 undefined
       if (err instanceof PullRequestAlreadyExistsError) {
-        log(`  ♻️  atomgit 报已有 PR (#${err.existingNumber}),fallback 到 update`);
-        ({ pr, action } = await updateExisting(err.existingNumber));
-        if (!pr.html_url) {
-          try {
-            const fetched = await getPullRequest({
-              owner: run.portal_owner,
-              repo: run.portal_repo,
-              number: err.existingNumber,
-            });
-            if (fetched?.html_url) pr.html_url = fetched.html_url;
-            if (fetched?.url && !pr.url) pr.url = fetched.url;
-          } catch (e) {
-            log(`  ⚠ getPullRequest fallback also failed (will use fallback URL): ${e.message}`);
-          }
-        }
+        log(`  ♻️ atomgit 报已有 PR #${err.existingNumber}`);
+        pr = await updatePullRequest({
+          owner: run.portal_owner,
+          repo: run.portal_repo,
+          number: err.existingNumber,
+          title: prTitle,
+          body: prBody,
+        }) || { number: err.existingNumber };
+        action = 'updated';
       } else {
         throw err;
       }
     }
   }
-  const prUrl =
-    pr.html_url ||
-    pr.url ||
-    `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/merge_requests/${pr.number}`;
-  log(`  ✅ PR ${action}: ${prUrl}`);
 
-  // Post-PATCH sanity check:再 GET 一次 PR,比对 body 是否真落地。
-  // 之前线上撞过 "log 显示 PR updated 但实际 body 仍是上一轮老内容" 的诡异 case(原因不明,可能 atomgit 那边状态飘),
-  // 在 workflow log 里 surface 一下,reviewer 看到 verify table 跟 body 不符时不至于摸不着头脑
-  try {
-    const live = await getPullRequest({
-      owner: run.portal_owner,
-      repo: run.portal_repo,
-      number: pr.number,
-    });
-    const liveBody = live?.body || '';
-    if (liveBody.length === 0 && prBody.length > 0) {
-      log(`  ⚠ post-PATCH 校验:GET 回的 body 是空,但我们发的是 ${prBody.length} 字符 — atomgit 可能 silent 失败`);
-    } else if (Math.abs(liveBody.length - prBody.length) > 50) {
-      // 容忍小幅差异(atomgit 可能加 trailing newline / normalize 等)
-      log(
-        `  ⚠ post-PATCH 校验:body 长度不匹配 sent=${prBody.length} live=${liveBody.length} — ` +
-          `下一轮可见可能仍是旧 body,reviewer 注意`
-      );
-    } else {
-      log(`  🔎 post-PATCH 校验:body 长度对齐(${liveBody.length}/${prBody.length})`);
-    }
-  } catch (e) {
-    log(`  ⚠ post-PATCH GET 校验失败(不阻断):${e.message}`);
-  }
+  const prUrl = pr.html_url || pr.url || `https://atomgit.com/${run.portal_owner}/${run.portal_repo}/pulls/${pr.number}`;
+  log(`  ✅ PR ${action}: ${prUrl}`);
 
   return { has_changes: true, pr_url: prUrl, pr_number: pr.number, pr_action: action };
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.payload || !args.output) {
-    console.error('Usage: --payload=fix-payload.json --output=fix-results.json');
+
+  let input;
+  try {
+    input = await readInput(args);
+  } catch (err) {
+    console.error(`❌ ${err.message}`);
     process.exit(1);
   }
-  log(`▶️  start: payload=${args.payload}`);
 
-  const payload = JSON.parse(fs.readFileSync(args.payload, 'utf-8'));
-  log(`📄 payload loaded: version=${payload.version}, issues=${(payload.issues || []).length}`);
+  const run = parsePayload(input);
+
+  if (run.skip) {
+    log(`⏭ 跳过: ${run.skip_reason}`);
+    const result = {
+      run_at: new Date().toISOString(),
+      issue_number: run.geo_issue_number || input.issue?.number,
+      issue_url: run.geo_issue_url || input.issue?.url,
+      community: run.community,
+      portal: run.portal,
+      skip: true,
+      skip_reason: run.skip_reason,
+      urls: run.urls || [],
+    };
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  log(`▶ 执行修复: ${run.community} issue #${run.geo_issue_number}`);
+  log(`  ${run.urls.length} URLs, branch=${run.branch_name}`);
 
   const agentFile = process.env.AGENT_FILE;
   if (!agentFile || !fs.existsSync(agentFile)) {
     throw new Error(`AGENT_FILE not found: ${agentFile}`);
   }
-  log(`📜 agent prompt: ${agentFile}`);
 
-  const runs = planRunsFromPayload(payload);
-  const skipped = runs.filter((r) => r.skip).length;
-  const active = runs.length - skipped;
-  log(`📋 planned ${runs.length} run(s): ${active} active, ${skipped} skipped`);
+  const result = {
+    run_at: new Date().toISOString(),
+    issue_number: run.geo_issue_number,
+    issue_url: run.geo_issue_url,
+    community: run.community,
+    portal: { owner: run.portal_owner, repo: run.portal_repo },
+    urls: run.urls,
+  };
 
-  const results = [];
-  let idx = 0;
-  for (const run of runs) {
-    idx++;
-    if (run.skip) {
-      log(`⏭  [${idx}/${runs.length}] ${run.community} #${run.geo_issue_number} — ${run.skip_reason}`);
-      results.push({
-        community: run.community,
-        geo_issue_number: run.geo_issue_number,
-        status: 'skipped',
-        skip_reason: run.skip_reason,
-      });
-      continue;
+  try {
+    log('  [1/6] clonePortal');
+    const workDir = clonePortal(run);
+
+    log('  [2/6] baseline build');
+    let buildOutputDir = null;
+    let baselineSkipped = false;
+    const baseline = await buildPortal(workDir);
+    result.baseline_build = { ok: baseline.ok, skipped: baseline.skipped, phase: baseline.phase, duration_ms: baseline.duration_ms };
+    if (baseline.ok) {
+      log(`  ✅ baseline build ok`);
+      buildOutputDir = baseline.output_dir;
+    } else if (baseline.skipped) {
+      log(`  ⏭ baseline build 跳过: ${baseline.reason}`);
+      baselineSkipped = true;
+    } else {
+      log(`  ⚠ baseline build 失败,继续执行`);
+      baselineSkipped = true;
     }
 
-    log(`▶️  [${idx}/${runs.length}] ${run.community} #${run.geo_issue_number} — ${run.problems.length} problem(s), branch=${run.branch_name}`);
-    // geo_issue_url 透到 result,让 comment-fix-summary 能把 "geo issue #N" 渲染成跨仓链接 —
-    // 否则 GitHub 会把裸 `#N` 自动解析成本仓的 issue/PR #N(误指)
-    const result = {
+    const ctxDir = args.output ? path.dirname(path.resolve(args.output)) : process.env.RUN_DIR || '/tmp';
+    const contextFile = path.join(ctxDir, `fix-context-${run.community}-${run.geo_issue_number}.json`);
+    const outputMd = path.join(ctxDir, `output-${run.community}-${run.geo_issue_number}.md`);
+    fs.writeFileSync(contextFile, JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2));
+
+    log('  [3/6] runOpencode');
+    const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
+    result.agent_ok = ocRes.ok;
+    if (fs.existsSync(outputMd)) {
+      result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
+    }
+    if (!ocRes.ok) {
+      result.status = 'agent_failed';
+      result.error = ocRes.error || 'opencode failed';
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    log('  [4/6] post-agent build');
+    if (baselineSkipped) {
+      result.build = { skipped: true, reason: 'baseline-skipped' };
+    } else {
+      const build = await buildPortal(workDir);
+      result.build = { ok: build.ok, skipped: build.skipped, phase: build.phase, duration_ms: build.duration_ms };
+      if (build.ok) {
+        buildOutputDir = build.output_dir;
+        log(`  ✅ post-agent build ok`);
+      } else {
+        log(`  ⚠ post-agent build 失败`);
+      }
+    }
+
+    log('  [5/6] verify');
+    const verify = verifyFixesInWorkDir({
+      workDir,
+      agentOutput: result.agent_output || '',
+      problems: run.problems,
       community: run.community,
-      geo_issue_number: run.geo_issue_number,
-      geo_issue_url: run.geo_issue_url,
-    };
-    const tRun = Date.now();
+      outputDir: buildOutputDir,
+    });
+    result.verify = verify;
+    log(`  📊 verify: fixed=${verify.summary.fixed} still_failing=${verify.summary.still_failing}`);
 
-    try {
-      log('  [1/8] clonePortal');
-      const workDir = clonePortal(run);
-
-      // baseline build:best-effort — 跑通就有 dist 给 verify,跑不通就 warn,verify 退到源码层
-      // 不阻断流程 — build 跟很多 env 因素纠缠,硬卡反而妨碍主流程(只检 schema/static-render 这两个维度需要 build)
-      log('  [2/8] portal baseline build (best-effort — 跑通用 dist,跑不通 verify 退到源码层)');
-      let buildOutputDir = null;
-      let baselineSkipped = false;
-      if (process.env.GEO_BUILD_DISABLE === '1') {
-        log('  ⏭ GEO_BUILD_DISABLE=1,跳过 baseline + post-agent build');
-        result.baseline_build = { skipped: true, reason: 'GEO_BUILD_DISABLE=1' };
-        baselineSkipped = true;
-      } else {
-        const baseline = await buildPortal(workDir);
-        result.baseline_build = {
-          ok: baseline.ok,
-          skipped: baseline.skipped,
-          reason: baseline.reason,
-          phase: baseline.phase,
-          duration_ms: baseline.duration_ms,
-          output_dir_rel: baseline.output_dir_rel,
-          error: baseline.error ? baseline.error.slice(0, 2000) : undefined,
-        };
-        if (baseline.ok) {
-          log(`  ✅ baseline build ok in ${(baseline.duration_ms / 1000).toFixed(1)}s → ${baseline.output_dir_rel}/`);
-        } else if (baseline.skipped) {
-          log(`  ⏭ baseline build 跳过: ${baseline.reason}`);
-          baselineSkipped = true;
-        } else {
-          // baseline 挂了不阻断,只 warn — post-agent build 跳,verify schema/static-render → deferred
-          log(`  ⚠ baseline build 失败(phase=${baseline.phase}),不阻断流程,后续 schema/static-render 维度走 deferred`);
-          logBuildErrorTail('baseline build', baseline);
-          baselineSkipped = true;
-        }
-      }
-
-      log('  [3/8] write context file');
-      const ctxDir = path.dirname(path.resolve(args.output));
-      const contextFile = path.join(ctxDir, `fix-context-${run.community}-${run.geo_issue_number}.json`);
-      // output.md 落在 ctxDir(runner 临时区),不落进 workDir(portal 仓),避免被 `git add -A` 提交进 PR
-      const outputMd = path.join(ctxDir, `output-${run.community}-${run.geo_issue_number}.md`);
-      fs.writeFileSync(
-        contextFile,
-        JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2)
-      );
-
-      log('  [4/8] runOpencode (agent prompt 里要求改完自己跑 install + build,改坏的话自己看到 stderr)');
-      const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
-      const ok = ocRes.ok;
-      result.agent_ok = ok;
-      if (fs.existsSync(outputMd)) {
-        result.agent_output = fs.readFileSync(outputMd, 'utf-8').slice(0, 4000);
-      }
-
-      log('  [5/8] portal build (post-agent, best-effort — 验证 agent 改动后能否 build,跑不通 warn 不阻断)');
-      if (baselineSkipped) {
-        log('  ⏭ baseline 跳过/失败,post-agent build 同样跳过');
-        result.build = { skipped: true, reason: 'baseline-skipped-or-failed' };
-      } else {
-        const build = await buildPortal(workDir);
-        result.build = {
-          ok: build.ok,
-          skipped: build.skipped,
-          reason: build.reason,
-          phase: build.phase,
-          duration_ms: build.duration_ms,
-          output_dir_rel: build.output_dir_rel,
-          error: build.error ? build.error.slice(0, 2000) : undefined,
-        };
-        if (build.ok) {
-          buildOutputDir = build.output_dir;
-          log(`  ✅ post-agent build ok in ${(build.duration_ms / 1000).toFixed(1)}s → ${build.output_dir_rel}/`);
-        } else {
-          // baseline 通过、post-agent 挂 → 大概率 agent 改坏了。但不阻断 push,只 warn + 写进 PR body
-          // 让 portal reviewer 看 PR body / critic 判定再决定 — 我们不强行兜底
-          log(`  ⚠ post-agent build 失败(phase=${build.phase})— 大概率 agent 改坏了 build,但不阻断流程`);
-          log(`     reviewer 看 PR body 的 verify 表 + critic 判定再决定是否 merge`);
-          logBuildErrorTail('post-agent build', build);
-        }
-      }
-
-      log('  [6/8] pre-push verify (sitemap + tdk + schema/static-render 全维度校验)');
-      const verify = verifyFixesInWorkDir({
-        workDir,
-        agentOutput: result.agent_output || '',
-        problems: run.problems,
-        community: run.community,
-        outputDir: buildOutputDir,
-      });
-      result.verify = verify;
-      log(
-        `  📊 verify: fixed=${verify.summary.fixed} still_failing=${verify.summary.still_failing} deferred=${verify.summary.deferred} unverifiable=${verify.summary.unverifiable}`
-      );
-
-      // verify 只在"零进展"时阻断:fixed=0 且 still_failing>0 → agent 改了但全没生效
-      // 部分进展(fixed>=1 即使 still_failing>0)允许推 PR,留下的让 reviewer + critic 看 verify 表自己定
-      if (verify.blocking) {
-        result.status = 'verify_failed';
-        result.error = `pre-push verify 零进展:fixed=0 且 still_failing=${verify.summary.still_failing}(agent 改了但没一项落地);跳过 push 等人工排查`;
-        log(`  ❌ ${result.error}`);
-        results.push(result);
-        continue;
-      }
-      if (verify.summary.still_failing > 0) {
-        log(`  ⚠ verify 部分通过:fixed=${verify.summary.fixed} still_failing=${verify.summary.still_failing} — PR 仍推,reviewer + critic 自决`);
-      }
-
-      log('  [7/8] critic (反向审查;不阻断 push,只在 PR body 上贴结论)');
-      // CRITIC_DISABLE=1 给本地调试关闭(critic 多 ~3-5min)
-      const critic =
-        process.env.CRITIC_DISABLE === '1'
-          ? null
-          : await runCritic(run, workDir, ctxDir, result.agent_output || '', verify);
-      if (critic) result.critic = { verdict: critic.verdict, reason: critic.reason, body_len: critic.body?.length || 0 };
-
-      // critic 三档(pass/warn/block,跟 /analyze problem severity 不是一件事 — 见 critic prompt 顶部说明):
-      // - verdict='pass' → 没毛病,push
-      // - verdict='warn' → 有可疑但不阻断,push,reviewer 在 PR body / trigger 评论看 critic 详情自决
-      // - verdict='block' → 红线确凿,阻断 push,trigger issue status=critic_blocked
-      // - verdict 未知(opencode 失败 / 解析失败)→ 保守按 block 处理
-      if (critic && critic.verdict !== 'pass' && critic.verdict !== 'warn') {
-        result.status = 'critic_blocked';
-        result.error = `critic 判 ${critic.verdict || 'unknown'} → PR 不推,详见 issue 评论 critic 输出`;
-        result.critic_body = critic.body;
-        log(`  ⛔ ${result.error}`);
-        results.push(result);
-        continue;
-      }
-      if (critic?.verdict === 'warn') {
-        log(`  ⚠ critic 判 warn(有可疑点但不阻断 push)— PR body 含 critic 详情,reviewer 自决`);
-      }
-
-      log('  [8/8] pushAndPr');
-      const prRes = await pushAndPr(run, workDir, verify, critic, {
-        baseline: result.baseline_build,
-        postAgent: result.build,
-      });
-      Object.assign(result, prRes);
-
-      result.status = prRes.has_changes ? 'pr_created' : 'no_changes';
-      log(`  ✅ done in ${((Date.now() - tRun) / 1000).toFixed(1)}s — ${result.status}${prRes.pr_url ? ' ' + prRes.pr_url : ''}`);
-    } catch (err) {
-      result.status = 'error';
-      result.error = err.message;
-      log(`  ❌ failed in ${((Date.now() - tRun) / 1000).toFixed(1)}s: ${err.message}`);
+    if (verify.blocking) {
+      result.status = 'verify_failed';
+      result.error = 'pre-push verify 零进展';
+      console.log(JSON.stringify(result, null, 2));
+      return;
     }
 
-    results.push(result);
+    log('  [6/6] critic');
+    const critic = process.env.CRITIC_DISABLE === '1' ? null : await runCritic(run, workDir, ctxDir, result.agent_output || '', verify);
+    if (critic) result.critic = { verdict: critic.verdict, reason: critic.reason };
+
+    if (critic && critic.verdict !== 'pass' && critic.verdict !== 'warn') {
+      result.status = 'critic_blocked';
+      result.error = `critic 判 ${critic.verdict}`;
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    log('  [7/7] pushAndPr');
+    const prRes = await pushAndPr(run, workDir, verify, critic, { baseline: result.baseline_build, postAgent: result.build });
+    Object.assign(result, prRes);
+    result.status = prRes.has_changes ? 'pr_created' : 'no_changes';
+    log(`  ✅ done: ${result.status}`);
+  } catch (err) {
+    result.status = 'error';
+    result.error = err.message;
+    log(`  ❌ failed: ${err.message}`);
   }
 
-  fs.mkdirSync(path.dirname(path.resolve(args.output)), { recursive: true });
-  fs.writeFileSync(args.output, JSON.stringify({ run_at: new Date().toISOString(), results }, null, 2));
-  // FAILED = 真正"该挂"的 terminal 状态:脚本异常 + verify 维度仍有未修问题 + critic 红线 block
-  // baseline_build / post-agent build 现在是 best-effort,失败只 warn 不上 FAILED — 同 verify_failed 在
-  // verify 那里已经覆盖了"agent 没修对"的硬卡(verify 是 source-based,build 没跑也能给结论)
-  const FAILED_STATES = new Set(['error', 'verify_failed', 'critic_blocked']);
-  const failed = results.filter((r) => FAILED_STATES.has(r.status));
-  const okResults = results.filter((r) => r.status === 'pr_created' || r.status === 'no_changes');
-  const skippedResults = results.filter((r) => r.status === 'skipped');
-  log(
-    `🏁 all done: ${results.length} run(s) [ok=${okResults.length} skipped=${skippedResults.length} failed=${failed.length}], total ${(
-      (Date.now() - T0) /
-      1000
-    ).toFixed(1)}s → ${args.output}`
-  );
-
-  if (failed.length > 0) {
-    const summary = failed
-      .map((e) => `${e.community}#${e.geo_issue_number} [${e.status}]: ${e.error || '(no message)'}`)
-      .join('\n');
-    throw new Error(`execute-fix-runs 有 ${failed.length} 个 run 失败:\n${summary}`);
-  }
+  console.log(JSON.stringify(result, null, 2));
 }
 
-main().catch((err) => {
-  log(`❌ fatal: ${err.message}`);
+main().catch(err => {
+  console.error(`❌ ${err.message}`);
   process.exit(1);
 });

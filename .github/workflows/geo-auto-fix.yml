@@ -1,0 +1,143 @@
+name: GEO Auto Fix
+
+on:
+  schedule:
+    - cron: '17 */4 * * *'
+  workflow_dispatch:
+    inputs:
+      owner:
+        description: 'Portal仓库owner'
+        required: true
+        default: 'openeuler'
+      repo:
+        description: 'Portal仓库repo'
+        required: true
+        default: 'openEuler-portal'
+      community:
+        description: 'Community名称(可选,不填则自动推断)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run(仅扫描不执行修复)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  AI_MODEL: ${{ vars.AI_MODEL || 'alibaba-cn/glm-5' }}
+  AI_AGENT: ${{ vars.AI_AGENT || 'build' }}
+  AI_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}
+
+jobs:
+  auto-fix:
+    runs-on: portal-x86
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare run dir
+        id: prepare
+        run: |
+          RUN_DIR="${RUNNER_TEMP}/geo-auto-fix-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$RUN_DIR"
+          echo "run_dir=$RUN_DIR" >> $GITHUB_OUTPUT
+
+      - name: Verify opencode
+        timeout-minutes: 2
+        run: |
+          which opencode && opencode --version
+
+      - name: Scan GEO issues
+        id: scan
+        env:
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+        run: |
+          node scripts/scan-geo-issues.js \
+            --owner="${{ inputs.owner || 'openeuler' }}" \
+            --repo="${{ inputs.repo || 'openEuler-portal' }}" \
+            --community="${{ inputs.community || '' }}" \
+            > "${{ steps.prepare.outputs.run_dir }}/issues.json"
+          
+          ISSUE_COUNT=$(jq '.issues | length' "${{ steps.prepare.outputs.run_dir }}/issues.json")
+          echo "issue_count=$ISSUE_COUNT" >> $GITHUB_OUTPUT
+          echo "Found $ISSUE_COUNT issues to process"
+
+      - name: Process each issue
+        if: steps.scan.outputs.issue_count > 0 && inputs.dry_run != true
+        env:
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          GEO_GITHUB_TOKEN: ${{ secrets.GEO_GITHUB_TOKEN }}
+          AGENT_FILE: ${{ github.workspace }}/.github/agents/geo-fix-prompt.md
+          CRITIC_AGENT_FILE: ${{ github.workspace }}/.github/agents/geo-critic-prompt.md
+          RUN_DIR: ${{ steps.prepare.outputs.run_dir }}
+        run: |
+          OWNER="${{ inputs.owner || 'openeuler' }}"
+          REPO="${{ inputs.repo || 'openEuler-portal' }}"
+          
+          jq -c '.issues[]' "${{ steps.prepare.outputs.run_dir }}/issues.json" | while read ISSUE; do
+            NUM=$(echo "$ISSUE" | jq -r '.number')
+            TITLE=$(echo "$ISSUE" | jq -r '.title')
+            echo ""
+            echo "========================================"
+            echo "Processing issue #$NUM: $TITLE"
+            echo "========================================"
+            
+            echo "$ISSUE" \
+              | node scripts/build-fix-tasks.js \
+              | node scripts/execute-fix-runs.js \
+              | tee "${{ steps.prepare.outputs.run_dir }}/result-$NUM.json" \
+              | node scripts/comment-geo-result.js --owner="$OWNER" --repo="$REPO"
+            
+            echo "Done issue #$NUM"
+          done
+          
+          echo ""
+          echo "=== All issues processed ==="
+
+      - name: Dry run summary
+        if: inputs.dry_run == true
+        run: |
+          echo "=== Dry Run Mode - Scan Results ==="
+          cat "${{ steps.prepare.outputs.run_dir }}/issues.json" | jq '.'
+
+      - name: Comment failure summary
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "GEO Auto Fix workflow failed, see: $RUN_URL"
+
+  poll:
+    runs-on: portal-x86
+    timeout-minutes: 30
+    needs: auto-fix
+    if: always() && inputs.dry_run != true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Poll portal PRs + revalidate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+        run: |
+          node scripts/poll-portal-status.js \
+            --target-repo=${{ github.repository }}
+
+      - name: Comment failure summary
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "Poll portal status failed, see: $RUN_URL"

@@ -37,6 +37,7 @@ async function hasProcessedMarker(owner, repo, issueNumber) {
     const comments = await listIssueComments({ owner, repo, issue_number: issueNumber });
     for (const c of comments) {
       const body = c.body || '';
+      if (body.includes('GEO 自动修复失败')) return false;
       if (body.includes(GEO_PROCESSED_MARKER)) return true;
       if (body.includes(GEO_SKIP_NO_PROBLEMS)) return true;
       if (body.includes(GEO_SKIP_NO_URLS)) return true;

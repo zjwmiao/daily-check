@@ -83,9 +83,23 @@ async function main() {
 
   const allUrls = [];
   const urlDetails = [];
+  const skippedQuestions = [];
+
   for (const q of matchedQuestions) {
     const urls = q.official_urls || [];
-    const officialUrls = filterOfficialUrls(urls, community);
+    const officialUrls = urls.filter(u => {
+      try {
+        const host = new URL(u).hostname;
+        return cfg.site_hosts.includes(host);
+      } catch { return false; }
+    });
+
+    if (officialUrls.length === 0) {
+      skippedQuestions.push(q.id);
+      log(`  Q ${q.id}: 无官网URL(所有URL都不属于${community}官网域),跳过此问题`);
+      continue;
+    }
+
     log(`  Q ${q.id}: ${urls.length} URLs → ${officialUrls.length} 官网URLs`);
     for (const u of officialUrls) {
       allUrls.push(u);
@@ -98,14 +112,15 @@ async function main() {
   }
 
   if (allUrls.length === 0) {
-    log(`  ⏭ 无官网URLs,跳过`);
+    log(`  ⏭ 无官网URLs(所有匹配问题都不涉及${community}官网),跳过`);
     const skipResult = {
       run_at: new Date().toISOString(),
       portal: { owner: cfg.portal_owner, repo: cfg.portal_repo, base_branch: cfg.portal_default_branch },
       community,
       issue: firstIssue,
       skip: true,
-      skip_reason: '无官网URLs(official_urls全为空或非官网域)',
+      skip_reason: '未涉及官网页面',
+      skipped_questions: skippedQuestions,
       urls: [],
       problems: [],
     };

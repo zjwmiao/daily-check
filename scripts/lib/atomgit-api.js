@@ -244,3 +244,27 @@ export async function getRef({ owner, repo, ref }) {
     { label: `getRef(${owner}/${repo}@${ref})` }
   );
 }
+
+export async function listPullRequestComments({ owner, repo, pull_number }) {
+  return retry(
+    async () => {
+      const res = await client().get(`${API_PREFIX}/repos/${owner}/${repo}/pulls/${pull_number}/comments`, {
+        params: { per_page: 100 },
+      });
+      rejectOn4xx(res, 'listPullRequestComments');
+      return Array.isArray(res.data) ? res.data : [];
+    },
+    { label: `listPullRequestComments(${owner}/${repo}#${pull_number})` }
+  );
+}
+
+export async function getPullRequestComment({ owner, repo, comment_id }) {
+  return retry(
+    async () => {
+      const res = await client().get(`${API_PREFIX}/repos/${owner}/${repo}/pulls/comments/${comment_id}`);
+      rejectOn4xx(res, 'getPullRequestComment');
+      return res.data;
+    },
+    { label: `getPullRequestComment(${owner}/${repo}#${comment_id})` }
+  );
+}

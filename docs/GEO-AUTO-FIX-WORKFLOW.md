@@ -21,6 +21,7 @@ GEO Auto Fix Workflow 是一个自动化流程，用于扫描 AtomGit portal 仓
 │  │    • 双重检查防重复:                                              │   │
 │  │      - 评论标记 GEO_PROCESSED_MARKER                              │   │
 │  │      - PR分支 geo/fix-{community}-{issue_number}                  │   │
+│  │      - PR有/retest-geo评论则重新处理                              │   │
 │  │    • 输出: 待处理 issue 列表                                       │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                          │
@@ -31,7 +32,8 @@ GEO Auto Fix Workflow 是一个自动化流程，用于扫描 AtomGit portal 仓
 │  │    ├─ 输入: stdin (单个 issue JSON)                               │   │
 │  │    ├─ 调用 fetchQuestionsJson(community)                          │   │
 │  │    ├─ 按 problem_ids 过滤 questions                               │   │
-│  │    ├─ 筛选 official_urls (hostname 匹配官网域)                    │   │
+│  │    ├─ 筛选 official_urls (只保留属于官网域的URL)                   │   │
+│  │    ├─ 若所有问题都不涉及官网域则跳过                               │   │
 │  │    └─ 输出: 修复任务 payload                                      │   │
 │  │         │                                                          │   │
 │  │         ▼                                                          │   │
@@ -103,6 +105,48 @@ function parseProblemIdsFromBody(body) {
 }
 ```
 
+**PR审批状态检查**:
+```javascript
+// 检查是否存在 PR 及是否有 /retest-geo 评论，并比较时间判断是否需要重新处理
+async function checkPrRetestRequest(owner, repo, community, issueNumber) {
+  const branchName = `geo/fix-${community.toLowerCase()}-${issueNumber}`;
+  const prs = await listPullRequests({ owner, repo, head: branchName, state: 'open' });
+  if (!prs.length) return { hasPr: false };
+  
+  // 获取PR详情，得到updated_at
+  const prDetail = await getPullRequest({ owner, repo, number: prs[0].number });
+  const prUpdatedAt = new Date(prDetail.updated_at).getTime();
+  
+  // 获取评论列表，找/retest-geo评论
+  const comments = await listPullRequestComments({ owner, repo, pull_number: prs[0].number });
+  const retestComments = comments.filter(c => (c.body || '').includes('/retest-geo'));
+  if (!retestComments.length) return { hasPr: true, needsRetest: false };
+  
+  // 按 created_at 排序，取最后一个
+  const sorted = retestComments.map(c => ({ id: c.id, created_at: c.created_at }))
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const lastComment = sorted[sorted.length - 1];
+  
+  // 获取评论详情，得到created_at
+  const commentDetail = await getPullRequestComment({ owner, repo, comment_id: lastComment.id });
+  const commentCreatedAt = new Date(commentDetail.created_at).getTime();
+  
+  // 比较时间：PR已更新则跳过，PR未更新则继续处理
+  if (prUpdatedAt > commentCreatedAt) {
+    return { hasPr: true, needsRetest: false, skipBecausePrUpdated: true };
+  } else {
+    return { hasPr: true, needsRetest: true };
+  }
+}
+```
+
+**跳过逻辑**:
+- 无问题ID → 跳过
+- 已有处理标记评论 → 跳过
+- PR存在且无 `/retest-geo` 评论 → 跳过
+- PR存在且有 `/retest-geo` 评论，但 PR 已更新（`updated_at` > 评论 `created_at`）→ 跳过
+- PR存在且有 `/retest-geo` 评论，且 PR 未更新（`updated_at` <= 评论 `created_at`）→ 继续处理（重新修复）
+
 ### 2. build-fix-tasks.js
 
 **用途**: 根据问题ID获取questions.json数据，构建修复任务
@@ -112,8 +156,11 @@ function parseProblemIdsFromBody(body) {
 **处理流程**:
 1. 调用 `fetchQuestionsJson(community)` 从 GitHub geo-workflow 仓库获取数据
 2. 按 `problem_ids` 过滤匹配的 questions
-3. 筛选 `official_urls` (hostname 为 `www.openeuler.org` 或 `www.openeuler.openatom.cn`)
-4. 构建修复任务 payload
+3. 遍历每个匹配的问题：
+   - 筛选 `official_urls`，只保留 hostname 属于当前 community 官网域的 URL
+   - 若某问题的所有 URL 都不属于官网域，跳过该问题
+4. 若所有问题都不涉及官网域，输出 `skip: true`，skip_reason: `'未涉及官网页面'`
+5. 构建修复任务 payload
 
 **输出** (stdout JSON):
 ```json
@@ -305,6 +352,8 @@ echo "$ISSUE" | node build-fix-tasks.js | node execute-fix-runs.js | tee result.
 | `createPullRequest` | 创建PR |
 | `updatePullRequest` | 更新PR |
 | `listPullRequests` | 列出PR |
+| `listPullRequestComments(owner, repo, pull_number)` | 列出PR评论 |
+| `getPullRequestComment(owner, repo, comment_id)` | 获取PR评论详情 |
 | `getPullRequest` | 获取PR详情 |
 | `closePullRequest` | 关闭PR |
 | `getRef` | 获取git引用 |
@@ -394,8 +443,11 @@ cat issue.json | node scripts/build-fix-tasks.js | node scripts/execute-fix-runs
 
 1. **评论标记检查**: 检查 issue 评论是否已有 `<!-- geo-processed v1 -->` 标记
 2. **PR分支检查**: 检查 portal 仓库是否已有 `geo/fix-{community}-{issue_number}` 分支的 open PR
+   - 若 PR 存在，进一步检查 PR 评论是否包含 `/retest-geo`
+   - 有 `/retest-geo` → 继续处理（重新修复）
+   - 无 `/retest-geo` → 跳过
 
-任一条件满足则跳过该 issue。
+任一条件满足则跳过该 issue（除非 PR 有 `/retest-geo` 请求重新处理）。
 
 ## 分支命名规则
 
@@ -433,5 +485,6 @@ Issue body 中必须包含 `## 涉及问题` 表格:
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.1.0 | 2026-05-21 | 新增PR `/retest-geo` 重处理机制(含时间比较)；build-fix-tasks跳过不涉及官网问题；新增AtomGit `getPullRequestComment` API |
 | 2.0.0 | 2024-01 | 重构为管道式设计，适配AtomGit [GEO] issue |
 | 1.0.0 | 2023-xx | 原版本 (已删除) |

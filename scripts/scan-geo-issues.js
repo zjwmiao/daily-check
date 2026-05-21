@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { listPullRequests, listIssues, listIssueComments } from './lib/atomgit-api.js';
+import { listPullRequests, listIssues, listIssueComments, listPullRequestComments, getPullRequest, getPullRequestComment } from './lib/atomgit-api.js';
 import { COMMUNITY_MAP, inferCommunityFromRepoName } from './lib/community-map.js';
 import { GEO_PROCESSED_MARKER, GEO_SKIP_NO_PROBLEMS, GEO_SKIP_NO_URLS } from './lib/geo-markers.js';
 import { parseArgs, log } from './lib/utils.js';
@@ -47,17 +47,54 @@ async function hasProcessedMarker(owner, repo, issueNumber) {
   return false;
 }
 
-async function hasOpenFixPr(owner, repo, community, issueNumber) {
+async function checkPrRetestRequest(owner, repo, community, issueNumber) {
   const branchName = `geo/fix-${community.toLowerCase()}-${issueNumber}`;
   try {
     const prs = await listPullRequests({ owner, repo, head: branchName, state: 'open' });
-    if (prs && prs.length > 0) {
-      return { hasPr: true, prNumber: prs[0].number, prUrl: prs[0].html_url };
+    if (!prs || prs.length === 0) {
+      return { hasPr: false };
+    }
+
+    const pr = prs[0];
+    const prDetail = await getPullRequest({ owner, repo, number: pr.number });
+    const prUpdatedAt = new Date(prDetail.updated_at).getTime();
+
+    const comments = await listPullRequestComments({ owner, repo, pull_number: pr.number });
+    const retestComments = comments.filter(c => (c.body || '').includes('/retest-geo'));
+
+    if (retestComments.length === 0) {
+      return { hasPr: true, needsRetest: false, prNumber: pr.number, prUrl: pr.html_url };
+    }
+
+    const sorted = retestComments
+      .map(c => ({ id: c.id, created_at: c.created_at }))
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const lastComment = sorted[sorted.length - 1];
+
+    const commentDetail = await getPullRequestComment({ owner, repo, comment_id: lastComment.id });
+    const commentCreatedAt = new Date(commentDetail.created_at).getTime();
+
+    if (prUpdatedAt > commentCreatedAt) {
+      return {
+        hasPr: true,
+        needsRetest: false,
+        skipBecausePrUpdated: true,
+        prNumber: pr.number,
+        prUrl: pr.html_url,
+        reason: 'PR已在/retest-geo评论后更新',
+      };
+    } else {
+      return {
+        hasPr: true,
+        needsRetest: true,
+        prNumber: pr.number,
+        prUrl: pr.html_url,
+      };
     }
   } catch (err) {
-    log(`  ⚠ 检查PR分支失败: ${err.message}`);
+    log(`  ⚠ 检查PR评论失败: ${err.message}`);
+    return { hasPr: false };
   }
-  return { hasPr: false };
 }
 
 async function main() {
@@ -110,11 +147,22 @@ async function main() {
       continue;
     }
 
-    const prCheck = await hasOpenFixPr(owner, repo, community, num);
-    if (prCheck.hasPr) {
-      log(`  ⏭ 跳过: 已有open PR #${prCheck.prNumber}`);
-      skipped.push({ number: num, reason: `已有open PR #${prCheck.prNumber}`, pr_url: prCheck.prUrl });
+    const prCheck = await checkPrRetestRequest(owner, repo, community, num);
+    if (prCheck.hasPr && !prCheck.needsRetest) {
+      if (prCheck.skipBecausePrUpdated) {
+        log(`  ⏭ 跳过: PR #${prCheck.prNumber} 已在/retest-geo评论后更新`);
+      } else {
+        log(`  ⏭ 跳过: 已有open PR #${prCheck.prNumber} (无/retest-geo请求)`);
+      }
+      skipped.push({
+        number: num,
+        reason: prCheck.reason || `已有open PR #${prCheck.prNumber}`,
+        pr_url: prCheck.prUrl,
+      });
       continue;
+    }
+    if (prCheck.hasPr && prCheck.needsRetest) {
+      log(`  ♻️ PR #${prCheck.prNumber} 有/retest-geo请求且PR未更新,需要重新处理`);
     }
 
     toProcess.push({

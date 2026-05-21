@@ -143,28 +143,19 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
   log(`  🤖 starting opencode [${label}] (timeout=${timeoutMs / 1000}s)`);
   log(`     bin: ${opencode}, args: ${JSON.stringify(opencodeArgs)}`);
 
-  const stdoutSink = options.captureStdoutTo ? ` > "${options.captureStdoutTo}"` : '';
-  const pipefail = '';
-  const bashCmd = `${pipefail}stdbuf -oL -eL ${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
+  const stdoutSink = options.captureStdoutTo
+    ? ` > "${options.captureStdoutTo}" 2>&1`
+    : ` > "${outputFile}" 2>&1`;
+  const bashCmd = `${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
 
   const t0 = Date.now();
   return new Promise(resolve => {
     let timedOut = false;
-    const stdoutToPipe = !options.captureStdoutTo;
-    const stdioConfig = stdoutToPipe
-      ? ['ignore', 'inherit', 'inherit']
-      : ['ignore', 'pipe', 'inherit'];
     const child = spawn('bash', ['-c', bashCmd], {
-      stdio: stdioConfig,
+      stdio: ['ignore', 'ignore', 'ignore'],
       cwd: workDir,
       detached: true,
     });
-
-    if (!stdoutToPipe && child.stdout) {
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', () => {});
-      child.stdout.resume();
-    }
 
     const timer = setTimeout(() => {
       timedOut = true;

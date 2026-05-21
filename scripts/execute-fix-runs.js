@@ -144,18 +144,24 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
   log(`     bin: ${opencode}, args: ${JSON.stringify(opencodeArgs)}`);
 
   const stdoutSink = options.captureStdoutTo
-    ? ` > "${options.captureStdoutTo}" 2>&1`
-    : ` > "${outputFile}" 2>&1`;
+    ? ` > "${options.captureStdoutTo}"`
+    : ` > "${outputFile}"`;
   const bashCmd = `${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
 
   const t0 = Date.now();
   return new Promise(resolve => {
     let timedOut = false;
     const child = spawn('bash', ['-c', bashCmd], {
-      stdio: ['ignore', 'ignore', 'ignore'],
+      stdio: ['ignore', 'pipe', 'inherit'],
       cwd: workDir,
       detached: true,
     });
+
+    if (child.stdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', () => {});
+      child.stdout.resume();
+    }
 
     const timer = setTimeout(() => {
       timedOut = true;

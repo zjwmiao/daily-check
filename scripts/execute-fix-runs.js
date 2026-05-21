@@ -14,8 +14,8 @@ import { verifyFixesInWorkDir } from './checks/post-fix-verify.js';
 import { buildPortal } from './lib/portal-build.js';
 import { parseArgs, readInput } from './lib/utils.js';
 
-process.env.GIT_AUTHOR_NAME = process.env.GIT_AUTHOR_NAME || 'geo-develop-bot';
-process.env.GIT_AUTHOR_EMAIL = process.env.GIT_AUTHOR_EMAIL || 'geo-develop-bot@noreply.local';
+process.env.GIT_AUTHOR_NAME = process.env.GIT_AUTHOR_NAME || 'w-robot';
+process.env.GIT_AUTHOR_EMAIL = process.env.GIT_AUTHOR_EMAIL || '827900127@qq.com';
 process.env.GIT_COMMITTER_NAME = process.env.GIT_COMMITTER_NAME || process.env.GIT_AUTHOR_NAME;
 process.env.GIT_COMMITTER_EMAIL = process.env.GIT_COMMITTER_EMAIL || process.env.GIT_AUTHOR_EMAIL;
 
@@ -143,8 +143,8 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
   log(`  🤖 starting opencode [${label}] (timeout=${timeoutMs / 1000}s)`);
   log(`     bin: ${opencode}, args: ${JSON.stringify(opencodeArgs)}`);
 
-  const stdoutSink = options.captureStdoutTo ? ` | tee "${options.captureStdoutTo}"` : '';
-  const pipefail = stdoutSink ? 'set -o pipefail; ' : '';
+  const stdoutSink = options.captureStdoutTo ? ` > "${options.captureStdoutTo}"` : '';
+  const pipefail = '';
   const bashCmd = `${pipefail}stdbuf -oL -eL ${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
 
   const t0 = Date.now();

@@ -150,11 +150,21 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
   const t0 = Date.now();
   return new Promise(resolve => {
     let timedOut = false;
+    const stdoutToPipe = !options.captureStdoutTo;
+    const stdioConfig = stdoutToPipe
+      ? ['ignore', 'inherit', 'inherit']
+      : ['ignore', 'pipe', 'inherit'];
     const child = spawn('bash', ['-c', bashCmd], {
-      stdio: ['ignore', 'inherit', 'inherit'],
+      stdio: stdioConfig,
       cwd: workDir,
       detached: true,
     });
+
+    if (!stdoutToPipe && child.stdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', () => {});
+      child.stdout.resume();
+    }
 
     const timer = setTimeout(() => {
       timedOut = true;

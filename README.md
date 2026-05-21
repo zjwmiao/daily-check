@@ -218,9 +218,9 @@ scripts/
     geo-critic-prompt.md       critic agent prompt
 
 docs/
-  GEO-AUTO-FIX-WORKFLOW.md     详细文档
+  decision.md                 架构决策与流程文档
 ```
 
 ## 详细文档
 
-完整流程说明、脚本接口、配置参数见: [docs/GEO-AUTO-FIX-WORKFLOW.md](docs/GEO-AUTO-FIX-WORKFLOW.md)
+完整流程说明、脚本接口、配置参数见: [docs/decision.md](docs/decision.md)

@@ -13,62 +13,62 @@ GEO(Generative Engine Optimization)自动修复工作流，用于扫描 AtomGit 
 
 ## 流程图
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     geo-auto-fix.yml Workflow                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  定时触发 (每4小时) 或 手动触发 (workflow_dispatch)                       │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ 1. scan-geo-issues.js                                             │   │
-│  │    • 调用 AtomGit API 获取 open issues                            │   │
-│  │    • 筛选标题以 [GEO] 开头的 issue                                 │   │
-│  │    • 解析 ## 涉及问题 表格第一列 (问题ID)                          │   │
-│  │    • 双重检查防重复:                                              │   │
-│  │      - 评论标记 GEO_PROCESSED_MARKER                              │   │
-│  │      - PR分支 geo/fix-{community}-{issue_number}                  │   │
-│  │      - PR有/retest-geo评论且PR未更新则重新处理                     │   │
-│  │    • 输出: 待处理 issue 列表                                       │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ 2. 遍历每个 issue (管道式处理):                                    │   │
-│  │                                                                    │   │
-│  │    build-fix-tasks.js                                             │   │
-│  │    ├─ 输入: stdin (单个 issue JSON)                               │   │
-│  │    ├─ 调用 fetchQuestionsJson(community)                          │   │
-│  │    ├─ 按 problem_ids 过滤 questions                               │   │
-│  │    ├─ 筛选 official_urls (只保留属于官网域的URL)                   │   │
-│  │    ├─ 若所有问题都不涉及官网域则跳过                               │   │
-│  │    └─ 输出: 修复任务 payload                                      │   │
-│  │         │                                                          │   │
-│  │         ▼                                                          │   │
-│  │    execute-fix-runs.js                                            │   │
-│  │    ├─ 输入: stdin (修复任务 JSON)                                 │   │
-│  │    ├─ 克隆 portal 仓库                                            │   │
-│  │    ├─ 执行 opencode agent 修复                                    │   │
-│  │    ├─ 运行 critic 反向审查                                        │   │
-│  │    ├─ 创建 PR (geo/fix-{community}-{issue_number})                │   │
-│  │    └─ 输出: 修复结果 (tee 保存到 result-{num}.json)               │   │
-│  │         │                                                          │   │
-│  │         ▼                                                          │   │
-│  │    comment-geo-result.js                                          │   │
-│  │    ├─ 输入: stdin (修复结果 JSON)                                 │   │
-│  │    ├─ 渲染评论内容                                                │   │
-│  │    ├─ 调用 AtomGit API 评论到 issue                               │   │
-│  │    └─ 添加 GEO_PROCESSED_MARKER 标记                              │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ 3. poll-portal-status.js (独立定时运行)                            │   │
-│  │    • 监控 PR 状态                                                 │   │
-│  │    • PR merged + 30min 冷却后重验 URL                             │   │
-│  │    • 重验通过 → 关闭 [GEO] issue                                  │   │
-│  │    • 清理失效 PR (无对应 active issue)                            │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph external["外部"]
+        PORTAL["openEuler-portal /<br/>mindspore-portal (AtomGit)"]
+        GW["geo-workflow (GitHub)<br/>questions.json"]
+    end
+
+    subgraph workflow["geo-auto-fix.yml"]
+        direction TB
+        
+        TRIGGER["定时触发 (每4h) /<br/>手动触发 (workflow_dispatch)"]
+        
+        subgraph scan["1. scan-geo-issues.js"]
+            direction TB
+            S1["调用 AtomGit API<br/>获取 open issues"]
+            S2["筛选 [GEO] 开头 issue"]
+            S3["解析 ## 涉及问题 表格"]
+            S4["双重检查防重复:<br/>评论标记 + PR分支"]
+            S5["PR有/retest-geo<br/>且未更新 → 重处理"]
+            S1 --> S2 --> S3 --> S4 --> S5
+        end
+        
+        subgraph pipeline["2. 管道式处理 (每个issue)"]
+            direction TB
+            B1["build-fix-tasks.js<br/>获取questions.json<br/>筛选官网URL"]
+            E1["execute-fix-runs.js<br/>clone → opencode →<br/>verify → critic → PR"]
+            C1["comment-geo-result.js<br/>评论结果到issue"]
+            B1 --> E1 --> C1
+        end
+        
+        subgraph poll["3. poll-portal-status.js (cron)"]
+            direction TB
+            P1["监控 PR 状态"]
+            P2["merged + 30min冷却<br/>→ 线上重验"]
+            P3["重验通过<br/>→ 关闭issue"]
+            P4["清理失效PR"]
+            P1 --> P2 --> P3 --> P4
+        end
+        
+        TRIGGER --> scan
+        scan --> pipeline
+        pipeline --> poll
+    end
+
+    PORTAL -- "createPR / listPullRequests" --> scan
+    PORTAL -- "getPullRequest" --> poll
+    GW -- "fetchQuestionsJson" --> B1
+    poll -- "merge PR" --> PORTAL
+    C1 -- "评论结果" --> PORTAL
+
+    classDef ext fill:#fef3c7,stroke:#92400e
+    classDef wf fill:#dbeafe,stroke:#1e40af
+    classDef sub fill:#f3f4f6,stroke:#6b7280
+    class PORTAL,GW ext
+    class TRIGGER wf
+    class scan,pipeline,poll sub
 ```
 
 ## 快速开始

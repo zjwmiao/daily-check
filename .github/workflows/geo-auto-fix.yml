@@ -79,6 +79,7 @@ jobs:
         run: |
           OWNER="${{ inputs.owner || 'openeuler' }}"
           REPO="${{ inputs.repo || 'openEuler-portal' }}"
+          COMMUNITY=$(jq -r '.community' "${{ steps.prepare.outputs.run_dir }}/issues.json")
           
           jq -c '.issues[]' "${{ steps.prepare.outputs.run_dir }}/issues.json" | while read ISSUE; do
             NUM=$(echo "$ISSUE" | jq -r '.number')
@@ -88,8 +89,10 @@ jobs:
             echo "Processing issue #$NUM: $TITLE"
             echo "========================================"
             
-            echo "$ISSUE" \
-              | node scripts/build-fix-tasks.js \
+            echo "$ISSUE" | jq -c --arg c "$COMMUNITY" '. + {community: $c}' \
+              > "${{ steps.prepare.outputs.run_dir }}/issue-$NUM.json"
+            
+            node scripts/build-fix-tasks.js --input="${{ steps.prepare.outputs.run_dir }}/issue-$NUM.json" \
               | node scripts/execute-fix-runs.js \
               | tee "${{ steps.prepare.outputs.run_dir }}/result-$NUM.json" \
               | node scripts/comment-geo-result.js --owner="$OWNER" --repo="$REPO"

@@ -17,15 +17,27 @@ export function log(msg) {
 }
 
 export async function readInput(args) {
-  if (!process.stdin.isTTY) {
-    const chunks = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    const input = Buffer.concat(chunks).toString('utf-8').trim();
-    if (input) return JSON.parse(input);
-  }
   if (args.input) {
     const fs = await import('fs');
     return JSON.parse(fs.readFileSync(args.input, 'utf-8'));
   }
+
+  const chunks = [];
+  const stdin = process.stdin;
+  
+  if (stdin.readable) {
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    
+    for await (const chunk of stdin) {
+      chunks.push(chunk);
+    }
+    
+    const input = chunks.join('').trim();
+    if (input) {
+      return JSON.parse(input);
+    }
+  }
+  
   throw new Error('需要通过stdin或--input提供输入');
 }

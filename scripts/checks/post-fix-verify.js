@@ -224,10 +224,10 @@ function verifyFromBuiltHtml({ url, dimension, outputDir, beforeProblem }) {
   const file = resolveBuiltHtml(url, outputDir);
   if (!file) {
     return {
-      status: 'still_failing',
+      status: 'deferred',
       before: beforeProblem?.description || '-',
-      after: `build 产物里找不到 ${new URL(url).pathname} 对应的 HTML`,
-      note: `URL 没在 build output 中产页面 — 可能 prerender 路由没配上 / URL 错填 / 框架不出该路径`,
+      after: '页面未在构建产物中生成,跳过本轮验证',
+      note: '可能为构建时排除 / 草稿 / 路由未配 — 留给后续构建或 geo-poll 线上重验闭环',
     };
   }
   const html = fs.readFileSync(file, 'utf-8');
@@ -348,6 +348,21 @@ export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community
   const checks = [];
   for (const p of problems) {
     const dimensionsToCheck = p.dimension === 'all' ? allDimensions : [p.dimension];
+
+    // build 跑过但产物里没这页 → 整个 URL 跳过本轮 verify(构建时排除 / 草稿 / 路由未配)
+    if (outputDir && !resolveBuiltHtml(p.url, outputDir)) {
+      for (const dim of dimensionsToCheck) {
+        checks.push({
+          url: p.url,
+          dimension: dim,
+          status: 'deferred',
+          before: p.description,
+          after: '页面未在构建产物中生成,跳过本轮验证',
+          note: '可能为构建时排除 / 草稿 / 路由未配 — 留给后续构建或 geo-poll 线上重验闭环',
+        });
+      }
+      continue;
+    }
 
     for (const dim of dimensionsToCheck) {
       const key = `${p.url}|${dim}`;

@@ -349,91 +349,79 @@ function verifyTdk({ url, dimension, file, workDir, beforeProblem }) {
 
 export function verifyFixesInWorkDir({ workDir, agentOutput, problems, community, outputDir }) {
   const records = parseAgentOutput(agentOutput);
-  // url -> first record from agent
   const byUrlDim = new Map();
   for (const r of records) {
     byUrlDim.set(`${r.url}|${r.dimension}`, r);
   }
 
   const sitemapLocs = collectSitemapLocs(workDir);
+  const allDimensions = ['sitemap_inclusion', 'tdk_title', 'tdk_description', 'tdk_keywords', 'schema', 'static_render'];
 
   const checks = [];
   for (const p of problems) {
-    const key = `${p.url}|${p.dimension}`;
-    const agentRec = byUrlDim.get(key) || null;
-    // agent 自报跳过 → 我们也跳过验
-    if (agentRec?.icon === '⏭') {
-      checks.push({
-        url: p.url,
-        dimension: p.dimension,
-        status: 'deferred',
-        before: p.description,
-        after: '⏭ agent 跳过未改',
-        note: 'agent 自报跳过',
-      });
-      continue;
-    }
-    // agent 自报失败 → 不验,标 still_failing
-    if (agentRec?.icon === '❌') {
-      checks.push({
-        url: p.url,
-        dimension: p.dimension,
-        status: 'still_failing',
-        before: p.description,
-        after: 'agent 失败',
-        note: agentRec.raw,
-      });
-      continue;
-    }
+    const dimensionsToCheck = p.dimension === 'all' ? allDimensions : [p.dimension];
 
-    if (p.dimension === 'sitemap_inclusion') {
-      const r = verifySitemap({ url: p.url, community }, sitemapLocs);
-      if (r.status === 'still_failing') {
-        console.log(`[post-fix-verify] sitemap still_failing: ${JSON.stringify(r, null, 2)}`);
-      }
-      checks.push({ url: p.url, dimension: p.dimension, ...r });
-    } else if (p.dimension && p.dimension.startsWith('tdk')) {
-      // build 产物存在时优先用 build 后 HTML(frontmatter 改了但是否真生效要看渲染)
-      if (outputDir) {
-        const r = verifyFromBuiltHtml({ url: p.url, dimension: p.dimension, outputDir, beforeProblem: p });
-        console.log(`[post-fix-verify] verifyFromBuiltHtml1 still_failing: ${JSON.stringify(r, null, 2)}`);
-        checks.push({ url: p.url, dimension: p.dimension, ...r });
-      } else {
-        const r = verifyTdk({
-          url: p.url,
-          dimension: p.dimension,
-          file: agentRec?.file || null,
-          workDir,
-          beforeProblem: p,
-        });
-        console.log(`[post-fix-verify] verifyTdk still_failing: ${JSON.stringify(r, null, 2)}`);
-        checks.push({ url: p.url, dimension: p.dimension, ...r });
-      }
-    } else if (p.dimension === 'schema' || p.dimension === 'static_render') {
-      if (outputDir) {
-        // 有 build 产物 → 真验
-        const r = verifyFromBuiltHtml({ url: p.url, dimension: p.dimension, outputDir, beforeProblem: p });
-        console.log(`[post-fix-verify] verifyFromBuiltHtml2 still_failing: ${JSON.stringify(r, null, 2)}`);
-        checks.push({ url: p.url, dimension: p.dimension, ...r });
-      } else {
-        // 没 build(build_disabled / build 失败 / 仓没有 build 脚本)→ 延后到线上闭环
+    for (const dim of dimensionsToCheck) {
+      const key = `${p.url}|${dim}`;
+      const agentRec = byUrlDim.get(key) || byUrlDim.get(`${p.url}|all`) || null;
+
+      if (agentRec?.icon === '⏭') {
         checks.push({
           url: p.url,
-          dimension: p.dimension,
+          dimension: dim,
           status: 'deferred',
           before: p.description,
-          after: 'build 未跑,延后由 geo-poll 线上重验闭环',
-          note: 'schema / static_render 必须看构建产物,本次未跑 build',
+          after: '⏭ agent 跳过未改',
+          note: 'agent 自报跳过',
+        });
+        continue;
+      }
+      if (agentRec?.icon === '❌') {
+        checks.push({
+          url: p.url,
+          dimension: dim,
+          status: 'still_failing',
+          before: p.description,
+          after: 'agent 失败',
+          note: agentRec.raw,
+        });
+        continue;
+      }
+
+      if (dim === 'sitemap_inclusion') {
+        const r = verifySitemap({ url: p.url, community }, sitemapLocs);
+        checks.push({ url: p.url, dimension: dim, ...r });
+      } else if (dim.startsWith('tdk')) {
+        if (outputDir) {
+          const r = verifyFromBuiltHtml({ url: p.url, dimension: dim, outputDir, beforeProblem: p });
+          checks.push({ url: p.url, dimension: dim, ...r });
+        } else {
+          const r = verifyTdk({ url: p.url, dimension: dim, file: agentRec?.file || null, workDir, beforeProblem: p });
+          checks.push({ url: p.url, dimension: dim, ...r });
+        }
+      } else if (dim === 'schema' || dim === 'static_render') {
+        if (outputDir) {
+          const r = verifyFromBuiltHtml({ url: p.url, dimension: dim, outputDir, beforeProblem: p });
+          checks.push({ url: p.url, dimension: dim, ...r });
+        } else {
+          checks.push({
+            url: p.url,
+            dimension: dim,
+            status: 'deferred',
+            before: p.description,
+            after: 'build 未跑,延后由 geo-poll 线上重验闭环',
+            note: `${dim} 必须看构建产物,本次未跑 build`,
+          });
+        }
+      } else {
+        checks.push({
+          url: p.url,
+          dimension: dim,
+          status: 'unverifiable',
+          before: p.description,
+          after: `未知 dimension=${dim},无验法`,
         });
       }
-    } else {
-      checks.push({
-        url: p.url,
-        dimension: p.dimension,
-        status: 'unverifiable',
-        before: p.description,
-        after: `未知 dimension=${p.dimension},无验法`,
-      });
     }
   }
 

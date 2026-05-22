@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { listPullRequests, listIssues, listIssueComments, listPullRequestComments, getPullRequest, getPullRequestComment } from './lib/atomgit-api.js';
+import { listPullRequests, listIssues, listIssueComments, listPullRequestComments, getPullRequest } from './lib/atomgit-api.js';
 import { COMMUNITY_MAP, inferCommunityFromRepoName } from './lib/community-map.js';
 import { GEO_PROCESSED_MARKER, GEO_SKIP_NO_PROBLEMS, GEO_SKIP_NO_URLS } from './lib/geo-markers.js';
 import { parseArgs, log } from './lib/utils.js';
@@ -32,69 +32,73 @@ function inferCommunity(owner, repo, explicitCommunity) {
   throw new Error(`无法推断 community: owner=${owner}, repo=${repo}`);
 }
 
-async function hasProcessedMarker(owner, repo, issueNumber) {
+async function checkIssueSkipStatus(owner, repo, community, issueNumber) {
   try {
     const comments = await listIssueComments({ owner, repo, issue_number: issueNumber });
-    for (const c of comments) {
+    
+    const hasFailMarker = comments.some(c => (c.body || '').includes('GEO 自动修复失败'));
+    if (hasFailMarker) {
+      return { shouldSkip: false, reason: '上次处理失败', needReprocess: true };
+    }
+    
+    const hasProcessMarker = comments.some(c => {
       const body = c.body || '';
-      if (body.includes('GEO 自动修复失败')) return false;
-      if (body.includes(GEO_PROCESSED_MARKER)) return true;
-      if (body.includes(GEO_SKIP_NO_PROBLEMS)) return true;
-      if (body.includes(GEO_SKIP_NO_URLS)) return true;
-    }
-  } catch (err) {
-    log(`  ⚠ 获取issue评论失败: ${err.message}`);
-  }
-  return false;
-}
-
-async function checkPrRetestRequest(owner, repo, community, issueNumber) {
-  const branchName = `geo/fix-${community.toLowerCase()}-${issueNumber}`;
-  try {
+      return body.includes(GEO_PROCESSED_MARKER) 
+        || body.includes(GEO_SKIP_NO_PROBLEMS) 
+        || body.includes(GEO_SKIP_NO_URLS);
+    });
+    
+    const branchName = `geo/fix-${community.toLowerCase()}-${issueNumber}`;
     const prs = await listPullRequests({ owner, repo, head: branchName, state: 'open' });
+    
     if (!prs || prs.length === 0) {
-      return { hasPr: false };
+      if (hasProcessMarker) {
+        return { shouldSkip: false, reason: '有处理标记但无PR', needReprocess: true };
+      }
+      return { shouldSkip: false };
     }
-
+    
     const pr = prs[0];
+    const prComments = await listPullRequestComments({ owner, repo, pull_number: pr.number });
+    const hasRetestRequest = prComments.some(c => (c.body || '').includes('/retest-geo'));
+    
+    if (!hasRetestRequest) {
+      return {
+        shouldSkip: true,
+        reason: hasProcessMarker ? '有处理标记且PR无/retest-geo请求' : '已有PR无/retest-geo请求',
+        prNumber: pr.number,
+        prUrl: pr.html_url,
+      };
+    }
+    
     const prDetail = await getPullRequest({ owner, repo, number: pr.number });
     const prUpdatedAt = new Date(prDetail.updated_at).getTime();
-
-    const comments = await listPullRequestComments({ owner, repo, pull_number: pr.number });
-    const retestComments = comments.filter(c => (c.body || '').includes('/retest-geo'));
-
-    if (retestComments.length === 0) {
-      return { hasPr: true, needsRetest: false, prNumber: pr.number, prUrl: pr.html_url };
-    }
-
-    const sorted = retestComments
-      .map(c => ({ id: c.id, created_at: c.created_at }))
+    
+    const retestComments = prComments
+      .filter(c => (c.body || '').includes('/retest-geo'))
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    const lastComment = sorted[sorted.length - 1];
-
-    const commentDetail = await getPullRequestComment({ owner, repo, comment_id: lastComment.id });
-    const commentCreatedAt = new Date(commentDetail.created_at).getTime();
-
+    const lastRetest = retestComments[retestComments.length - 1];
+    const commentCreatedAt = new Date(lastRetest.created_at).getTime();
+    
     if (prUpdatedAt > commentCreatedAt) {
       return {
-        hasPr: true,
-        needsRetest: false,
-        skipBecausePrUpdated: true,
-        prNumber: pr.number,
-        prUrl: pr.html_url,
+        shouldSkip: true,
         reason: 'PR已在/retest-geo评论后更新',
-      };
-    } else {
-      return {
-        hasPr: true,
-        needsRetest: true,
         prNumber: pr.number,
         prUrl: pr.html_url,
       };
     }
+    
+    return {
+      shouldSkip: false,
+      reason: 'PR有/retest-geo且未更新',
+      needReprocess: true,
+      prNumber: pr.number,
+      prUrl: pr.html_url,
+    };
   } catch (err) {
-    log(`  ⚠ 检查PR评论失败: ${err.message}`);
-    return { hasPr: false };
+    log(`  ⚠ 检查issue状态失败: ${err.message}`);
+    return { shouldSkip: false };
   }
 }
 
@@ -141,29 +145,19 @@ async function main() {
       continue;
     }
 
-    const hasMarker = await hasProcessedMarker(owner, repo, num);
-    if (hasMarker) {
-      log(`  ⏭ 跳过: 已有处理标记`);
-      skipped.push({ number: num, reason: '已有处理标记' });
+    const status = await checkIssueSkipStatus(owner, repo, community, num);
+    if (status.shouldSkip) {
+      log(`  ⏭ 跳过: ${status.reason}`);
+      skipped.push({ number: num, reason: status.reason, pr_url: status.prUrl });
       continue;
     }
-
-    const prCheck = await checkPrRetestRequest(owner, repo, community, num);
-    if (prCheck.hasPr && !prCheck.needsRetest) {
-      if (prCheck.skipBecausePrUpdated) {
-        log(`  ⏭ 跳过: PR #${prCheck.prNumber} 已在/retest-geo评论后更新`);
+    
+    if (status.needReprocess) {
+      if (status.prNumber) {
+        log(`  ♻️ PR #${status.prNumber} ${status.reason},需要重新处理`);
       } else {
-        log(`  ⏭ 跳过: 已有open PR #${prCheck.prNumber} (无/retest-geo请求)`);
+        log(`  ♻️ ${status.reason},需要重新处理`);
       }
-      skipped.push({
-        number: num,
-        reason: prCheck.reason || `已有open PR #${prCheck.prNumber}`,
-        pr_url: prCheck.prUrl,
-      });
-      continue;
-    }
-    if (prCheck.hasPr && prCheck.needsRetest) {
-      log(`  ♻️ PR #${prCheck.prNumber} 有/retest-geo请求且PR未更新,需要重新处理`);
     }
 
     toProcess.push({

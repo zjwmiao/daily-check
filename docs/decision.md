@@ -142,10 +142,15 @@ async function checkPrRetestRequest(owner, repo, community, issueNumber) {
 
 **跳过逻辑**:
 - 无问题ID → 跳过
-- 已有处理标记评论 → 跳过
-- PR存在且无 `/retest-geo` 评论 → 跳过
-- PR存在且有 `/retest-geo` 评论，但 PR 已更新（`updated_at` > 评论 `created_at`）→ 跳过
-- PR存在且有 `/retest-geo` 评论，且 PR 未更新（`updated_at` <= 评论 `created_at`）→ 继续处理（重新修复）
+- issue评论有"GEO 自动修复失败" → 继续处理（上次失败）
+- issue有处理标记 + 无PR → 继续处理（可能上次没创建成功）
+- issue有处理标记 + 有PR + PR评论无 `/retest-geo` → 跳过
+- issue有处理标记 + 有PR + PR评论有 `/retest-geo` + PR已更新 → 跳过
+- issue有处理标记 + 有PR + PR评论有 `/retest-geo` + PR未更新 → 继续处理
+- issue无处理标记 + 无PR → 继续处理
+- issue无处理标记 + 有PR + PR评论无 `/retest-geo` → 跳过
+- issue无处理标记 + 有PR + PR评论有 `/retest-geo` + PR已更新 → 跳过
+- issue无处理标记 + 有PR + PR评论有 `/retest-geo` + PR未更新 → 继续处理
 
 ### 2. build-fix-tasks.js
 

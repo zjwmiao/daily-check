@@ -137,12 +137,14 @@ node scripts/scan-geo-issues.js --owner=openeuler --repo=openEuler-portal --dry_
 ### 跳过逻辑
 
 - 无问题ID → 跳过
-- 已有处理标记评论 → 跳过
-- PR存在且无 `/retest-geo` 评论 → 跳过
-- PR存在且有 `/retest-geo` 评论，但 PR 已更新 → 跳过
-- 所有问题都不涉及官网域 → 跳过
-- URL preflight 失败 → 跳过该 URL
-- URL 分析无问题 → 跳过该 URL
+- issue评论有"GEO 自动修复失败" → 继续处理（上次失败）
+- issue有处理标记 + 无PR → 继续处理（可能上次没创建成功）
+- issue有处理标记 + 有PR + PR评论无 `/retest-geo` → 跳过
+- issue有处理标记 + 有PR + PR评论有 `/retest-geo` + PR已更新 → 跳过
+- issue有处理标记 + 有PR + PR评论有 `/retest-geo` + PR未更新 → 继续处理
+- issue无处理标记 + 有PR + PR评论无 `/retest-geo` → 跳过
+- issue无处理标记 + 有PR + PR评论有 `/retest-geo` + PR已更新 → 跳过
+- issue无处理标记 + 有PR + PR评论有 `/retest-geo` + PR未更新 → 继续处理
 
 ## Issue 格式要求
 

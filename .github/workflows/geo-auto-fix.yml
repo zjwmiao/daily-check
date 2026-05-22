@@ -117,30 +117,30 @@ jobs:
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           echo "GEO Auto Fix workflow failed, see: $RUN_URL"
 
-  poll:
-    runs-on: portal-x86
-    timeout-minutes: 30
-    needs: auto-fix
-    if: always() && inputs.dry_run != true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # poll:
+  #   runs-on: portal-x86
+  #   timeout-minutes: 30
+  #   needs: auto-fix
+  #   if: always() && inputs.dry_run != true
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
+  #     - name: Install deps
+  #       run: pnpm install --frozen-lockfile
 
-      - name: Poll portal PRs + revalidate
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
-        run: |
-          node scripts/poll-portal-status.js \
-            --target-repo=${{ github.repository }}
+  #     - name: Poll portal PRs + revalidate
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+  #       run: |
+  #         node scripts/poll-portal-status.js \
+  #           --target-repo=${{ github.repository }}
 
-      - name: Comment failure summary
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          echo "Poll portal status failed, see: $RUN_URL"
+  #     - name: Comment failure summary
+  #       if: failure()
+  #       env:
+  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       run: |
+  #         RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+  #         echo "Poll portal status failed, see: $RUN_URL"

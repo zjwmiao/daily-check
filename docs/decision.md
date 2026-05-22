@@ -143,10 +143,12 @@ async function checkPrRetestRequest(owner, repo, community, issueNumber) {
 **跳过逻辑**:
 - 无问题ID → 跳过
 - issue评论有"GEO 自动修复失败" → 继续处理（上次失败）
-- issue有处理标记 + 无PR → 继续处理（可能上次没创建成功）
-- issue有处理标记 + 有PR + PR评论无 `/retest-geo` → 跳过
-- issue有处理标记 + 有PR + PR评论有 `/retest-geo` + PR已更新 → 跳过
-- issue有处理标记 + 有PR + PR评论有 `/retest-geo` + PR未更新 → 继续处理
+- issue评论有"GEO_SKIP_NO_PROBLEMS"标记 → 跳过（无匹配问题）
+- issue评论有"GEO_SKIP_NO_URLS"标记 → 跳过（未涉及官网页面）
+- issue评论有"GEO_PROCESSED_MARKER"标记 + 无PR → 继续处理（可能上次没创建成功）
+- issue评论有"GEO_PROCESSED_MARKER"标记 + 有PR + PR评论无 `/retest-geo` → 跳过
+- issue评论有"GEO_PROCESSED_MARKER"标记 + 有PR + PR评论有 `/retest-geo` + PR已更新 → 跳过
+- issue评论有"GEO_PROCESSED_MARKER"标记 + 有PR + PR评论有 `/retest-geo` + PR未更新 → 继续处理
 - issue无处理标记 + 无PR → 继续处理
 - issue无处理标记 + 有PR + PR评论无 `/retest-geo` → 跳过
 - issue无处理标记 + 有PR + PR评论有 `/retest-geo` + PR已更新 → 跳过

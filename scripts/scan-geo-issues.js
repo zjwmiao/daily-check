@@ -36,23 +36,38 @@ async function checkIssueSkipStatus(owner, repo, community, issueNumber) {
   try {
     const comments = await listIssueComments({ owner, repo, issue_number: issueNumber });
     
-    const hasFailMarker = comments.some(c => (c.body || '').includes('GEO 自动修复失败'));
-    if (hasFailMarker) {
-      return { shouldSkip: false, reason: '上次处理失败', needReprocess: true };
+    let markerType = null;
+    for (const c of comments) {
+      const body = c.body || '';
+      if (body.includes('GEO 自动修复失败')) {
+        return { shouldSkip: false, reason: '上次处理失败', needReprocess: true };
+      }
+      if (body.includes(GEO_SKIP_NO_PROBLEMS)) {
+        markerType = 'skip_no_problems';
+        break;
+      }
+      if (body.includes(GEO_SKIP_NO_URLS)) {
+        markerType = 'skip_no_urls';
+        break;
+      }
+      if (body.includes(GEO_PROCESSED_MARKER)) {
+        markerType = 'processed';
+        break;
+      }
     }
     
-    const hasProcessMarker = comments.some(c => {
-      const body = c.body || '';
-      return body.includes(GEO_PROCESSED_MARKER) 
-        || body.includes(GEO_SKIP_NO_PROBLEMS) 
-        || body.includes(GEO_SKIP_NO_URLS);
-    });
+    if (markerType === 'skip_no_problems' || markerType === 'skip_no_urls') {
+      return { 
+        shouldSkip: true, 
+        reason: markerType === 'skip_no_problems' ? '无匹配问题(已跳过)' : '未涉及官网页面(已跳过)' 
+      };
+    }
     
     const branchName = `geo/fix-${community.toLowerCase()}-${issueNumber}`;
     const prs = await listPullRequests({ owner, repo, head: branchName, state: 'open' });
     
     if (!prs || prs.length === 0) {
-      if (hasProcessMarker) {
+      if (markerType === 'processed') {
         return { shouldSkip: false, reason: '有处理标记但无PR', needReprocess: true };
       }
       return { shouldSkip: false };
@@ -65,7 +80,7 @@ async function checkIssueSkipStatus(owner, repo, community, issueNumber) {
     if (!hasRetestRequest) {
       return {
         shouldSkip: true,
-        reason: hasProcessMarker ? '有处理标记且PR无/retest-geo请求' : '已有PR无/retest-geo请求',
+        reason: markerType ? '有处理标记且PR无/retest-geo请求' : '已有PR无/retest-geo请求',
         prNumber: pr.number,
         prUrl: pr.html_url,
       };

@@ -141,6 +141,8 @@ node scripts/scan-geo-issues.js --owner=openeuler --repo=openEuler-portal --dry_
 - PR存在且无 `/retest-geo` 评论 → 跳过
 - PR存在且有 `/retest-geo` 评论，但 PR 已更新 → 跳过
 - 所有问题都不涉及官网域 → 跳过
+- URL preflight 失败 → 跳过该 URL
+- URL 分析无问题 → 跳过该 URL
 
 ## Issue 格式要求
 

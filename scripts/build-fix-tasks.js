@@ -5,6 +5,7 @@ import { COMMUNITY_MAP, isOfficialHost } from './lib/community-map.js';
 import { fetchQuestionsJson } from './lib/geo-workflow-data.js';
 import { GEO_SKIP_NO_URLS } from './lib/geo-markers.js';
 import { parseArgs, log, readInput } from './lib/utils.js';
+import { analyzeUrl } from './analyze-discoverability.js';
 
 function filterOfficialUrls(urls, community) {
   const cfg = COMMUNITY_MAP[community];
@@ -130,14 +131,74 @@ async function main() {
 
   log(`  ✅ ${allUrls.length} 个待修复URL`);
 
+  log(`  📊 开始分析URL获取具体问题维度...`);
   const problems = [];
+  const skippedUrls = [];
+
   for (const detail of urlDetails) {
-    problems.push({
-      url: detail.url,
-      dimension: 'all',
-      description: `需要检查并修复SEO/GEO可发现性问题`,
-      question_id: detail.question_id,
-    });
+    try {
+      const analysisResult = await analyzeUrl(detail.url, { skipBrowser: true, communityHint: community });
+
+      if (analysisResult.preflight_failed) {
+        log(`    ⏭ ${detail.url}: preflight失败(${analysisResult.preflight_reason}),跳过`);
+        skippedUrls.push({
+          url: detail.url,
+          reason: analysisResult.preflight_detail || analysisResult.preflight_reason,
+          question_id: detail.question_id,
+        });
+        continue;
+      }
+
+      if (!analysisResult.ok) {
+        log(`    ⚠ ${detail.url}: 分析失败(${analysisResult.error}),跳过`);
+        skippedUrls.push({
+          url: detail.url,
+          reason: analysisResult.error,
+          question_id: detail.question_id,
+        });
+        continue;
+      }
+
+      if (!analysisResult.problems || analysisResult.problems.length === 0) {
+        log(`    ✅ ${detail.url}: 无问题,跳过修复`);
+        continue;
+      }
+
+      log(`    🔍 ${detail.url}: 发现${analysisResult.problems.length}个问题`);
+      for (const p of analysisResult.problems) {
+        problems.push({
+          url: detail.url,
+          dimension: p.dimension,
+          description: p.description,
+          question_id: detail.question_id,
+          category: p.category,
+        });
+      }
+    } catch (err) {
+      log(`    ⚠ ${detail.url}: 分析异常(${err.message}),跳过`);
+      skippedUrls.push({
+        url: detail.url,
+        reason: err.message,
+        question_id: detail.question_id,
+      });
+    }
+  }
+
+  if (problems.length === 0) {
+    log(`  ⏭ 所有问题都无需修复或无法分析,跳过`);
+    const skipResult = {
+      run_at: new Date().toISOString(),
+      portal: { owner: cfg.portal_owner, repo: cfg.portal_repo, base_branch: cfg.portal_default_branch },
+      community,
+      issue: firstIssue,
+      skip: true,
+      skip_reason: skippedUrls.length > 0 ? '所有URL分析失败或preflight失败' : '所有URL无SEO/GEO问题',
+      skipped_urls: skippedUrls,
+      urls: [],
+      problems: [],
+    };
+    console.log(JSON.stringify(skipResult, null, 2));
+    return;
   }
 
   const result = {
@@ -155,14 +216,17 @@ async function main() {
     },
     urls: urlDetails,
     problems,
+    skipped_urls: skippedUrls,
     summary: {
       url_count: allUrls.length,
+      problem_count: problems.length,
+      skipped_count: skippedUrls.length,
       question_count: matchedQuestions.length,
     },
   };
 
   console.log(JSON.stringify(result, null, 2));
-  log(`\n🏁 完成: ${allUrls.length} URLs待修复`);
+  log(`\n🏁 完成: ${problems.length}个问题待修复, ${skippedUrls.length}个URL跳过`);
 }
 
 main().catch(err => {

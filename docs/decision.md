@@ -173,8 +173,10 @@ async function checkPrRetestRequest(owner, repo, community, issueNumber) {
     { "url": "https://www.openeuler.org/zh/...", "question_id": "q_074", "question_text": "..." }
   ],
   "problems": [
-    { "url": "...", "dimension": "all", "description": "..." }
-  ]
+    { "url": "...", "dimension": "sitemap_inclusion", "description": "未收录在sitemap.xml", "question_id": "q_074" },
+    { "url": "...", "dimension": "schema", "description": "缺少JSON-LD schema", "question_id": "q_074" }
+  ],
+  "skipped_urls": []
 }
 ```
 

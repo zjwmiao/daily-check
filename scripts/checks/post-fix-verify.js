@@ -15,7 +15,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { canonicalizeUrlHost } from '../lib/community-map.js';
+import { normalizeUrlForSitemap } from '../lib/url-normalize.js';
 import { checkSchema } from './schema.js';
 import { checkTdk } from './tdk.js';
 
@@ -101,18 +101,6 @@ export function parseAgentOutput(md) {
   }
 
   return records;
-}
-
-function normalizeUrlForSitemap(url, community) {
-  try {
-    const canonical = community ? canonicalizeUrlHost(community, url) : url;
-    const u = new URL(canonical);
-    let pathname = u.pathname;
-    if (pathname !== '/' && pathname.endsWith('/')) pathname = pathname.slice(0, -1);
-    return `${u.protocol}//${u.hostname}${pathname}`;
-  } catch {
-    return url;
-  }
 }
 
 // 在 workDir 下找静态 sitemap.xml(可能多份/多语言);返回所有 <loc> 集合

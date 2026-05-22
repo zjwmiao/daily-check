@@ -1,5 +1,5 @@
 import { fetchHttp } from '../lib/html-fetch.js';
-import { canonicalizeUrlHost } from '../lib/community-map.js';
+import { normalizeUrlForSitemap } from '../lib/url-normalize.js';
 
 const SITEMAP_CACHE = new Map();
 
@@ -38,19 +38,6 @@ async function getSitemapUrls(sitemapUrl) {
   return arr;
 }
 
-function normalize(url, community) {
-  // 先把 host 归一化到 community 的 canonical(openeuler.org 与 openeuler.openatom.cn 是同一份代码)
-  const canonical = community ? canonicalizeUrlHost(community, url) : url;
-  try {
-    const u = new URL(canonical);
-    let pathname = u.pathname;
-    if (pathname !== '/' && pathname.endsWith('/')) pathname = pathname.slice(0, -1);
-    return `${u.protocol}//${u.hostname}${pathname}`;
-  } catch {
-    return canonical;
-  }
-}
-
 export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
   if (!sitemapUrl) {
     return {
@@ -80,8 +67,8 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
     };
   }
 
-  const target = normalize(targetUrl, community);
-  const normalizedSet = new Set(urls.map((u) => normalize(u, community)));
+  const target = normalizeUrlForSitemap(targetUrl, community);
+  const normalizedSet = new Set(urls.map((u) => normalizeUrlForSitemap(u, community)));
   const included = normalizedSet.has(target);
 
   const problems = included

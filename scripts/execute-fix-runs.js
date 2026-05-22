@@ -143,25 +143,23 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
   log(`  🤖 starting opencode [${label}] (timeout=${timeoutMs / 1000}s)`);
   log(`     bin: ${opencode}, args: ${JSON.stringify(opencodeArgs)}`);
 
-  const stdoutSink = options.captureStdoutTo
-    ? ` > "${options.captureStdoutTo}"`
-    : ` > "${outputFile}"`;
-  const bashCmd = `${opencode} ${argsShell} < "${promptFile}"${stdoutSink}`;
+  const bashCmd = `${opencode} ${argsShell} < "${promptFile}" 2>/dev/null`;
+  const stdoutDest = options.captureStdoutTo || outputFile;
 
   const t0 = Date.now();
   return new Promise(resolve => {
     let timedOut = false;
     const child = spawn('bash', ['-c', bashCmd], {
-      stdio: ['ignore', 'pipe', 'inherit'],
+      stdio: ['ignore', 'pipe', 'ignore'],
       cwd: workDir,
       detached: true,
     });
 
-    if (child.stdout) {
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', () => {});
-      child.stdout.resume();
-    }
+    const outStream = fs.createWriteStream(stdoutDest);
+    outStream.on('error', err => log(`  ⚠ write ${stdoutDest} failed: ${err.message}`));
+
+    child.stdout.pipe(process.stderr, { end: false });
+    child.stdout.pipe(outStream, { end: false });
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -169,9 +167,12 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
       try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
     }, timeoutMs);
 
+    child.on('close', () => outStream.end());
+
     child.on('error', err => {
       clearTimeout(timer);
       log(`  ❌ opencode spawn error: ${err.message}`);
+      outStream.end();
       resolve({ ok: false, error: err.message });
     });
 

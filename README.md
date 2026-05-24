@@ -223,9 +223,9 @@ scripts/
     geo-critic-prompt.md       critic agent prompt
 
 docs/
-  decision.md                 架构决策与流程文档
+  design.md                 架构决策与流程文档
 ```
 
 ## 详细文档
 
-完整流程说明、脚本接口、配置参数见: [docs/decision.md](docs/decision.md)
+完整流程说明、脚本接口、配置参数见: [docs/design.md](docs/design.md)

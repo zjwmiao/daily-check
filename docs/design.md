@@ -1,4 +1,4 @@
-# GEO Auto Fix Workflow 文档
+# GEO Auto Fix Workflow Design 文档
 
 ## 概述
 

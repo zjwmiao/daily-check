@@ -17,7 +17,7 @@ scan-geo-issues.js → build-fix-tasks.js → execute-fix-runs.js → comment-ge
 
 ## 详细文档
 
-完整流程说明、脚本接口、配置参数见: [docs/decision.md](docs/decision.md)
+完整流程说明、脚本接口、配置参数见: [docs/design.md](docs/design.md)
 
 ## 关键文件
 

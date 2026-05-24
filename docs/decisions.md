@@ -715,3 +715,70 @@
     - PR body 顶部更紧凑,一行 Verify 行就传达"修复落地了多少 + build 用 dist 验过没有 + critic 二审 verdict" 三件事
     - 之前 "Build/Verify/Critic 三列" 数据可能彼此不同步的诡异 case 自然消除
     - critic warn 仍是常态(不阻断),只在 PR body / trigger 评论里展示 LLM 的可疑点,reviewer 自决
+
+## ADR-0033: sitemap 收录判定 URL 归一化加 `.html` 后缀剥离 + 抽公共 lib
+
+- 日期: 2026-05-22
+- 状态: 已采纳
+- 上下文: sitemap 收录判定之前归一化只剥末尾 `/`,把 `/b.html`、`/b`、`/b/` 当成三个不同 URL。当 portal 仓 sitemap 的 `<loc>` 写 `/b.html` 而 analyze target 是 `/b/` 时,判未收录,触发不必要的 sitemap fix。同时 `normalizeUrlForSitemap` 在 `scripts/checks/post-fix-verify.js` 和 `scripts/checks/sitemap-inclusion.js` 两份重复实现,后续改一处忘一处。
+- 选项:
+  - A. 在两份本地 normalize 都加 `.html` 剥离 — 仍重复
+  - B. 抽 `scripts/lib/url-normalize.js` 共享 `normalizeUrlForSitemap()`,加上 `.html` 剥离,两处都 import
+- 决定: B
+- 理由: 一次性 DRY + 修误判,改动局限在一个 lib 文件。
+- 后果:
+  - 新增 `scripts/lib/url-normalize.js` 导出 `normalizeUrlForSitemap(url, community)`:先 host canonical,再剥尾 `/`,再剥 `.html` 后缀
+  - `scripts/checks/post-fix-verify.js` / `scripts/checks/sitemap-inclusion.js` 删本地 `normalize()` / `normalizeUrlForSitemap()` 改 import
+  - 同型 URL 不再误判;analyze + verify 两边判同步
+
+## ADR-0034: 构建产物缺页该 URL 整体 deferred,不再 still_failing(amends ADR-0025)
+
+- 日期: 2026-05-22
+- 状态: 已采纳(修正 ADR-0025 的 build 缺页判定)
+- 上下文: ADR-0025 给 verify 加了 build 产物比对。但 build 跑通后产物里找不到 URL 对应 HTML 时(草稿、构建时排除、prerender 路由没配上),之前给该 URL 所有维度判 `still_failing`,直接触发 `blocking=true` 阻断 push。这种场景本质是 portal 主动不输出这个 URL,跟 agent 改没改对无关 — 应该按 `deferred` 留给后续构建或 geo-poll 线上重验闭环,而不是阻断主流程。`sitemap_inclusion` 维度也一样:URL 都不在 build 输出里,sitemap 该不该收录是上游的判断不是本轮 verify 能裁决的。
+- 选项:
+  - A. 维持 still_failing 阻断 push(逼 agent 把不该输出的 URL 也加进 prerender)
+  - B. 该 URL 所有维度统一 deferred,blocking=false 不阻断
+- 决定: B
+- 理由: agent 不该把 portal 维护决策"该不该出这页"接管;deferred 已经有 geo-poll 线上重验兜底,产物里出来了下轮自然能验。
+- 后果:
+  - `scripts/checks/post-fix-verify.js` 主循环新加前置判:`outputDir && !resolveBuiltHtml(p.url, outputDir)` → 该 URL 所有维度 push deferred,跳过本轮 4 维度检查
+  - `verifyFromBuiltHtml` 单维度走入时 file 找不到的分支同改为 deferred(之前是 still_failing)
+  - PR 不再因 build 没出页而被卡;Verify 表注解能看到"页面未在构建产物中生成,跳过本轮验证"
+
+## ADR-0035: pushAndPr 在 git add 之后再确认暂存区非空,空则跳过 commit/push
+
+- 日期: 2026-05-24
+- 状态: 已采纳
+- 上下文: `pushAndPr` 之前用 `git status --porcelain` 检查 workDir 有变更就走 commit+push 路径。但 `git add -A ':!pnpm-workspace.yaml'` 会排除 `pnpm-workspace.yaml` — 当 agent 唯一动的就是这个文件时,git status 显示"有改动",但 add 之后暂存区为空,`git commit` 报 nothing-to-commit 直接退出非零码,整 run 标 error。
+- 选项:
+  - A. 不修(等 agent 别去动 pnpm-workspace.yaml)
+  - B. add 之后用 `git diff --cached --name-only` 再确认一次暂存区,空就 has_changes=false 早返
+- 决定: B
+- 理由: 防御性早返,不依赖 agent 行为约束。
+- 后果:
+  - `scripts/execute-fix-runs.js` `pushAndPr`:add 后多一行 `git diff --cached --name-only`,空字符串就 log "暂存区为空(可能全被排除规则过滤)" + return,不 commit 不 push
+  - 同时把暂存文件数打到日志便于排查
+
+## ADR-0036: schema/tdk 存在时也 emit review_quality,把质量审视权交给 agent(amends ADR-0024)
+
+- 日期: 2026-05-24
+- 状态: 已采纳(部分修正 ADR-0024 "analyzer problem 都视为要改" 的隐含覆盖范围)
+- 上下文: 当前 `checkSchema` 只在"无任何 JSON-LD 块"或"JSON 解析失败"时报问题;`checkTdk` 只在"缺失 / 长度越界 / 与 title 完全相同"时报问题。结果:页面**已写了** schema/tdk 但 @type 选错(博客页用 WebPage)、字段缺失(Article 没 headline)、description 与页面主题脱节、title 是单纯品牌名等"存在但不合理"的情况在 analyze 阶段不会产生 `problems`,URL 直接被 [build-fix-tasks.js](scripts/build-fix-tasks.js) 的"problems 为空就跳过修复"逻辑丢弃,agent 永远看不到这些 URL。本质上是 analyze 把"是否存在"等同于"是否合理"了。
+- 选项:
+  - A. 在 check 函数里堆启发式 — 每个 @type 必填字段表 + TDK 同质化 / 与 H1 偏离度 / 品牌词检测。零调用成本,但需要重新发明一套规则且容易漏
+  - B. analyze 不做质量判断,但"存在"也算 problem,description 里塞当前快照 + 审视点,让 agent 在 [geo-fix-prompt.md Step 1](.github/agents/geo-fix-prompt.md) 现网 curl + 字段值要写来源 的流程里自己判,认为合理就归 ⏭
+  - C. 单独加一段 LLM 打分阶段对每个 URL 现状做 pass/warn/block 判定
+- 决定: B
+- 理由:
+  - ADR-0028 已经把 agent 强制成"必须 curl 现网 + 每个 ✅ 字段值写来源",它本来就拿着现网 HTML,判 schema 是否合理 / TDK 是否反映页面主题 比 analyze 侧重新堆启发式准
+  - A 维护成本高(schema.org 字段表会变 / TDK 启发式准确度难调),且容易跟 agent 自己的判断打架
+  - C 多一轮 LLM 调用,analyze 成本+时长翻倍,而下游 critic 已经给质量兜底
+  - 用户明确意图:"不存在就修;存在就让 agent 自审"
+- 后果:
+  - `scripts/checks/schema.js`:`blocks.length > 0` 分支追加 `category: 'schema.review_quality'` problem,description 列出当前 @type 集合 + 三条审视点(@type 适配 / 必填字段 / 字段值取自现网真页)
+  - `scripts/checks/tdk.js`:`title || description` 存在分支追加 `category: 'tdk.review_quality'` problem,description 含 title/description 截断快照(40 字)+ 字符数 + 四条审视点(主题对照 H1 / 同质化 / 品牌后缀 / keywords 真实性)
+  - 不改 downstream:`flattenProblems` 按 checks key 统一打 dimension(`tdk` / `schema`),`build-fix-tasks.js` 透传,`execute-fix-runs.js` 喂 agent,`post-fix-verify.js` 走原 dimension 分支(agent ⏭ → deferred / ✅ + 改动 → 静态检查判 fixed/still_failing)— 全链路无破坏
+  - 不改 `.github/agents/geo-fix-prompt.md`:Step 1 curl 抓现网 + Step 5 允许 ⏭ 并要求写原因已覆盖新行为,description 文本里把审视点说清楚就够
+  - 副作用预期:几乎每个能 curl 通的 URL 都会带 review_quality problem,agent 跑次数显著上升;由 ADR-0035 "暂存区空跳 commit" + critic + reviewer 三层兜住,agent 全 ⏭ 的 URL 不会产 PR 噪音
+  - `category` 字段下游不读([Explore 已确认]),仅作分析侧产物,不影响兼容

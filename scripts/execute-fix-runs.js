@@ -340,6 +340,12 @@ async function pushAndPr(run, workDir, verify, critic, buildInfo) {
 
   log('  📦 git add + commit + push');
   sh('git add -A \':!pnpm-workspace.yaml\'', { cwd: workDir });
+  const staged = sh('git diff --cached --name-only', { cwd: workDir }).trim();
+  if (!staged) {
+    log('  ⏭ 暂存区为空(可能全被排除规则过滤), skipping commit & push');
+    return { has_changes: false };
+  }
+  log(`  📑 staged ${staged.split('\n').length} file(s)`);
   const msg = `feat(geo): fix discoverability for issue #${run.geo_issue_number} (${run.community})`;
   sh(`git commit -m "${msg}"`, { cwd: workDir });
   sh(`git push -f origin HEAD:${run.branch_name}`, { cwd: workDir });

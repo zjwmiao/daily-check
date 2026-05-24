@@ -65,7 +65,7 @@ export function checkTdk(html) {
     const descSnip = (description || '').slice(0, 40);
     problems.push({
       category: 'tdk.review_quality',
-      description: `TDK 已存在(title="${titleSnip}" ${title?.length || 0}字符 / description="${descSnip}" ${description?.length || 0}字符)。请审视: 1) 是否反映页面真实主题(对照 H1 与首段); 2) 是否同质化(description 是否只是 title 的变体); 3) 是否包含品牌后缀(参考站内其他 tdk 写法); 4) keywords 若有是否真实关键词而非堆砌。若已合理,归 ⏭ 并说明原因。`,
+      description: `TDK 已存在(title="${titleSnip}" ${title?.length || 0}字符 / description="${descSnip}" ${description?.length || 0}字符)。请审视: 1) 是否反映页面真实主题(对照 H1 与首段); 2) 是否同质化(description 是否只是 title 的变体); 3) keywords 若有是否真实关键词而非堆砌。若已合理,归 ⏭ 并说明原因。`,
     });
   }
 
@@ -76,6 +76,6 @@ export function checkTdk(html) {
     title_length: title?.length || 0,
     description_length: description?.length || 0,
     problems,
-    pass: problems.length === 0,
+    pass: problems.every((p) => p.category === 'tdk.review_quality'),
   };
 }

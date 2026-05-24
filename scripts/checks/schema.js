@@ -31,7 +31,7 @@ export function checkSchema(html) {
     const allTypes = blocks.flatMap((b) => b.types).filter(Boolean);
     problems.push({
       category: 'schema.review_quality',
-      description: `页面已存在 ${blocks.length} 块 JSON-LD (@type: ${allTypes.join(', ') || '未声明'})。请审视: 1) @type 是否与页面性质匹配(Article/FAQPage/Organization/Product/CollectionPage 等); 2) 必填字段是否齐全(headline/name, description, url, mainEntity 等); 3) 字段值是否取自现网真页。若现有 schema 已合理,归 ⏭ 并说明原因。`,
+      description: `页面已存在 ${blocks.length} 块 JSON-LD (@type: ${allTypes.join(', ') || '未声明'})。请审视: 1) @type 是否与页面性质匹配(Article/FAQPage/Organization/Product/CollectionPage 等); 2) 必填字段是否齐全(headline/name, description, url, mainEntity 等); 3) 字段值是否取自现网真页; 4) 是否缺漏可补充的 @type 块 — 例如页面有问答结构应补 FAQPage、有操作步骤应补 HowTo、有面包屑导航应补 BreadcrumbList、产品/服务页应补 Product 或 Service 等;按页面真实内容补,无对应内容不补。若现有 schema 已合理,归 ⏭ 并说明原因。`,
       suggestion: '从现网 HTML 抽取必要字段补全/重写 JSON-LD,或确认现状已合理后跳过',
     });
   }
@@ -43,7 +43,7 @@ export function checkSchema(html) {
     types: blocks.flatMap((b) => b.types),
     blocks,
     problems,
-    pass: problems.length === 0,
+    pass: problems.every((p) => p.category === 'schema.review_quality'),
   };
 }
 

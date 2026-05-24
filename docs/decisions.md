@@ -782,3 +782,25 @@
   - 不改 `.github/agents/geo-fix-prompt.md`:Step 1 curl 抓现网 + Step 5 允许 ⏭ 并要求写原因已覆盖新行为,description 文本里把审视点说清楚就够
   - 副作用预期:几乎每个能 curl 通的 URL 都会带 review_quality problem,agent 跑次数显著上升;由 ADR-0035 "暂存区空跳 commit" + critic + reviewer 三层兜住,agent 全 ⏭ 的 URL 不会产 PR 噪音
   - `category` 字段下游不读([Explore 已确认]),仅作分析侧产物,不影响兼容
+
+## ADR-0037: review_quality 调优 — pass 排除 advisory + 提示词去品牌后缀 + schema 补 @type 缺漏提示(amends ADR-0036)
+
+- 日期: 2026-05-24
+- 状态: 已采纳(修正 ADR-0036)
+- 上下文: ADR-0036 上线后线上跑一轮,verify 表里大批 URL 假性 still_failing(参考 [temp.md](temp.md) 第 16/19/20/22/25/26 行):agent 没真改坏,只是 `checkSchema` / `checkTdk` 在"存在"分支无条件 push review_quality → `problems.length > 0` → `pass: false`。而 [verifyFromBuiltHtml](scripts/checks/post-fix-verify.js#L223) 复用这俩 check 跑 build 产物时 `r.pass=false` 就走 still_failing 分支,after 文本贴的就是 review_quality 那段长长的审视提示 —— 跟 before 几乎一字不差,reviewer 看着像 verify 故障。同时用户回看新加的提示词发现两点要调:① tdk 提示里"是否包含品牌后缀"是冗余(品牌后缀 build 时自动加,agent 不该手改);② schema 提示没引导 agent 补缺漏的 @type 块,所以 agent 看到 `WebPage` 就不会主动加 `FAQPage` / `HowTo` / `BreadcrumbList` 等 — 即使页面内容有对应结构。
+- 选项:
+  - A. 维持 ADR-0036 现状,人工解读 verify 表的 still_failing(噪音大)
+  - B. 三处调整:① `pass` 计算排除 `*.review_quality`(advisory 信号,不算硬错);② tdk 提示去掉"品牌后缀"条;③ schema 提示加第 4 条"按页面真实内容补缺漏的 @type"
+  - C. 不调 pass,改 verify 端过滤 review_quality(更分散,verify 要懂上游 category 命名)
+- 决定: B
+- 理由:
+  - pass 的语义本来就该是"有没有硬问题",review_quality 是 advisory 不属于硬问题 — 修在源头比让下游每处都过滤干净
+  - 品牌后缀的事是 build 期自动行为,提示 agent 改反而可能造成 build 结果跟源码不一致
+  - schema 缺 @type 是 GEO 优化的关键场景(FAQ 页只有 WebPage 拿不到 FAQ rich result),提示词不点明 agent 就当 schema 已存在不动了
+- 后果:
+  - `scripts/checks/schema.js` `pass` 改 `problems.every(p => p.category === 'schema.review_quality')` — 只有 review_quality 时算 pass
+  - `scripts/checks/tdk.js` `pass` 改 `problems.every(p => p.category === 'tdk.review_quality')` — 同上
+  - `scripts/checks/tdk.js` review_quality description 删"3) 是否包含品牌后缀"条,剩 3 条(主题对照 H1 / 同质化 / keywords 真实性)
+  - `scripts/checks/schema.js` review_quality description 加 "4) 是否缺漏可补充的 @type 块 — 例如页面有问答结构应补 FAQPage、有操作步骤应补 HowTo、有面包屑导航应补 BreadcrumbList、产品/服务页应补 Product 或 Service 等;按页面真实内容补,无对应内容不补"
+  - 下游链路:analyze 的 `flattenProblems` 不看 `r.pass` 直接收 `r.problems`,review_quality 仍进 agent 队列 ✓;verify 的 `verifyFromBuiltHtml` 看 `r.pass` 决定 fixed/still_failing,review_quality-only 时走 fixed 分支 ✓;真硬问题(parse fail / 长度越界 / missing)仍 `pass: false` 走 still_failing ✓
+  - "无对应内容不补"约束写死在 schema 提示里防止 agent 看到 4) 就硬塞不存在的 FAQ/HowTo

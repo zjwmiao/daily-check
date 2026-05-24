@@ -27,6 +27,13 @@ export function checkSchema(html) {
       description: '无 JSON-LD 结构化数据',
       suggestion: '按页面类型添加 Schema.org JSON-LD (Organization / Article / FAQPage 等)',
     });
+  } else {
+    const allTypes = blocks.flatMap((b) => b.types).filter(Boolean);
+    problems.push({
+      category: 'schema.review_quality',
+      description: `页面已存在 ${blocks.length} 块 JSON-LD (@type: ${allTypes.join(', ') || '未声明'})。请审视: 1) @type 是否与页面性质匹配(Article/FAQPage/Organization/Product/CollectionPage 等); 2) 必填字段是否齐全(headline/name, description, url, mainEntity 等); 3) 字段值是否取自现网真页。若现有 schema 已合理,归 ⏭ 并说明原因。`,
+      suggestion: '从现网 HTML 抽取必要字段补全/重写 JSON-LD,或确认现状已合理后跳过',
+    });
   }
 
   return {

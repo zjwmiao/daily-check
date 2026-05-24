@@ -155,11 +155,13 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
       detached: true,
     });
 
-    const outStream = fs.createWriteStream(stdoutDest);
-    outStream.on('error', err => log(`  ⚠ write ${stdoutDest} failed: ${err.message}`));
+    const outStream = stdoutDest ? fs.createWriteStream(stdoutDest) : null;
+    outStream?.on('error', err => log(`  ⚠ write ${stdoutDest} failed: ${err.message}`));
 
     child.stdout.pipe(process.stderr, { end: false });
-    child.stdout.pipe(outStream, { end: false });
+    if (outStream) {
+      child.stdout.pipe(outStream, { end: false });
+    }
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -167,12 +169,12 @@ function runOpencode(run, workDir, agentFile, contextFile, outputFile, options =
       try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
     }, timeoutMs);
 
-    child.on('close', () => outStream.end());
+    child.on('close', () => outStream?.end());
 
     child.on('error', err => {
       clearTimeout(timer);
       log(`  ❌ opencode spawn error: ${err.message}`);
-      outStream.end();
+      outStream?.end();
       resolve({ ok: false, error: err.message });
     });
 
@@ -471,7 +473,7 @@ async function main() {
     fs.writeFileSync(contextFile, JSON.stringify(buildSlimContext(run, workDir, outputMd), null, 2));
 
     log('  [3/7] runOpencode');
-    const ocRes = await runOpencode(run, workDir, agentFile, contextFile, outputMd);
+    const ocRes = await runOpencode(run, workDir, agentFile, contextFile);
     result.agent_ok = ocRes.ok;
     let agentOutput = '';
     if (fs.existsSync(outputMd)) {

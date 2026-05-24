@@ -345,11 +345,40 @@ async function pushAndPr(run, workDir, verify, critic, buildInfo) {
     log('  ⏭ 暂存区为空(可能全被排除规则过滤), skipping commit & push');
     return { has_changes: false };
   }
-  log(`  📑 staged ${staged.split('\n').length} file(s)`);
+  log(`  📑 staged ${staged.split('\n').length} file(s):\n${staged.split('\n').map(s => `      ${s}`).join('\n')}`);
   const msg = `feat(geo): fix discoverability for issue #${run.geo_issue_number} (${run.community})`;
   sh(`git commit -m "${msg}"`, { cwd: workDir });
-  sh(`git push -f origin HEAD:${run.branch_name}`, { cwd: workDir });
-  log(`  ✅ pushed to ${run.branch_name}`);
+
+  const localSha = sh('git rev-parse HEAD', { cwd: workDir }).trim();
+  const commitInfo = sh('git log -1 --shortstat --format=%h%x09%s', { cwd: workDir }).trim();
+  log(`  📍 local HEAD ${localSha.slice(0, 12)}\n${commitInfo.split('\n').map(s => `      ${s}`).join('\n')}`);
+
+  const remoteBeforeRaw = (() => {
+    try { return sh(`git ls-remote origin ${run.branch_name}`, { cwd: workDir }).trim(); }
+    catch { return ''; }
+  })();
+  const remoteBeforeSha = remoteBeforeRaw.split(/\s+/)[0] || '(none)';
+  log(`  📍 remote ${run.branch_name} before push: ${remoteBeforeSha === '(none)' ? '(分支不存在)' : remoteBeforeSha.slice(0, 12)}`);
+
+  try {
+    // stderr inherit 让 push 进度/错误直接打到 workflow log;stdout pipe 走丢避免污染脚本末尾 JSON 输出
+    execSync(`git push -f origin HEAD:${run.branch_name}`, { cwd: workDir, stdio: ['ignore', 'pipe', 'inherit'] });
+  } catch (err) {
+    log(`  ❌ git push 失败 (exit=${err.status ?? '?'})`);
+    throw err;
+  }
+
+  const remoteAfterRaw = sh(`git ls-remote origin ${run.branch_name}`, { cwd: workDir }).trim();
+  const remoteAfterSha = remoteAfterRaw.split(/\s+/)[0] || '';
+  log(`  📍 remote ${run.branch_name} after push: ${remoteAfterSha.slice(0, 12)}`);
+
+  if (remoteAfterSha !== localSha) {
+    log(`  ⚠ 警告: remote SHA(${remoteAfterSha.slice(0, 12)}) ≠ local HEAD(${localSha.slice(0, 12)}),push exit 0 但实际 ref 未对齐`);
+  } else if (remoteBeforeSha === remoteAfterSha) {
+    log(`  ⚠ 警告: remote SHA 推前推后未变(${remoteAfterSha.slice(0, 12)}),实际是 no-op push`);
+  } else {
+    log(`  ✅ pushed to ${run.branch_name} (${remoteBeforeSha === '(none)' ? '新建分支' : `${remoteBeforeSha.slice(0, 12)} → ${remoteAfterSha.slice(0, 12)}`})`);
+  }
 
   const prTitle = `[GEO] fix #${run.geo_issue_number}: ${run.geo_issue_title}`;
   const prBody = buildPrBody(run, verify, critic, buildInfo);

@@ -5,16 +5,8 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
-      repo:
-        description: '仓库 URL (支持多个，逗号分隔，如 https://atomgit.com/owner/repo.git 或 owner/repo)'
-        required: false
-        default: ''
-      branch:
-        description: '分支'
-        required: false
-        default: ''
-      since:
-        description: '时间范围 (如 "2 days ago")'
+      repos:
+        description: '仓库 URL (支持多个，逗号分隔，如 https://atomgit.com/owner/repo.git)'
         required: false
         default: ''
       dry_run:
@@ -28,7 +20,6 @@ permissions:
 
 env:
   DEFAULT_REPO: ${{ vars.DAILY_CHECK_REPO || 'https://atomgit.com/example/repo.git' }}
-  DEFAULT_BRANCH: ${{ vars.DAILY_CHECK_BRANCH || 'main' }}
   OPENCODE_MODEL: ${{ vars.AI_MODEL || 'alibaba-cn/glm-5' }}
   OPENCODE_AGENT: ${{ vars.AI_AGENT || 'build' }}
   OPENCODE_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}
@@ -56,20 +47,20 @@ jobs:
       - name: Check new pages
         shell: bash
         env:
-          REPO: ${{ inputs.repo || env.DEFAULT_REPO }}
-          BRANCH: ${{ inputs.branch || env.DEFAULT_BRANCH }}
-          SINCE: ${{ inputs.since || '' }}
+          REPOs: ${{ inputs.repos || env.DEFAULT_REPO }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
         run: |
           DRY_RUN_ARG=""
-          
           if [ "$DRY_RUN" = "true" ]; then
             DRY_RUN_ARG="--dryRun"
           fi
           
-          node scripts/geo-daily-check/check-batch.js \
-            --repo="$REPO" \
-            --branch="$BRANCH" \
-            ${SINCE:+--since="$SINCE"} \
-            $DRY_RUN_ARG
+          IFS=',' read -ra REPO_ARR <<< "$REPOs"
+          for REPO in "${REPO_ARR[@]}"; do
+            echo "处理: $REPO"
+            # 调用 Node.js 脚本，并把分割的结果传进去
+            node scripts/geo-daily-check/check-single.js \
+              --repo="$REPO" \
+              $DRY_RUN_ARG
+          done

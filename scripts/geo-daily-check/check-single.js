@@ -17,7 +17,6 @@
  *   --repo=<url>        必填。Git 仓库 URL，支持格式:
  *                         - https://atomgit.com/owner/repo.git
  *                         - owner/repo (简写格式)
- *   --branch=<branch>   可选。指定分支，默认自动检测或 'main'
  *   --since=<time>      可选。检查时间范围，默认 '1 day ago'
  *                         示例: '2 days ago', '2024-01-01'
  *   --dryRun            可选。仅检查不生成配置、不提 issue、不创建 PR
@@ -38,13 +37,25 @@
  */
 
 import fs from 'fs';
-import path from 'path';
+import path, { join } from 'path';
 import { execSync } from 'child_process';
 import { parse as parseYaml } from 'yaml';
 import { createIssue, findIssueByTitlePrefix, updateIssue, createPullRequest, updatePullRequest, listPullRequests } from '../lib/atomgit-api.js';
 import { buildPortal } from '../lib/portal-build.js';
 
 const CACHE_BASE_DIR = '/tmp/.cache/geo-bot/projects';
+
+const appDirCandidates = [
+  'app',
+  'packages/website',
+];
+
+const buildDirCandidates = [
+  '.output/public',
+  'dist',
+  'app/.vitepress/dist',
+  'packages/website/.output/public'
+];
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -125,7 +136,7 @@ function getRepoUrl(owner, repo) {
   return `https://oauth2:${token}@atomgit.com/${owner}/${repo}.git`;
 }
 
-function prepareProjectDir(owner, repo, branch = 'main') {
+function prepareProjectDir(owner, repo) {
   const projectDir = getProjectDir(owner, repo);
   const repoUrl = getRepoUrl(owner, repo);
   
@@ -134,20 +145,25 @@ function prepareProjectDir(owner, repo, branch = 'main') {
     if (fs.existsSync(gitDir)) {
       log(`项目目录已存在: ${projectDir}`);
       log(`执行 git pull --rebase ...`);
-      
+
       try {
-        runCmd(`git fetch origin ${branch}`, projectDir, { silent: true });
-        runCmd(`git checkout ${branch}`, projectDir, { silent: true });
-        runCmd(`git pull --rebase origin ${branch}`, projectDir);
+        const res = execSync('git pull --rebase', {
+          cwd: projectDir,
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'inherit']
+        }).trim();
         log(`✅ 项目已更新`);
+        if (res.includes('Already up to date.')) {
+          return { skipBuild: true, dir: projectDir };
+        }
       } catch (err) {
         log(`⚠ 更新失败，重新克隆: ${err.message}`);
         fs.rmSync(projectDir, { recursive: true, force: true });
         fs.mkdirSync(projectDir, { recursive: true });
-        runCmd(`git clone --depth=100 --branch ${branch} "${repoUrl}" "${projectDir}"`);
+        runCmd(`git clone --depth=100 "${repoUrl}" "${projectDir}"`);
         log(`✅ 项目已重新克隆`);
       }
-      return projectDir;
+      return { skipBuild: false, dir: projectDir };
     } else {
       log(`目录存在但非 Git 仓库，删除并重新克隆`);
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -158,14 +174,14 @@ function prepareProjectDir(owner, repo, branch = 'main') {
   log(`克隆项目: ${owner}/${repo} -> ${projectDir}`);
   
   try {
-    runCmd(`git clone --depth=100 --branch ${branch} "${repoUrl}" "${projectDir}"`);
+    runCmd(`git clone --depth=100 "${repoUrl}" "${projectDir}"`);
     log(`✅ 项目已克隆`);
   } catch (err) {
     log(`❌ 克隆失败: ${err.message}`);
     throw err;
   }
   
-  return projectDir;
+  return { skipBuild: false, dir: projectDir };
 }
 
 function getDefaultBranch(workDir) {
@@ -186,65 +202,40 @@ function getDefaultBranch(workDir) {
   return 'main';
 }
 
-function getNewMdFiles(workDir, since) {
-  const sinceArg = since ? `--since="${since}"` : '--since="1 day ago"';
-  const cmd = `git log ${sinceArg} --name-only --pretty=format: --diff-filter=A -- "app/**/*.md"`;
-  const output = runCmd(cmd, workDir, { silent: true });
-  const files = output
-    .split('\n')
-    .map(f => f.trim())
-    .filter(f => f.length > 0 && f.startsWith('app/') && f.endsWith('.md'));
-  return [...new Set(files)];
-}
+function* scanFiles(path, pattern, ignore) {
+  if (!fs.existsSync(path) || !fs.statSync(path).isDirectory()) {
+    return;
+  }
 
-function parseFrontmatter(content) {
-  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!match) return {};
-  try {
-    return parseYaml(match[1]) || {};
-  } catch (err) {
-    log(`解析 frontmatter 失败: ${err.message}`);
-    return {};
+  if (!pattern) {
+    return;
   }
-}
 
-function hasFrontmatterConfig(frontmatter, type) {
-  if (!frontmatter || typeof frontmatter !== 'object') return false;
-  
-  if (type === 'jsonld') {
-    const head = frontmatter.head;
-    if (!Array.isArray(head)) return false;
-    return head.some(item => {
-      if (!Array.isArray(item) || item.length < 2) return false;
-      const [tag, attrs] = item;
-      if (tag !== 'script') return false;
-      return attrs && attrs.type === 'application/ld+json';
-    });
+  const ignores = Array.isArray(ignore) ? ignore : (ignore ? [ignore] : []);
+  const patterns = Array.isArray(pattern) ? pattern : [pattern];
+
+  function* itr(path) {
+    outer: for (const file of fs.readdirSync(path, { withFileTypes: true })) {
+      const filePath = join(path, file.name);
+      for (const ig of ignores) {
+        if (ig.test(filePath)) {
+          continue outer;
+        }
+      }
+
+      for (const p of patterns) {
+        if (p.test(filePath)) {
+          yield filePath;
+        }
+      }
+
+      if (file.isDirectory()) {
+        yield* itr(filePath);
+      }
+    }
   }
-  
-  if (type === 'tdk') {
-    const hasTitle = !!frontmatter.title;
-    const head = frontmatter.head;
-    if (!Array.isArray(head)) return hasTitle;
-    
-    const hasDescription = head.some(item => {
-      if (!Array.isArray(item) || item.length < 2) return false;
-      const [tag, attrs] = item;
-      if (tag !== 'meta') return false;
-      return attrs && attrs.name === 'description' && attrs.content;
-    });
-    
-    const hasKeywords = head.some(item => {
-      if (!Array.isArray(item) || item.length < 2) return false;
-      const [tag, attrs] = item;
-      if (tag !== 'meta') return false;
-      return attrs && attrs.name === 'keywords' && attrs.content;
-    });
-    
-    return hasTitle || hasDescription || hasKeywords;
-  }
-  
-  return false;
+
+  yield* itr(path);
 }
 
 function checkConfigExists(workDir, mdPath, type) {
@@ -258,50 +249,23 @@ function checkConfigExists(workDir, mdPath, type) {
   return fs.existsSync(configPath);
 }
 
-function mdPathToPageUrl(mdPath) {
-  let url = mdPath
-    .replace(/^app\//, '')
-    .replace(/\.md$/, '/')
-    .replace(/\/index\/$/, '/');
-  if (!url.endsWith('/')) url += '/';
-  return url;
-}
-
-function mdPathToBuildHtml(mdPath, buildOutputDir) {
-  if (!buildOutputDir) return null;
-  let relPath = mdPath
-    .replace(/^app\//, '')
-    .replace(/\.md$/, '');
-  if (relPath === 'index' || relPath.endsWith('/index')) {
-    relPath = relPath.replace(/\/index$/, '').replace(/^index$/, '');
-    if (relPath === '') relPath = 'index';
-    else relPath = `${relPath}/index`;
-  } else {
-    relPath = `${relPath}/index`;
-  }
-  const htmlPath = path.join(buildOutputDir, `${relPath}.html`);
-  return fs.existsSync(htmlPath) ? htmlPath : null;
-}
-
 function buildIssueBody(pages, owner, repo) {
   const lines = [
     `**项目**: ${owner}/${repo}`,
     '',
     '检测到以下页面缺少 SEO/GEO 配置:',
     '',
-    '| Dimension | 页面路径 | 页面 URL | 问题描述 |',
-    '| --- | --- | --- | --- |',
+    '| Dimension | 页面路径 | 问题描述 |',
+    '| --- | --- | --- |',
   ];
   
   for (const page of pages) {
-    const urlMd = `[${page.url}](${page.url})`;
-    
     if (page.needsTdk) {
-      lines.push(`| tdk | ${page.file} | ${urlMd} | 缺少 TDK (title, description, keywords) 配置 |`);
+      lines.push(`| tdk | ${page.url} | 缺少 TDK (title, description, keywords) 配置 |`);
     }
     
     if (page.needsJsonld) {
-      lines.push(`| schema | ${page.file} | ${urlMd} | 缺少 JSON-LD 结构化数据配置 |`);
+      lines.push(`| schema | ${page.url} | 缺少 JSON-LD 结构化数据配置 |`);
     }
   }
   
@@ -378,191 +342,9 @@ async function createOrUpdateIssue(owner, repo, pages) {
   }
 }
 
-async function createPullRequestForFix(owner, repo, workDir, issueNumber, needsConfig, baseBranch) {
-  if (!issueNumber) {
-    log(`⚠ 无 issue number，跳过创建 PR`);
-    return { skipped: true, reason: 'no issue number' };
-  }
-  
-  const branchName = `geo-fix-${issueNumber}-${Date.now()}`;
-  const prTitle = `[GEO] fix #${issueNumber}: ${needsConfig.length} pages need SEO/GEO config`;
-  
-  const prBodyLines = [
-    `**关联 Issue**: #${issueNumber}`,
-    '',
-    '### 修复内容',
-    '',
-    '本次修复为以下页面添加了 SEO/GEO 配置:',
-    '',
-  ];
-  
-  for (const page of needsConfig) {
-    prBodyLines.push(`- ${page.file}`);
-    if (page.tdkGenerated?.success) prBodyLines.push(`  - ✅ TDK 配置已生成`);
-    if (page.jsonldGenerated?.success) prBodyLines.push(`  - ✅ JSON-LD 配置已生成`);
-  }
-  
-  prBodyLines.push('');
-  prBodyLines.push('### 配置文件路径');
-  prBodyLines.push('');
-  prBodyLines.push('- TDK: `.geo/tdks/{页面路径}/index.json`');
-  prBodyLines.push('- JSON-LD: `.geo/jsonld/{页面路径}/index.json`');
-  prBodyLines.push('');
-  prBodyLines.push('<sub>由 geo-develop 自动生成</sub>');
-  
-  const prBody = prBodyLines.join('\n');
-  
-  try {
-    log(`\n提交代码变更...`);
-    
-    runCmd(`git add .geo/`, workDir);
-    const hasChanges = runCmd(`git diff --staged --name-only`, workDir, { silent: true });
-    if (!hasChanges || hasChanges.trim() === '') {
-      log(`⚠ 无变更需要提交`);
-      return { skipped: true, reason: 'no changes' };
-    }
-    
-    runCmd(`git checkout ${baseBranch}`, workDir, { silent: true });
-    runCmd(`git checkout -b ${branchName}`, workDir);
-    
-    runCmd(`git config user.name "geo-bot"`, workDir, { silent: true });
-    runCmd(`git config user.email "geo-bot@atomgit.com"`, workDir, { silent: true });
-    
-    runCmd(`git add .geo/`, workDir);
-    
-    const commitMsg = `feat(geo): add TDK and JSON-LD config for #${issueNumber}`;
-    runCmd(`git commit -m "${commitMsg}"`, workDir);
-    
-    const repoUrl = getRepoUrl(owner, repo);
-    runCmd(`git push "${repoUrl}" HEAD:${branchName}`, workDir);
-    log(`✅ 已推送到分支: ${branchName}`);
-    
-    log(`\n创建 Pull Request...`);
-    
-    const existing = await listPullRequests({
-      owner,
-      repo,
-      head: branchName,
-      state: 'open',
-    });
-    
-    let pr, action;
-    if (Array.isArray(existing) && existing.length > 0) {
-      log(`♻️  PR 已存在 (#${existing[0].number})，更新内容`);
-      pr = await updatePullRequest({
-        owner,
-        repo,
-        number: existing[0].number,
-        title: prTitle,
-        body: prBody,
-      });
-      action = 'updated';
-      if (!pr) pr = existing[0];
-    } else {
-      log(`✨ 创建新 PR`);
-      pr = await createPullRequest({
-        owner,
-        repo,
-        title: prTitle,
-        body: prBody,
-        head: branchName,
-        base: baseBranch,
-      });
-      action = 'created';
-    }
-    
-    const prUrl = pr.html_url || pr.url || `https://atomgit.com/${owner}/${repo}/pulls/${pr.number}`;
-    log(`✅ PR ${action}: ${prUrl}`);
-    
-    return {
-      success: true,
-      url: prUrl,
-      number: pr.number,
-      action,
-      branch: branchName,
-    };
-  } catch (err) {
-    log(`❌ 创建 PR 失败: ${err.message}`);
-    
-    try {
-      runCmd(`git checkout ${baseBranch}`, workDir, { silent: true });
-      runCmd(`git branch -D ${branchName}`, workDir, { silent: true });
-    } catch {}
-    
-    return { success: false, error: err.message };
-  }
-}
-
-async function generateConfig(workDir, mdPath, type, args, buildOutputDir) {
-  const fullPath = path.join(workDir, mdPath);
-  const pageUrl = mdPathToPageUrl(mdPath);
-  
-  const skill = type === 'jsonld' ? 'schema-markup-generator' : 'meta-tags-optimizer';
-  const configDir = type === 'jsonld' ? '.geo/jsonld' : '.geo/tdks';
-  
-  let relPath = mdPath.replace(/^app\/?/, '').replace(/\.md$/, '');
-  if (relPath.endsWith('/index') || relPath === 'index') {
-    relPath = relPath.replace(/\/index$/, '').replace(/^index$/, '');
-    if (relPath === '') relPath = 'index';
-  }
-  const outputDir = path.join(workDir, configDir, relPath);
-  const outputPath = path.join(outputDir, 'index.json');
-  
-  const buildHtmlPath = mdPathToBuildHtml(mdPath, buildOutputDir);
-  
-  log(`  生成 ${type} 配置: ${mdPath} -> ${outputPath}`);
-  if (buildHtmlPath) {
-    log(`  构建产物 HTML: ${buildHtmlPath}`);
-  }
-  
-  if (args.dryRun) {
-    log(`  [dry-run] 跳过实际生成`);
-    return { success: true, dryRun: true };
-  }
-  
-  const model = args.model || 'alibaba-cn/glm-5';
-  const agent = args.agent || 'build';
-  const extraArgs = args.extraArgs || '--dangerously-skip-permissions';
-  
-  let prompt;
-  if (buildHtmlPath) {
-    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。
-
-页面源文件: ${fullPath}
-页面构建产物: ${buildHtmlPath}
-页面URL路径: ${pageUrl}
-输出文件: ${outputPath}
-
-请先阅读构建产物 HTML 文件的内容，分析页面的实际渲染结果，然后使用 ${skill} skill 生成合适的配置。`;
-  } else {
-    prompt = `为页面 ${mdPath} 生成${type === 'jsonld' ? 'JSON-LD结构化数据' : 'TDK meta标签'}配置。
-
-页面源文件: ${fullPath}
-页面URL路径: ${pageUrl}
-输出文件: ${outputPath}
-
-请阅读页面源文件内容，然后使用 ${skill} skill 生成合适的配置。`;
-  }
-  
-  try {
-    fs.mkdirSync(outputDir, { recursive: true });
-    
-    const cmd = `echo "${prompt.replace(/"/g, '\\"')}" | opencode run - --model "${model}" --agent "${agent}" ${extraArgs}`;
-    log(`  执行: opencode run ...`);
-    
-    runCmd(cmd, workDir, { timeout: 300000 });
-    
-    return { success: true, outputPath, buildHtmlPath };
-  } catch (err) {
-    log(`  ❌ 生成失败: ${err.message}`);
-    return { success: false, error: err.message };
-  }
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const repoUrl = args.repo;
-  const branch = args.branch || null;
   const since = args.since || null;
   const dryRun = args.dryRun || false;
   const model = args.model || process.env.OPENCODE_MODEL || 'alibaba-cn/glm-5';
@@ -595,57 +377,49 @@ async function main() {
   log(`时间范围: ${since || '1 day ago'}`);
   log(`模式: ${dryRun ? 'dry-run' : 'normal'}`);
 
-  const workDir = prepareProjectDir(owner, repo, branch);
-  
-  const actualBranch = branch || getDefaultBranch(workDir);
-  log(`分支: ${actualBranch}`);
+  const { dir: workDir, skipBuild } = prepareProjectDir(owner, repo);
 
-  const newMdFiles = getNewMdFiles(workDir, since);
-  log(`发现 ${newMdFiles.length} 个新增的 md 页面文件`);
+  if (!skipBuild) {
+    try {
+      await buildPortal(workDir);
+    } catch {
+      log(`${owner}/${repo} build失败`);
+      return;
+    }
+  }
 
-  if (newMdFiles.length === 0) {
-    log(`\n=== 检查完成 ===`);
-    log(`项目: ${owner}/${repo}`);
-    log(`新增页面: 0`);
-    log(`需要配置: 0`);
+  const buildDir = buildDirCandidates.map(dir => join(workDir, dir)).find(dir => fs.existsSync(dir));
+  if (!buildDir) {
+    log(`${owner}/${repo} 找不到构建产物目录`);
     return;
   }
 
   const results = [];
+
   let missingJsonld = 0;
   let missingTdk = 0;
 
-  for (const mdFile of newMdFiles) {
-    const fullPath = path.join(workDir, mdFile);
-    const content = fs.readFileSync(fullPath, 'utf-8');
-    const frontmatter = parseFrontmatter(content);
-    
-    const hasFrontmatterJsonld = hasFrontmatterConfig(frontmatter, 'jsonld');
-    const hasFrontmatterTdk = hasFrontmatterConfig(frontmatter, 'tdk');
-    const hasConfigJsonld = hasFrontmatterJsonld || checkConfigExists(workDir, mdFile, 'jsonld');
-    const hasConfigTdk = hasFrontmatterTdk || checkConfigExists(workDir, mdFile, 'tdk');
-    
+
+  for (const file of scanFiles(buildDir, /.html$/, [/(200|404|error)\.html$/, /baidu_verify/, /\b(blog|blogs|news|showcase|showcases)\b/])) {
+    const relPath = file.slice(buildDir.length);
+    const filePath = relPath.replace('.html', '').replace(/index$/, '');
     const pageResult = {
-      file: mdFile,
-      url: mdPathToPageUrl(mdFile),
-      frontmatter: {
-        hasJsonld: hasFrontmatterJsonld,
-        hasTdk: hasFrontmatterTdk,
-      },
-      configFile: {
-        hasJsonld: checkConfigExists(workDir, mdFile, 'jsonld'),
-        hasTdk: checkConfigExists(workDir, mdFile, 'tdk'),
-      },
-      needsJsonld: !hasConfigJsonld,
-      needsTdk: !hasConfigTdk,
+      url: filePath.endsWith('/') && filePath !== '/' ? filePath.slice(0, -1) : filePath,
+      needsJsonld: false,
+      needsTdk: false,
     };
-    
+    if (!fs.existsSync(join(workDir, '.geo/tdks', filePath))) {
+      pageResult.needsJsonld = true;
+      missingJsonld += 1;
+    }
+    if (!fs.existsSync(join(workDir, '.geo/jsonld', filePath))) {
+      pageResult.needsTdk = true;
+      missingTdk += 1;
+    }
+    if (pageResult.needsJsonld || pageResult.needsTdk) {
+      log(`${relPath}: tdk ${pageResult.needsTdk ? '❌' : '✅'} jsonld ${pageResult.needsJsonld ? '❌' : '✅'}`);
+    }
     results.push(pageResult);
-    
-    if (!hasConfigJsonld) missingJsonld++;
-    if (!hasConfigTdk) missingTdk++;
-    
-    log(`检查 ${mdFile}: jsonld=${hasConfigJsonld ? '✓' : '✗'}, tdk=${hasConfigTdk ? '✓' : '✗'}`);
   }
 
   const needsConfig = results.filter(r => r.needsJsonld || r.needsTdk);
@@ -653,49 +427,10 @@ async function main() {
   if (needsConfig.length > 0 && !dryRun) {
     log(`\n创建 issue 报告缺失配置...`);
     const issueResult = await createOrUpdateIssue(owner, repo, needsConfig);
-    
-    log(`\n构建项目以获取渲染产物...`);
-    
-    let buildOutputDir = null;
-    try {
-      const buildResult = await buildPortal(workDir);
-      if (buildResult.ok) {
-        buildOutputDir = buildResult.output_dir;
-        log(`✅ 构建完成: ${buildResult.output_dir_rel} (${(buildResult.duration_ms / 1000).toFixed(1)}s)`);
-      } else if (buildResult.skipped) {
-        log(`⚠ 构建跳过: ${buildResult.reason}`);
-      } else {
-        log(`⚠ 构建失败: ${buildResult.error}`);
-      }
-    } catch (err) {
-      log(`⚠ 构建异常: ${err.message}`);
-    }
-    
-    log(`\n开始为 ${needsConfig.length} 个页面生成配置...`);
-    
-    for (const page of needsConfig) {
-      log(`\n处理: ${page.file}`);
-      
-      if (page.needsTdk) {
-        const result = await generateConfig(workDir, page.file, 'tdk', { dryRun, model, agent, extraArgs }, buildOutputDir);
-        page.tdkGenerated = result;
-      }
-      
-      if (page.needsJsonld) {
-        const result = await generateConfig(workDir, page.file, 'jsonld', { dryRun, model, agent, extraArgs }, buildOutputDir);
-        page.jsonldGenerated = result;
-      }
-    }
-    
-    if (issueResult.success && issueResult.number) {
-      log(`\n提交代码并创建 Pull Request...`);
-      await createPullRequestForFix(owner, repo, workDir, issueResult.number, needsConfig, actualBranch);
-    }
   }
 
   log(`\n=== 检查完成 ===`);
   log(`项目: ${owner}/${repo}`);
-  log(`新增页面: ${newMdFiles.length}`);
   log(`需要配置: ${needsConfig.length}`);
   log(`缺失 JSON-LD: ${missingJsonld}`);
   log(`缺失 TDK: ${missingTdk}`);

@@ -3,7 +3,7 @@ import { normalizeUrlForSitemap } from '../lib/url-normalize.js';
 
 const SITEMAP_CACHE = new Map();
 
-async function getSitemapUrls(sitemapUrl) {
+export async function getSitemapUrls(sitemapUrl) {
   if (SITEMAP_CACHE.has(sitemapUrl)) return SITEMAP_CACHE.get(sitemapUrl);
 
   const urls = new Set();

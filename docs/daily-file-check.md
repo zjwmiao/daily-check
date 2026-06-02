@@ -146,13 +146,13 @@ const CHECKS = {
   tdk:     { needsBuild: true,  dimension: 'tdk',     run: checkTDK },
   schema:  { needsBuild: true,  dimension: 'schema',  run: checkSchema },
   robots:  { needsBuild: false, dimension: 'robots',  run: checkRobots },   // 占位
-  sitemap: { needsBuild: false, dimension: 'sitemap', run: checkSitemap },  // 占位
+  sitemap: { needsBuild: true,  dimension: 'sitemap', run: checkSitemap },
 };
 ```
 
 - `run(ctx)` 返回 `{ findings: [{ url, message }], skipped?, todo? }`
 - `ctx = { project, workDir, buildDir, pages, log }`
-- `needsBuild` 决定该项目是否需要 clone + 构建；纯 robots/sitemap 的项目不会克隆
+- `needsBuild` 决定该项目是否需要 clone + 构建；不依赖产物的项目（如纯 robots）不会克隆
 - `skip_check` 里列出的 key 会从 `activeChecks` 中剔除
 
 | 检查项 | 状态 | 逻辑 |
@@ -160,7 +160,15 @@ const CHECKS = {
 | `checkTDK` | ✅ 已实现 | 遍历页面，缺 `{seo_config_dir.tdk}/{key}/index.json` 即记一条 finding |
 | `checkSchema` | ✅ 已实现 | 遍历页面，缺 `{seo_config_dir.schema}/{key}/index.json` 即记一条 finding |
 | `checkRobots` | 🚧 占位 | 后续用 `lib/html-fetch.js` 拉取 `project.home` 的 robots.txt 校验合理性 |
-| `checkSitemap` | 🚧 占位 | 后续拉取 sitemap.xml 与产物页面比对收录覆盖率（可复用 `lib/url-normalize.js`） |
+| `checkSitemap` | ✅ 已实现 | 从 robots.txt 发现 sitemap（回退 `/sitemap.xml`），拉取并展开 `<sitemapindex>`，与产物页面**按 pathname** 比对，列出未收录路径 |
+
+**checkSitemap 细节**（`needsBuild: true`，需遍历产物页面）：
+
+1. `discoverSitemaps(home)` —— 拉 `{home}/robots.txt`，正则提取 `Sitemap:` 行；解析不到则回退 `{home}/sitemap.xml`
+2. 复用 [`getSitemapUrls`](../scripts/checks/sitemap-inclusion.js)（已导出）拉取并递归展开 sitemap index，带缓存
+3. `normalizePathname` —— URL 解码、去尾斜杠、去 `.html`，**只比 pathname 忽略 host**（`project.home` 可能含双等价域名，sitemap 仅产一份）
+4. 产物页面 `page.url` 归一化后不在收录集合 → 记一条 `页面未被 sitemap 收录` finding
+5. sitemap 全部拉取失败 / 为空 → `skipped`，不误报
 
 > 新增检查项：实现 `checkXxx(ctx)` 函数并在 `CHECKS` 注册即可；若依赖线上站点设 `needsBuild: false`，若依赖构建产物设 `needsBuild: true`。
 
@@ -238,5 +246,6 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.1.0 | 2026-06-02 | 实现 checkSitemap：robots.txt 发现 sitemap → 展开 index → 按 pathname 比对产物页面收录覆盖；复用并导出 checks/sitemap-inclusion.js 的 getSitemapUrls |
 | 2.0.0 | 2026-06-02 | 重构为配置驱动多项目（daily-check-config.yaml）+ 可插拔检查项（checkTDK/checkSchema + robots/sitemap 占位）；修复 TDK/Schema 标志位写反 bug；portal-build 支持显式 build_script/build_dir；删除 check-batch.js，workflow 改单次运行 |
 | 1.0.0 | 2026-05 | 原版本：单 `--repo` 参数、硬编码候选目录猜测、check-batch.js 批量编排 |

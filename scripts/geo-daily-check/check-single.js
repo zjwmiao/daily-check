@@ -30,6 +30,8 @@ import { execSync } from 'child_process';
 import { parse as parseYaml } from 'yaml';
 import { createIssue, findIssueByTitlePrefix, updateIssue } from '../lib/atomgit-api.js';
 import { buildPortal } from '../lib/portal-build.js';
+import { fetchHttp } from '../lib/html-fetch.js';
+import { getSitemapUrls } from '../checks/sitemap-inclusion.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -229,11 +231,84 @@ async function checkRobots(ctx) {
   return { findings: [], todo: true };
 }
 
-// TODO: 后续实现 —— 拉取 project.home 的 sitemap.xml, 与构建产物页面比对收录覆盖率。
-// 可复用 lib/html-fetch.js 与 lib/url-normalize.js(normalizeUrlForSitemap)。
+// 从 robots.txt 发现 sitemap 地址; 解析不到则回退 {home}/sitemap.xml
+async function discoverSitemaps(homeUrl) {
+  let robotsUrl;
+  try {
+    robotsUrl = new URL('/robots.txt', homeUrl).toString();
+  } catch {
+    return [];
+  }
+  try {
+    const { html } = await fetchHttp(robotsUrl, { timeout: 20000 });
+    const found = [...html.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => m[1].trim());
+    if (found.length) return found;
+  } catch {
+    // robots.txt 拉取失败, 回退默认路径
+  }
+  return [new URL('/sitemap.xml', homeUrl).toString()];
+}
+
+// 归一化 pathname 用于跨域名比对: 解码、去尾斜杠、去 .html、空串视为根
+function normalizePathname(p) {
+  let s = p;
+  try {
+    s = decodeURIComponent(p);
+  } catch {
+    // 保留原值
+  }
+  if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
+  s = s.replace(/\.html$/i, '');
+  return s === '' ? '/' : s;
+}
+
+// 拉取 project.home 的 sitemap(地址优先取自 robots.txt), 遍历构建产物页面找出未被收录的路径。
+// 按 pathname 比对(忽略 host): home 可能有双等价域名而 sitemap 只产一份。
 async function checkSitemap(ctx) {
-  ctx.log(`ℹ ${ctx.project.name} sitemap 覆盖检查尚未实现 (占位)`);
-  return { findings: [], todo: true };
+  const home = Array.isArray(ctx.project.home) ? ctx.project.home[0] : ctx.project.home;
+  if (!home) {
+    ctx.log(`⚠ ${ctx.project.name} 未配置 home, 跳过 sitemap 检查`);
+    return { findings: [], skipped: true };
+  }
+  if (!ctx.pages?.length) {
+    ctx.log(`⚠ ${ctx.project.name} 无构建产物页面, 跳过 sitemap 检查`);
+    return { findings: [], skipped: true };
+  }
+
+  const sitemapUrls = await discoverSitemaps(home);
+  const covered = new Set();
+  let total = 0;
+  for (const sm of sitemapUrls) {
+    let urls;
+    try {
+      urls = await getSitemapUrls(sm);
+    } catch (err) {
+      ctx.log(`⚠ ${ctx.project.name} sitemap 拉取失败 ${sm}: ${err.message}`);
+      continue;
+    }
+    total += urls.length;
+    for (const u of urls) {
+      try {
+        covered.add(normalizePathname(new URL(u).pathname));
+      } catch {
+        // 忽略畸形 loc
+      }
+    }
+  }
+
+  if (covered.size === 0) {
+    ctx.log(`⚠ ${ctx.project.name} sitemap 为空或全部拉取失败, 跳过覆盖判定`);
+    return { findings: [], skipped: true };
+  }
+  ctx.log(`${ctx.project.name} sitemap 收录 ${total} 条 (去重 pathname ${covered.size}), 待比对页面 ${ctx.pages.length}`);
+
+  const findings = [];
+  for (const page of ctx.pages) {
+    if (!covered.has(normalizePathname(page.url))) {
+      findings.push({ url: page.url, message: '页面未被 sitemap 收录' });
+    }
+  }
+  return { findings };
 }
 
 // 检查项注册表。needsBuild 表示该项依赖构建产物(需克隆+构建);
@@ -242,7 +317,7 @@ const CHECKS = {
   tdk: { needsBuild: true, dimension: 'tdk', run: checkTDK },
   schema: { needsBuild: true, dimension: 'schema', run: checkSchema },
   robots: { needsBuild: false, dimension: 'robots', run: checkRobots },
-  sitemap: { needsBuild: false, dimension: 'sitemap', run: checkSitemap },
+  sitemap: { needsBuild: true, dimension: 'sitemap', run: checkSitemap },
 };
 
 // ============ issue 上报 ============

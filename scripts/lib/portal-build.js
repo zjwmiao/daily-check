@@ -109,7 +109,13 @@ function isPnpmIgnoredBuildsOnly(output) {
 
 export async function buildPortal(
   workDir,
-  { installTimeoutMs = 5 * 60 * 1000, buildTimeoutMs = 10 * 60 * 1000 } = {}
+  {
+    installTimeoutMs = 5 * 60 * 1000,
+    buildTimeoutMs = 10 * 60 * 1000,
+    // 显式指定时跳过自动探测(来自 daily-check-config.yaml 的 build_script / build_dir)
+    buildScript: buildScriptOverride = null,
+    outputDirRel: outputDirOverride = null,
+  } = {}
 ) {
   const pkgPath = path.join(workDir, 'package.json');
   if (!fs.existsSync(pkgPath)) {
@@ -118,7 +124,7 @@ export async function buildPortal(
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
   const pm = detectPm(workDir);
   if (!pm) return { ok: false, skipped: true, reason: 'no package manager detected' };
-  const buildScript = detectBuildScript(pkg);
+  const buildScript = buildScriptOverride || detectBuildScript(pkg);
   if (!buildScript) {
     return { ok: false, skipped: true, reason: 'no build script in package.json' };
   }
@@ -184,7 +190,21 @@ export async function buildPortal(
   }
   const buildDuration = Date.now() - beforeBuild;
 
-  const outputDir = detectOutputDir(workDir, beforeBuild);
+  // 显式指定 outputDirRel 时直接采用(校验存在),否则在候选目录里挑最新的
+  let outputDir;
+  if (outputDirOverride) {
+    outputDir = fs.existsSync(path.join(workDir, outputDirOverride)) ? outputDirOverride : null;
+    if (!outputDir) {
+      return {
+        ok: false,
+        phase: 'detect-output',
+        error: `build 成功但指定的产物目录不存在: ${outputDirOverride}`,
+        duration_ms: buildDuration,
+      };
+    }
+  } else {
+    outputDir = detectOutputDir(workDir, beforeBuild);
+  }
   if (!outputDir) {
     return {
       ok: false,

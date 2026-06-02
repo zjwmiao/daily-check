@@ -5,24 +5,18 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
-      repos:
-        description: '仓库 URL (支持多个，逗号分隔，如 https://atomgit.com/owner/repo.git)'
+      project:
+        description: '只检查指定项目 (daily-check-config.yaml 里的 name, 留空则全部)'
         required: false
         default: ''
       dry_run:
-        description: 'Dry run (仅检查，不生成配置)'
+        description: 'Dry run (仅检查，不提 issue)'
         required: false
         type: boolean
         default: false
 
 permissions:
   contents: write
-
-env:
-  DEFAULT_REPO: ${{ vars.DAILY_CHECK_REPO || 'https://atomgit.com/example/repo.git' }}
-  OPENCODE_MODEL: ${{ vars.AI_MODEL || 'alibaba-cn/glm-5' }}
-  OPENCODE_AGENT: ${{ vars.AI_AGENT || 'build' }}
-  OPENCODE_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}
 
 jobs:
   check:
@@ -36,31 +30,19 @@ jobs:
         shell: bash
         run: pnpm install --frozen-lockfile
 
-      - name: Verify opencode
-        shell: bash
-        timeout-minutes: 2
-        run: |
-          echo "=== opencode 环境 ==="
-          which opencode
-          opencode --version
-
-      - name: Check new pages
+      - name: Check pages
         shell: bash
         env:
-          REPOs: ${{ inputs.repos || env.DEFAULT_REPO }}
+          PROJECT: ${{ inputs.project || '' }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
         run: |
-          DRY_RUN_ARG=""
+          ARGS=""
           if [ "$DRY_RUN" = "true" ]; then
-            DRY_RUN_ARG="--dryRun"
+            ARGS="$ARGS --dryRun"
           fi
-          
-          IFS=',' read -ra REPO_ARR <<< "$REPOs"
-          for REPO in "${REPO_ARR[@]}"; do
-            echo "处理: $REPO"
-            # 调用 Node.js 脚本，并把分割的结果传进去
-            node scripts/geo-daily-check/check-single.js \
-              --repo="$REPO" \
-              $DRY_RUN_ARG
-          done
+          if [ -n "$PROJECT" ]; then
+            ARGS="$ARGS --project=$PROJECT"
+          fi
+
+          node scripts/geo-daily-check/check-single.js $ARGS

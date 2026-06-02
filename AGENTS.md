@@ -19,6 +19,14 @@ scan-geo-issues.js → build-fix-tasks.js → execute-fix-runs.js → comment-ge
 
 完整流程说明、脚本接口、配置参数见: [docs/design.md](docs/design.md)
 
+## Daily File Check Workflow
+
+另有一个**配置驱动**的定时巡检流程 `daily-file-check`，检查前端 portal 项目页面的 SEO/GEO 配置完整性（TDK、JSON-LD Schema，预留 robots/sitemap）。
+
+- 待检项目集中维护在 [daily-check-config.yaml](daily-check-config.yaml)
+- 入口脚本 `scripts/geo-daily-check/check-single.js`，逐项目 clone → 构建 → 跑可插拔检查项 → 提 issue
+- 完整设计、配置字段、检查项扩展方式见: [docs/daily-file-check.md](docs/daily-file-check.md)
+
 ## 关键文件
 
 | 文件 | 用途 |

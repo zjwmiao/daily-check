@@ -224,11 +224,85 @@ async function checkSchema(ctx) {
   return { findings };
 }
 
-// TODO: 后续实现 —— 拉取 project.home 各站点的 robots.txt, 校验是否存在/是否合理(允许爬取、声明 sitemap 等)
-// 可复用 lib/html-fetch.js 的 fetchHttp。
+// 检查 project.home 的 robots.txt: 存在且可访问、未全站封禁爬虫、声明了 sitemap 且 sitemap 可正常访问。
 async function checkRobots(ctx) {
-  ctx.log(`ℹ ${ctx.project.name} robots.txt 检查尚未实现 (占位)`);
-  return { findings: [], todo: true };
+  const home = Array.isArray(ctx.project.home) ? ctx.project.home[0] : ctx.project.home;
+  if (!home) {
+    ctx.log(`⚠ ${ctx.project.name} 未配置 home, 跳过 robots 检查`);
+    return { findings: [], skipped: true };
+  }
+
+  let robotsUrl;
+  try {
+    robotsUrl = new URL('/robots.txt', home).toString();
+  } catch {
+    ctx.log(`⚠ ${ctx.project.name} home 非法 URL: ${home}, 跳过 robots 检查`);
+    return { findings: [], skipped: true };
+  }
+
+  const findings = [];
+
+  let text;
+  try {
+    const res = await fetchHttp(robotsUrl, { timeout: 20000 });
+    text = res.html;
+  } catch (err) {
+    return { findings: [{ url: robotsUrl, message: `robots.txt 无法访问: ${err.message}` }] };
+  }
+
+  // 全站封禁判定: User-agent: * 分组里出现 Disallow: /(且无 Allow: / 放开)
+  if (blocksAllCrawlers(text)) {
+    findings.push({ url: robotsUrl, message: 'robots.txt 对所有爬虫 Disallow: /，全站禁止抓取' });
+  }
+
+  // sitemap 声明
+  const sitemaps = [...text.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => m[1].trim());
+  if (sitemaps.length === 0) {
+    findings.push({ url: robotsUrl, message: 'robots.txt 未声明 Sitemap 地址' });
+  } else {
+    for (const sm of sitemaps) {
+      try {
+        await fetchHttp(sm, { timeout: 20000 });
+      } catch (err) {
+        findings.push({ url: sm, message: `robots.txt 声明的 sitemap 无法访问: ${err.message}` });
+      }
+    }
+  }
+
+  ctx.log(`${ctx.project.name} robots.txt 检查完成: 声明 sitemap ${sitemaps.length} 个, 问题 ${findings.length} 处`);
+  return { findings };
+}
+
+// 判断 robots.txt 是否对通配 User-agent(*) 全站封禁(Disallow: / 且未被 Allow: / 放开)。
+// 按 robots 分组规则切组: 连续的 User-agent 行 + 其后的规则行为一组, 规则行后再现 User-agent 即新组。
+function blocksAllCrawlers(text) {
+  const groups = [];
+  let cur = null;
+  let lastWasRule = false;
+
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim();
+    if (!line) continue;
+    const m = line.match(/^(user-agent|disallow|allow)\s*:\s*(.*)$/i);
+    if (!m) continue;
+    const field = m[1].toLowerCase();
+    const value = m[2].trim();
+
+    if (field === 'user-agent') {
+      if (!cur || lastWasRule) {
+        cur = { agents: [], disallowRoot: false, allowRoot: false };
+        groups.push(cur);
+      }
+      cur.agents.push(value);
+      lastWasRule = false;
+    } else if (cur) {
+      if (field === 'disallow' && value === '/') cur.disallowRoot = true;
+      if (field === 'allow' && value === '/') cur.allowRoot = true;
+      lastWasRule = true;
+    }
+  }
+
+  return groups.some((g) => g.agents.includes('*') && g.disallowRoot && !g.allowRoot);
 }
 
 // 从 robots.txt 发现 sitemap 地址; 解析不到则回退 {home}/sitemap.xml

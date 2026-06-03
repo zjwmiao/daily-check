@@ -2,7 +2,7 @@
 
 ## 概述
 
-Daily File Check 是一个**配置驱动**的定时巡检流程，用于检查前端 portal 项目页面的 SEO/GEO 配置完整性。当前已实现 TDK（title/description/keywords）与 JSON-LD Schema 两类检查，并预留 robots.txt、sitemap 覆盖等可插拔检查项。
+Daily File Check 是一个**配置驱动**的定时巡检流程，用于检查前端 portal 项目页面的 SEO/GEO 配置完整性。已实现 TDK（title/description/keywords）、JSON-LD Schema、robots.txt 合理性、sitemap 收录覆盖四类检查，并以可插拔方式注册便于扩展。
 
 所有待检项目（仓库地址、构建命令、产物目录、SEO 配置目录等）集中维护在仓库根的 [`daily-check-config.yaml`](../daily-check-config.yaml)，脚本逐项目运行并把缺失项汇总成 issue 提到对应仓库。
 
@@ -145,7 +145,7 @@ SEO 配置文件即查 `{workDir}/{seo_config_dir.*}/{key}/index.json` 是否存
 const CHECKS = {
   tdk:     { needsBuild: true,  dimension: 'tdk',     run: checkTDK },
   schema:  { needsBuild: true,  dimension: 'schema',  run: checkSchema },
-  robots:  { needsBuild: false, dimension: 'robots',  run: checkRobots },   // 占位
+  robots:  { needsBuild: false, dimension: 'robots',  run: checkRobots },
   sitemap: { needsBuild: true,  dimension: 'sitemap', run: checkSitemap },
 };
 ```
@@ -159,8 +159,15 @@ const CHECKS = {
 |--------|------|------|
 | `checkTDK` | ✅ 已实现 | 遍历页面，缺 `{seo_config_dir.tdk}/{key}/index.json` 即记一条 finding |
 | `checkSchema` | ✅ 已实现 | 遍历页面，缺 `{seo_config_dir.schema}/{key}/index.json` 即记一条 finding |
-| `checkRobots` | 🚧 占位 | 后续用 `lib/html-fetch.js` 拉取 `project.home` 的 robots.txt 校验合理性 |
+| `checkRobots` | ✅ 已实现 | 拉取 `project.home` 的 robots.txt：校验可访问、未对 `*` 全站 `Disallow: /`、声明了 `Sitemap:` 且声明的 sitemap 可正常访问 |
 | `checkSitemap` | ✅ 已实现 | 从 robots.txt 发现 sitemap（回退 `/sitemap.xml`），拉取并展开 `<sitemapindex>`，与产物页面**按 pathname** 比对，列出未收录路径 |
+
+**checkRobots 细节**（`needsBuild: false`，仅需线上站点）：
+
+1. 拉 `{home}/robots.txt`，拉取失败即记一条 finding
+2. `blocksAllCrawlers` —— 按分组解析，若作用于 `User-agent: *` 的组出现 `Disallow: /` 且无 `Allow: /` 放开 → 判为全站封禁
+3. 无 `Sitemap:` 声明 → 记一条 finding
+4. 对每个声明的 sitemap 发请求，不可访问 → 记一条 finding
 
 **checkSitemap 细节**（`needsBuild: true`，需遍历产物页面）：
 
@@ -246,6 +253,7 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.2.0 | 2026-06-02 | 实现 checkRobots：校验 robots.txt 可访问、未全站封禁 `*`、声明 Sitemap 且 sitemap 可访问 |
 | 2.1.0 | 2026-06-02 | 实现 checkSitemap：robots.txt 发现 sitemap → 展开 index → 按 pathname 比对产物页面收录覆盖；复用并导出 checks/sitemap-inclusion.js 的 getSitemapUrls |
 | 2.0.0 | 2026-06-02 | 重构为配置驱动多项目（daily-check-config.yaml）+ 可插拔检查项（checkTDK/checkSchema + robots/sitemap 占位）；修复 TDK/Schema 标志位写反 bug；portal-build 支持显式 build_script/build_dir；删除 check-batch.js，workflow 改单次运行 |
 | 1.0.0 | 2026-05 | 原版本：单 `--repo` 参数、硬编码候选目录猜测、check-batch.js 批量编排 |

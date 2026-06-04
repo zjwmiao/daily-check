@@ -26,18 +26,26 @@
   </thead>
   <tbody>
     <tr>
-      <td rowspan="5">网站自建开源社区</td>
+      <td rowspan="6">网站自建开源社区</td>
       <td>openEuler</td>
       <td>A</td>
       <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td>
-      <td>1. 文档站点 sitemap、llms.txt 的多版本合并策略需要再审视,并需要考虑过大的问题</td>
+      <td></td>
+      <td></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td>openEuler 文档站点</td>
+      <td>A</td>
+      <td>✅</td><td>✅</td><td>✅</td><td>✅<br/>title取自文稿本身，description、keywords暂不做配置</td><td>⏩<br/>文档站目前不加schema</td><td>✅</td>
+      <td>sitemap通过 <a href=https://developers.google.com/search/docs/crawling-indexing/sitemaps/large-sitemaps?hl=zh-cn>sitemapindex</a> 的方式做合并、llms.txt/llms-full.txt直接合并文本</td>
       <td></td>
       <td></td>
     </tr>
     <tr>
       <td>MindSpore</td>
       <td>A</td>
-      <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ❌缺失</td>
       <td>1. 文档站点 sitemap、llms.txt 的多版本合并策略需要再审视,并需要考虑过大的问题</td>
       <td></td>
       <td></td>

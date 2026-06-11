@@ -10,7 +10,7 @@ projects:
       - /zh/**/*
       - /en/**/*
     ignoreRoutes:
-      - /(zh|en)/(other/)?(blog|news|cookies|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
+      - /(zh|en)/(other/)?(blog|news|cookies|showcase|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
     build_script: build:geo
     seo_config_dir:
       tdk: .geo/tdks

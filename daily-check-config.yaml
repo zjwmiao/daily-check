@@ -9,7 +9,7 @@ projects:
     accessible_routes:
       - /zh/**/*
       - /en/**/*
-    ignoreRoutes:
+    ignore_routes:
       - /(zh|en)/(other/)?(blog|news|cookies|showcase|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
     build_script: build:geo
     seo_config_dir:
@@ -18,6 +18,41 @@ projects:
     home:
       - https://www.openeuler.org/
       - https://www.openeuler.openatom.cn/
+  - name: openGauss
+    owner: opengauss
+    repo: website
+    repo_url: https://gitcode.com/opengauss/website.git
+    branch: v2
+    framework: VitePress
+    build_dir: app/.vitepress/dist
+    accessible_routes:
+      - /zh/**/*
+      - /en/**/*
+    ignore_routes:
+      - /(zh|en)/(other/)?(blogs|news|cookies|showcase|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
+    build_script: build
+    seo_config_dir:
+      tdk: .geo/tdk
+      schema: .geo/jsonld
+    home:
+      - https://opengauss.org/
+  # - name: MindSpore
+  #   owner: mindspore
+  #   repo: mindspore-portal
+  #   repo_url: https://gitcode.com/mindspore/mindspore-portal.git
+  #   branch: master
+  #   framework: Nuxt
+  #   build_dir: packages/website/.output/public
+  #   build_script: generate:geo
+  #   accessible_routes:
+  #     - /
+  #   ignore_routes:
+  #     - /?(news|activities|technology-blogs|version-updates|cookies|search|video|calender|privacy|legal|online-showroom|data-sharing-with-third-parties|personal-data-collection-overview)/?(zh|en)
+  #   seo_config_dir:
+  #     tdk: .geo/tdk
+  #     schema: .geo/jsonld
+  #   home:
+  #     - https://www.mindspore.cn/
   # - name: openEuler-docs
   #   owner: openeuler
   #   repo: docs-website
@@ -31,16 +66,3 @@ projects:
   #   home:
   #     - https://docs.openeuler.org/
   #     - https://docs.openeuler.openatom.cn/
-  # - name: MindSpore
-  #   owner: mindspore
-  #   repo: mindspore-portal
-  #   repo_url: https://gitcode.com/mindspore/mindspore-portal.git
-  #   branch: master
-  #   framework: Nuxt
-  #   build_dir: packages/website/.output/public
-  #   build_script: generate:geo
-  #   seo_config_dir:
-  #     tdk: .geo/tdk
-  #     schema: .geo/jsonld
-  #   home:
-  #     - https://www.mindspore.cn/

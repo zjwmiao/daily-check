@@ -31,6 +31,7 @@ import { parse as parseYaml } from 'yaml';
 import { createIssue, findIssueByTitlePrefix, updateIssue } from '../lib/atomgit-api.js';
 import { fetchHttp } from '../lib/html-fetch.js';
 import { getSitemapUrls } from '../checks/sitemap-inclusion.js';
+import { url } from 'inspector';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -223,22 +224,6 @@ function* iterateFiles(rootPath, pattern, ignore) {
   yield* itr(rootPath);
 }
 
-// 扫一次构建产物, 归一化出页面列表。每项 { key, url }:
-//   key —— 用于定位 SEO 配置 {seoDir}/{key}/index.json, 约定同源码侧:
-//          foo/index.html -> 'foo'、about/index.html -> 'about'、首页 index.html -> 'index'
-//   url —— 展示用路径('/'、'/about'、'/en/docs')
-function enumeratePages(buildDir) {
-  const pages = [];
-  for (const file of iterateFiles(buildDir, /\.html$/, HTML_IGNORE)) {
-    const rel = file.slice(buildDir.length).replace(/\\/g, '/');
-    let key = rel.replace(/^\//, '').replace(/(\/index)?\.html$/, '');
-    if (key === '') key = 'index';
-    const url = key === 'index' ? '/' : '/' + key;
-    pages.push({ key, url });
-  }
-  return pages;
-}
-
 // 判断某页面是否存在 SEO 配置文件 {seoDir}/{key}/index.json
 function hasConfig(workDir, seoDir, key) {
   return fs.existsSync(path.join(workDir, seoDir, key, 'index.json'));
@@ -266,7 +251,7 @@ async function checkOnlineSitemapConfig(project, workDir, skip) {
   for (const url of allEntries) {
     let pathname;
     try { pathname = new URL(url).pathname; } catch { continue; }
-    if (shouldIgnore(pathname, project.ignoreRoutes)) continue;
+    if (shouldIgnore(pathname, project.ignore_routes)) continue;
 
     const key = pathnameToKey(pathname);
 
@@ -294,7 +279,7 @@ async function checkUrlAccessibility(project, sitemapUrls, skip) {
   if (!sitemapUrls?.length) return { findings: [], skipped: true };
 
   const filtered = sitemapUrls.filter(url => {
-    try { return !shouldIgnore(new URL(url).pathname, project.ignoreRoutes); } catch { return false; }
+    try { return !shouldIgnore(new URL(url).pathname, project.ignore_routes); } catch { return false; }
   });
 
   const sampleUrls = pickRandom(filtered, 50);
@@ -343,7 +328,15 @@ async function checkBuildSitemapCoverage(project, buildDir, sitemapUrls, skip) {
   if (!project.accessible_routes?.length) return { findings: [], skipped: true };
   if (!sitemapUrls?.length) return { findings: [], skipped: true };
 
-  const pages = enumeratePages(buildDir);
+  const pages = iterateFiles(buildDir, /\.html$/, HTML_IGNORE)
+    .map(file => {
+      const rel = file.slice(buildDir.length).replace(/\\/g, '/');
+      let key = rel.replace(/^\//, '').replace(/(\/index)?\.html$/, '');
+      if (key === '') key = 'index';
+      const url = key === 'index' ? '/' : '/' + key;
+      return url;
+    })
+    .filter(url => !shouldIgnore(url, project.ignore_routes));
   const sitemapSet = new Set(sitemapUrls.map(u => {
     try { return normalizePathname(new URL(u).pathname); } catch { return ''; }
   }).filter(Boolean));
@@ -352,7 +345,7 @@ async function checkBuildSitemapCoverage(project, buildDir, sitemapUrls, skip) {
   const findings = [];
 
   for (const page of pages) {
-    if (shouldIgnore(page.url, project.ignoreRoutes)) continue;
+    // if (shouldIgnore(page.url, project.ignore_routes)) continue;
 
     const shouldCheck = project.accessible_routes.some(p => matchGlob(p, page.url));
     if (shouldCheck && !sitemapSet.has(normalizePathname(page.url))) {

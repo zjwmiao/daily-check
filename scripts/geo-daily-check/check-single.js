@@ -77,11 +77,22 @@ function runCmd(cmd, cwd, options = {}) {
   }
 }
 
+function detectPm(workDir) {
+  if (fs.existsSync(path.join(workDir, 'pnpm-lock.yaml'))) return 'pnpm';
+  if (fs.existsSync(path.join(workDir, 'yarn.lock'))) return 'yarn';
+  if (fs.existsSync(path.join(workDir, 'package-lock.json'))) return 'npm';
+  return 'npm';
+}
+
 function spawnBuild(workDir, buildScript, outputDirRel) {
   return new Promise((resolve) => {
-    const script = buildScript || 'npm run build';
-    log(`启动构建子进程: ${script}`);
-    const child = spawn(script, [], { cwd: workDir, shell: true, stdio: 'ignore' });
+    const pm = detectPm(workDir);
+    const installCmd = pm === 'pnpm' ? 'pnpm install --frozen-lockfile' : pm === 'yarn' ? 'yarn install --immutable' : 'npm ci';
+    const buildCmd = buildScript || 'npm run build';
+    const fullScript = `${installCmd} && ${buildCmd}`;
+    
+    log(`启动构建子进程: ${fullScript}`);
+    const child = spawn(fullScript, [], { cwd: workDir, shell: true, stdio: 'inherit' });
     child.on('close', (code) => {
       const buildDir = outputDirRel ? path.join(workDir, outputDirRel) : null;
       if (code === 0 && buildDir && fs.existsSync(buildDir)) {
@@ -336,7 +347,8 @@ async function checkBuildSitemapCoverage(project, buildDir, sitemapUrls, skip) {
       const url = key === 'index' ? '/' : '/' + key;
       return url;
     })
-    .filter(url => !shouldIgnore(url, project.ignore_routes));
+    .filter(url => !shouldIgnore(url, project.ignore_routes))
+    .toArray();
   const sitemapSet = new Set(sitemapUrls.map(u => {
     try { return normalizePathname(new URL(u).pathname); } catch { return ''; }
   }).filter(Boolean));

@@ -32,7 +32,7 @@ projects:
   #     - https://docs.openeuler.org/
   #     - https://docs.openeuler.openatom.cn/
   # - name: MindSpore
-  #   owner: openeuler
+  #   owner: mindspore
   #   repo: mindspore-portal
   #   repo_url: https://gitcode.com/mindspore/mindspore-portal.git
   #   branch: master

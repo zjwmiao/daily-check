@@ -80,7 +80,7 @@ function spawnBuild(workDir, buildScript, outputDirRel) {
   return new Promise((resolve) => {
     const script = buildScript || 'npm run build';
     log(`启动构建子进程: ${script}`);
-    const child = spawn(script, [], { cwd: workDir, shell: true, stdio: 'inherit' });
+    const child = spawn(script, [], { cwd: workDir, shell: true, stdio: 'ignore' });
     child.on('close', (code) => {
       const buildDir = outputDirRel ? path.join(workDir, outputDirRel) : null;
       if (code === 0 && buildDir && fs.existsSync(buildDir)) {
@@ -580,6 +580,7 @@ async function runProject(project, { dryRun }) {
   for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
   const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
   log(`=== ${name} 检查完成, 问题统计: ${dimStr} ===`);
+  log(JSON.stringify(allFindings, null, 2));
 
   return { name, ok: true, findings: allFindings.length, byDim };
 }

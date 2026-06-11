@@ -6,6 +6,11 @@ projects:
     branch: master
     framework: VitePress
     build_dir: app/.vitepress/dist
+    accessible_routes:
+      - /zh/**/*
+      - /en/**/*
+    ignoreRoutes:
+      - /(zh|en)/(other/)?(blog|news|cookies|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
     build_script: build:geo
     seo_config_dir:
       tdk: .geo/tdks
@@ -13,29 +18,29 @@ projects:
     home:
       - https://www.openeuler.org/
       - https://www.openeuler.openatom.cn/
-  - name: openEuler-docs
-    owner: openeuler
-    repo: docs-website
-    repo_url: https://gitcode.com/openeuler/docs-website.git
-    branch: master
-    framework: VitePress
-    build_dir: app/.vitepress/dist
-    skip_check:
-      - tdk
-      - schema
-    home:
-      - https://docs.openeuler.org/
-      - https://docs.openeuler.openatom.cn/
-  - name: MindSpore
-    owner: openeuler
-    repo: mindspore-portal
-    repo_url: https://gitcode.com/mindspore/mindspore-portal.git
-    branch: master
-    framework: Nuxt
-    build_dir: packages/website/.output/public
-    build_script: generate:geo
-    seo_config_dir:
-      tdk: .geo/tdk
-      schema: .geo/jsonld
-    home:
-      - https://www.mindspore.cn/
+  # - name: openEuler-docs
+  #   owner: openeuler
+  #   repo: docs-website
+  #   repo_url: https://gitcode.com/openeuler/docs-website.git
+  #   branch: master
+  #   framework: VitePress
+  #   build_dir: app/.vitepress/dist
+  #   skip_check:
+  #     - tdk
+  #     - schema
+  #   home:
+  #     - https://docs.openeuler.org/
+  #     - https://docs.openeuler.openatom.cn/
+  # - name: MindSpore
+  #   owner: openeuler
+  #   repo: mindspore-portal
+  #   repo_url: https://gitcode.com/mindspore/mindspore-portal.git
+  #   branch: master
+  #   framework: Nuxt
+  #   build_dir: packages/website/.output/public
+  #   build_script: generate:geo
+  #   seo_config_dir:
+  #     tdk: .geo/tdk
+  #     schema: .geo/jsonld
+  #   home:
+  #     - https://www.mindspore.cn/

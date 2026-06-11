@@ -26,10 +26,9 @@ import fs from 'fs';
 import os from 'os';
 import path, { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { parse as parseYaml } from 'yaml';
 import { createIssue, findIssueByTitlePrefix, updateIssue } from '../lib/atomgit-api.js';
-import { buildPortal } from '../lib/portal-build.js';
 import { fetchHttp } from '../lib/html-fetch.js';
 import { getSitemapUrls } from '../checks/sitemap-inclusion.js';
 
@@ -75,6 +74,54 @@ function runCmd(cmd, cwd, options = {}) {
     if (options.silent) return '';
     throw err;
   }
+}
+
+function spawnBuild(workDir, buildScript, outputDirRel) {
+  return new Promise((resolve) => {
+    const script = buildScript || 'npm run build';
+    log(`启动构建子进程: ${script}`);
+    const child = spawn(script, [], { cwd: workDir, shell: true, stdio: 'inherit' });
+    child.on('close', (code) => {
+      const buildDir = outputDirRel ? path.join(workDir, outputDirRel) : null;
+      if (code === 0 && buildDir && fs.existsSync(buildDir)) {
+        resolve({ ok: true, buildDir });
+      } else {
+        resolve({ ok: false, error: code === 0 ? 'build dir not found' : `exit code ${code}` });
+      }
+    });
+    child.on('error', (err) => resolve({ ok: false, error: err.message }));
+  });
+}
+
+function shouldIgnore(pathname, ignorePatterns) {
+  if (!ignorePatterns?.length) return false;
+  for (const pattern of ignorePatterns) {
+    try { if (new RegExp(pattern).test(pathname)) return true; } catch {}
+  }
+  return false;
+}
+
+function pickRandom(arr, n) {
+  if (arr.length <= n) return arr.slice();
+  const shuffled = arr.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, n);
+}
+
+function pathnameToKey(pathname) {
+  let s = pathname.replace(/^\//, '').replace(/\/$/, '').replace(/(\/index)?\.html$/i, '');
+  return s || 'index';
+}
+
+function matchGlob(pattern, pathname) {
+  const re = pattern
+    .replace(/\*\*/g, '(.*)')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '[^/]');
+  return new RegExp(`^${re}$`).test(pathname);
 }
 
 function getProjectDir(owner, repo) {
@@ -136,7 +183,14 @@ function prepareProjectDir(owner, repo, repoUrl) {
   return { skipBuild: false, dir: projectDir };
 }
 
-function* scanFiles(rootPath, pattern, ignore) {
+/**
+ * 
+ * @param {string} rootPath 遍历初始目录
+ * @param {string|RegExp|(string|RegExp)[]} pattern 要include的文件pattern
+ * @param {string|RegExp|(string|RegExp)[]} ignore 跳过pattern
+ * @returns {Generator<string>} 迭代器
+ */
+function* iterateFiles(rootPath, pattern, ignore) {
   if (!fs.existsSync(rootPath) || !fs.statSync(rootPath).isDirectory()) {
     return;
   }
@@ -175,9 +229,9 @@ function* scanFiles(rootPath, pattern, ignore) {
 //   url —— 展示用路径('/'、'/about'、'/en/docs')
 function enumeratePages(buildDir) {
   const pages = [];
-  for (const file of scanFiles(buildDir, /\.html$/, HTML_IGNORE)) {
+  for (const file of iterateFiles(buildDir, /\.html$/, HTML_IGNORE)) {
     const rel = file.slice(buildDir.length).replace(/\\/g, '/');
-    let key = rel.replace(/^\//, '').replace(/\.html$/, '').replace(/\/index$/, '');
+    let key = rel.replace(/^\//, '').replace(/(\/index)?\.html$/, '');
     if (key === '') key = 'index';
     const url = key === 'index' ? '/' : '/' + key;
     pages.push({ key, url });
@@ -190,86 +244,122 @@ function hasConfig(workDir, seoDir, key) {
   return fs.existsSync(path.join(workDir, seoDir, key, 'index.json'));
 }
 
-// ============ 检查项实现 ============
-// 每个检查项: async (ctx) => { findings: [{ url, message }], skipped?, todo? }
-// ctx = { project, workDir, buildDir, pages, log }
+// ============ 检查项实现（新版） ============
 
-async function checkTDK(ctx) {
-  const seoDir = ctx.project.seo_config_dir?.tdk;
-  if (!seoDir) {
-    ctx.log(`⚠ ${ctx.project.name} 未配置 seo_config_dir.tdk, 跳过 TDK 检查`);
-    return { findings: [], skipped: true };
-  }
-  const findings = [];
-  for (const page of ctx.pages) {
-    if (!hasConfig(ctx.workDir, seoDir, page.key)) {
-      findings.push({ url: page.url, message: '缺少 TDK (title, description, keywords) 配置' });
+async function checkOnlineSitemapConfig(project, workDir, skip) {
+  const home = project.home?.[0] || project.home;
+  if (!home) return { findings: [], skipped: true, sitemapUrls: [] };
+
+  const sitemapUrls = await discoverSitemaps(home);
+  let allEntries = [];
+  for (const sm of sitemapUrls) {
+    try {
+      allEntries.push(...await getSitemapUrls(sm));
+    } catch (err) {
+      log(`sitemap拉取失败 ${sm}: ${err.message}`);
     }
   }
-  return { findings };
-}
 
-async function checkSchema(ctx) {
-  const seoDir = ctx.project.seo_config_dir?.schema;
-  if (!seoDir) {
-    ctx.log(`⚠ ${ctx.project.name} 未配置 seo_config_dir.schema, 跳过 Schema 检查`);
-    return { findings: [], skipped: true };
-  }
+  if (!allEntries.length) return { findings: [], skipped: true, sitemapUrls: [] };
+
   const findings = [];
-  for (const page of ctx.pages) {
-    if (!hasConfig(ctx.workDir, seoDir, page.key)) {
-      findings.push({ url: page.url, message: '缺少 JSON-LD 结构化数据配置' });
+  for (const url of allEntries) {
+    let pathname;
+    try { pathname = new URL(url).pathname; } catch { continue; }
+    if (shouldIgnore(pathname, project.ignoreRoutes)) continue;
+
+    const key = pathnameToKey(pathname);
+
+    if (!skip.includes('sitemap-tdk') && project.seo_config_dir?.tdk) {
+      const tdkPath = path.join(workDir, project.seo_config_dir.tdk, key, 'index.json');
+      if (!fs.existsSync(tdkPath)) {
+        findings.push({ url, check: 'sitemap-tdk', message: 'sitemap条目缺少TDK配置文件' });
+      }
     }
-  }
-  return { findings };
-}
 
-// 检查 project.home 的 robots.txt: 存在且可访问、未全站封禁爬虫、声明了 sitemap 且 sitemap 可正常访问。
-async function checkRobots(ctx) {
-  const home = Array.isArray(ctx.project.home) ? ctx.project.home[0] : ctx.project.home;
-  if (!home) {
-    ctx.log(`⚠ ${ctx.project.name} 未配置 home, 跳过 robots 检查`);
-    return { findings: [], skipped: true };
-  }
-
-  let robotsUrl;
-  try {
-    robotsUrl = new URL('/robots.txt', home).toString();
-  } catch {
-    ctx.log(`⚠ ${ctx.project.name} home 非法 URL: ${home}, 跳过 robots 检查`);
-    return { findings: [], skipped: true };
-  }
-
-  const findings = [];
-
-  let text;
-  try {
-    const res = await fetchHttp(robotsUrl, { timeout: 20000 });
-    text = res.html;
-  } catch (err) {
-    return { findings: [{ url: robotsUrl, message: `robots.txt 无法访问: ${err.message}` }] };
-  }
-
-  // 全站封禁判定: User-agent: * 分组里出现 Disallow: /(且无 Allow: / 放开)
-  if (blocksAllCrawlers(text)) {
-    findings.push({ url: robotsUrl, message: 'robots.txt 对所有爬虫 Disallow: /，全站禁止抓取' });
-  }
-
-  // sitemap 声明
-  const sitemaps = [...text.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => m[1].trim());
-  if (sitemaps.length === 0) {
-    findings.push({ url: robotsUrl, message: 'robots.txt 未声明 Sitemap 地址' });
-  } else {
-    for (const sm of sitemaps) {
-      try {
-        await fetchHttp(sm, { timeout: 20000 });
-      } catch (err) {
-        findings.push({ url: sm, message: `robots.txt 声明的 sitemap 无法访问: ${err.message}` });
+    if (!skip.includes('sitemap-schema') && project.seo_config_dir?.schema) {
+      const schemaPath = path.join(workDir, project.seo_config_dir.schema, key, 'index.json');
+      if (!fs.existsSync(schemaPath)) {
+        findings.push({ url, check: 'sitemap-schema', message: 'sitemap条目缺少Schema配置文件' });
       }
     }
   }
 
-  ctx.log(`${ctx.project.name} robots.txt 检查完成: 声明 sitemap ${sitemaps.length} 个, 问题 ${findings.length} 处`);
+  log(`${project.name} sitemap配置检查完成: 条目 ${allEntries.length}, 问题 ${findings.length}`);
+  return { findings, sitemapUrls: allEntries };
+}
+
+async function checkUrlAccessibility(project, sitemapUrls, skip) {
+  if (skip.includes('url-access')) return { findings: [], skipped: true };
+  if (!sitemapUrls?.length) return { findings: [], skipped: true };
+
+  const filtered = sitemapUrls.filter(url => {
+    try { return !shouldIgnore(new URL(url).pathname, project.ignoreRoutes); } catch { return false; }
+  });
+
+  const sampleUrls = pickRandom(filtered, 50);
+  if (!sampleUrls.length) return { findings: [], skipped: true };
+
+  log(`${project.name} URL可访问性抽样检查: ${sampleUrls.length} 个`);
+  const findings = [];
+
+  for (const url of sampleUrls) {
+    try {
+      await fetchHttp(url, { timeout: 20000 });
+    } catch (err) {
+      findings.push({ url, check: 'url-access', message: `URL无法访问: ${err.message}` });
+    }
+  }
+
+  return { findings };
+}
+
+async function checkLlmsTxt(project, skip) {
+  if (skip.includes('llms-txt')) return { findings: [], skipped: true };
+
+  const home = project.home?.[0] || project.home;
+  if (!home) return { findings: [], skipped: true };
+
+  const findings = [];
+  const files = ['/llms.txt', '/llms-full.txt'];
+
+  for (const f of files) {
+    const url = new URL(f, home).toString();
+    try {
+      const res = await fetchHttp(url, { timeout: 15000 });
+      if (!res.html?.trim()) {
+        findings.push({ url, check: 'llms-txt', message: `${f} 文件为空或无内容` });
+      }
+    } catch (err) {
+      findings.push({ url, check: 'llms-txt', message: `${f} 无法访问: ${err.message}` });
+    }
+  }
+
+  return { findings };
+}
+
+async function checkBuildSitemapCoverage(project, buildDir, sitemapUrls, skip) {
+  if (skip.includes('sitemap-coverage')) return { findings: [], skipped: true };
+  if (!project.accessible_routes?.length) return { findings: [], skipped: true };
+  if (!sitemapUrls?.length) return { findings: [], skipped: true };
+
+  const pages = enumeratePages(buildDir);
+  const sitemapSet = new Set(sitemapUrls.map(u => {
+    try { return normalizePathname(new URL(u).pathname); } catch { return ''; }
+  }).filter(Boolean));
+
+  log(`${project.name} 构建产物sitemap覆盖检查: 页面 ${pages.length}, sitemap条目 ${sitemapSet.size}`);
+  const findings = [];
+
+  for (const page of pages) {
+    if (shouldIgnore(page.url, project.ignoreRoutes)) continue;
+
+    const shouldCheck = project.accessible_routes.some(p => matchGlob(p, page.url));
+    if (shouldCheck && !sitemapSet.has(normalizePathname(page.url))) {
+      findings.push({ url: page.url, check: 'sitemap-coverage', message: '构建页面未被sitemap收录' });
+    }
+  }
+
   return { findings };
 }
 
@@ -336,63 +426,8 @@ function normalizePathname(p) {
   return s === '' ? '/' : s;
 }
 
-// 拉取 project.home 的 sitemap(地址优先取自 robots.txt), 遍历构建产物页面找出未被收录的路径。
-// 按 pathname 比对(忽略 host): home 可能有双等价域名而 sitemap 只产一份。
-async function checkSitemap(ctx) {
-  const home = Array.isArray(ctx.project.home) ? ctx.project.home[0] : ctx.project.home;
-  if (!home) {
-    ctx.log(`⚠ ${ctx.project.name} 未配置 home, 跳过 sitemap 检查`);
-    return { findings: [], skipped: true };
-  }
-  if (!ctx.pages?.length) {
-    ctx.log(`⚠ ${ctx.project.name} 无构建产物页面, 跳过 sitemap 检查`);
-    return { findings: [], skipped: true };
-  }
-
-  const sitemapUrls = await discoverSitemaps(home);
-  const covered = new Set();
-  let total = 0;
-  for (const sm of sitemapUrls) {
-    let urls;
-    try {
-      urls = await getSitemapUrls(sm);
-    } catch (err) {
-      ctx.log(`⚠ ${ctx.project.name} sitemap 拉取失败 ${sm}: ${err.message}`);
-      continue;
-    }
-    total += urls.length;
-    for (const u of urls) {
-      try {
-        covered.add(normalizePathname(new URL(u).pathname));
-      } catch {
-        // 忽略畸形 loc
-      }
-    }
-  }
-
-  if (covered.size === 0) {
-    ctx.log(`⚠ ${ctx.project.name} sitemap 为空或全部拉取失败, 跳过覆盖判定`);
-    return { findings: [], skipped: true };
-  }
-  ctx.log(`${ctx.project.name} sitemap 收录 ${total} 条 (去重 pathname ${covered.size}), 待比对页面 ${ctx.pages.length}`);
-
-  const findings = [];
-  for (const page of ctx.pages) {
-    if (!covered.has(normalizePathname(page.url))) {
-      findings.push({ url: page.url, message: '页面未被 sitemap 收录' });
-    }
-  }
-  return { findings };
-}
-
-// 检查项注册表。needsBuild 表示该项依赖构建产物(需克隆+构建);
-// dimension 用于 issue 表格的维度列与提示。
-const CHECKS = {
-  tdk: { needsBuild: true, dimension: 'tdk', run: checkTDK },
-  schema: { needsBuild: true, dimension: 'schema', run: checkSchema },
-  robots: { needsBuild: false, dimension: 'robots', run: checkRobots },
-  sitemap: { needsBuild: true, dimension: 'sitemap', run: checkSitemap },
-};
+// 检查项注册表
+const CHECK_DIMENSIONS = ['sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage'];
 
 // ============ issue 上报 ============
 
@@ -411,6 +446,14 @@ function buildIssueBody(findings, project) {
     lines.push(`| ${f.check} | ${f.url} | ${f.message} |`);
   }
 
+  lines.push('');
+  lines.push('### 维度说明');
+  lines.push('');
+  lines.push('- **sitemap-tdk**: sitemap条目缺少TDK配置文件');
+  lines.push('- **sitemap-schema**: sitemap条目缺少Schema配置文件');
+  lines.push('- **url-access**: URL无法访问');
+  lines.push('- **llms-txt**: llms.txt/llms-full.txt缺失或为空');
+  lines.push('- **sitemap-coverage**: 构建页面未被sitemap收录');
   lines.push('');
   lines.push('### 建议操作');
   lines.push('');
@@ -462,71 +505,67 @@ async function runProject(project, { dryRun }) {
   log(`\n========== 项目: ${name} (${owner}/${repo}) ==========`);
 
   const skip = Array.isArray(project.skip_check) ? project.skip_check : [];
-  const activeChecks = Object.entries(CHECKS).filter(([key]) => !skip.includes(key));
-  if (activeChecks.length === 0) {
-    log(`${name} 所有检查项均被 skip_check 跳过`);
-    return { name, ok: true, findings: 0 };
-  }
-  const needsBuild = activeChecks.some(([, c]) => c.needsBuild);
 
-  let workDir = null;
-  let buildDir = null;
-  let pages = [];
-
-  if (needsBuild) {
-    if (!repoUrl) {
-      log(`❌ ${name} 缺少 repo_url, 无法克隆`);
-      return { name, ok: false, error: 'missing repo_url' };
-    }
-    let prep;
-    try {
-      prep = prepareProjectDir(owner, repo, repoUrl);
-    } catch (err) {
-      log(`❌ ${name} 克隆/更新失败: ${err.message}`);
-      return { name, ok: false, error: err.message };
-    }
-    workDir = prep.dir;
-
-    const outputDirRel = project.build_dir;
-    const expectedBuildDir = outputDirRel ? path.join(workDir, outputDirRel) : null;
-    const canReuse = prep.skipBuild && expectedBuildDir && fs.existsSync(expectedBuildDir);
-
-    if (canReuse) {
-      log(`${name} 仓库无更新且产物已存在, 跳过构建`);
-      buildDir = expectedBuildDir;
-    } else {
-      const res = await buildPortal(workDir, {
-        buildScript: project.build_script,
-        outputDirRel,
-      });
-      if (!res.ok) {
-        log(`❌ ${name} 构建失败: ${res.error || res.reason}`);
-        return { name, ok: false, error: res.error || res.reason };
-      }
-      buildDir = res.output_dir;
-    }
-
-    pages = enumeratePages(buildDir);
-    log(`${name} 共发现 ${pages.length} 个页面`);
+  // 1. 准备项目目录
+  if (!repoUrl) {
+    log(`❌ ${name} 缺少 repo_url`);
+    return { name, ok: false, error: 'missing repo_url' };
   }
 
-  const ctx = { project, workDir, buildDir, pages, log };
-  const allFindings = [];
-
-  for (const [key, check] of activeChecks) {
-    try {
-      const { findings = [] } = await check.run(ctx);
-      for (const f of findings) {
-        allFindings.push({ check: check.dimension, url: f.url, message: f.message });
-      }
-      if (findings.length) {
-        log(`${name} [${key}] 发现 ${findings.length} 处问题`);
-      }
-    } catch (err) {
-      log(`⚠ ${name} [${key}] 检查异常: ${err.message}`);
-    }
+  let workDir;
+  try {
+    workDir = prepareProjectDir(owner, repo, repoUrl).dir;
+  } catch (err) {
+    return { name, ok: false, error: err.message };
   }
 
+  // 2. 启动构建子进程（非阻塞）
+  const buildPromise = spawnBuild(workDir, `pnpm ${project.build_script}`, project.build_dir);
+
+  // 3. 并行执行线上检查
+  const onlineFindings = [];
+  let sitemapUrls = [];
+
+  // 3a. sitemap配置检查
+  const sitemapRes = await checkOnlineSitemapConfig(project, workDir, skip);
+  sitemapUrls = sitemapRes.sitemapUrls;
+  onlineFindings.push(...sitemapRes.findings);
+
+  // 3b. URL可访问性抽样
+  if (sitemapUrls.length > 0) {
+    const accessRes = await checkUrlAccessibility(project, sitemapUrls, skip);
+    onlineFindings.push(...accessRes.findings);
+  }
+
+  // 3c. llms.txt检查
+  const llmsRes = await checkLlmsTxt(project, skip);
+  onlineFindings.push(...llmsRes.findings);
+
+  // 4. 等待构建完成
+  log(`等待构建完成...`);
+  const buildResult = await buildPromise;
+
+  const allFindings = [...onlineFindings];
+
+  if (!buildResult.ok) {
+    log(`❌ ${name} 构建失败: ${buildResult.error}`);
+    // 构建失败仍报告线上检查结果
+    if (allFindings.length > 0 && !dryRun && process.env.ATOMGIT_TOKEN) {
+      await createOrUpdateIssue(project, allFindings);
+    }
+    return { name, ok: false, error: buildResult.error, findings: allFindings.length };
+  }
+
+  const buildDir = buildResult.buildDir;
+  log(`✅ 构建完成: ${buildDir}`);
+
+  // 5. 构建产物sitemap覆盖检查
+  if (project.accessible_routes?.length && sitemapUrls.length > 0) {
+    const coverageRes = await checkBuildSitemapCoverage(project, buildDir, sitemapUrls, skip);
+    allFindings.push(...coverageRes.findings);
+  }
+
+  // 6. 汇总 + 提issue
   if (allFindings.length > 0 && !dryRun) {
     if (!process.env.ATOMGIT_TOKEN) {
       log(`⚠ 未设置 ATOMGIT_TOKEN, 跳过 issue 上报`);
@@ -536,7 +575,7 @@ async function runProject(project, { dryRun }) {
     }
   }
 
-  // 按维度统计
+  // 统计
   const byDim = {};
   for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
   const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';

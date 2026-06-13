@@ -40,7 +40,7 @@ projects:
       - https://opengauss.org/
   - name: openGauss-docs
     owner: opengauss
-    repo: website
+    repo: docs
     project_type: docs
     repo_url: https://gitcode.com/opengauss/website.git
     branch: v2

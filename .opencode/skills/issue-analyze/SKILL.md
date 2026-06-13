@@ -60,7 +60,8 @@ compatibility: opencode
 ```
 
 **注意事项**
-- JSON block 必须以 `<!-- ANALYZE_RESULT -->` 开头标记,便于脚本解析
+- JSON block 格式必须严格遵循示例：`<!-- ANALYZE_RESULT -->` 标记放在 ```json 代码块内第一行（紧跟 ```json 之后）
+- 脚本会查找此标记来定位 JSON 内容，标记位置错误会导致解析失败
 - `target_owner` 和 `target_repo` 是根据 URL 域名匹配 project 后得出的目标仓库,后续自动化流程会在此仓库创建 issue
 - 如果 URL 涉及的域名不属于任何已配置的 project,则 `target_owner` 和 `target_repo` 应设为 null
 - `dimension` 只能是 `tdk`, `schema`, `sitemap`, `llms.txt` 之一

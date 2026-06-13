@@ -16,14 +16,37 @@ const ANALYZE_SKIP_MARKER = '<!-- geo-analyze-skip -->';
 const ANALYZE_RESULT_MARKER = '<!-- geo-analyze-result -->';
 
 function parseAnalyzeResult(content) {
-  const match = content.match(/<!-- ANALYZE_RESULT -->\s*```json\s*\n([\s\S]*?)\n```/);
-  if (!match) {
-    log('⚠ 未找到 ANALYZE_RESULT JSON block');
+  // 兼容两种格式：
+  // 1. <!-- ANALYZE_RESULT --> ```json ... ```
+  // 2. ```json <!-- ANALYZE_RESULT --> ... ```
+  const markerIdx = content.indexOf('<!-- ANALYZE_RESULT -->');
+  if (markerIdx === -1) {
+    log('⚠ 未找到 ANALYZE_RESULT 标记');
     return null;
   }
   
+  // 从标记位置开始，查找最近的 ```json 和 ``` 代码块
+  const afterMarker = content.slice(markerIdx);
+  const jsonBlockMatch = afterMarker.match(/```json\s*\n([\s\S]*?)\n```/);
+  
+  // 如果标记后面没有找到，尝试往前找
+  if (!jsonBlockMatch) {
+    const beforeMarker = content.slice(0, markerIdx);
+    const beforeMatch = beforeMarker.match(/```json\s*\n([\s\S]*?)\n```/);
+    if (!beforeMatch) {
+      log('⚠ 未找到 JSON 代码块');
+      return null;
+    }
+    try {
+      return JSON.parse(beforeMatch[1]);
+    } catch (err) {
+      log(`⚠ 解析 JSON 失败: ${err.message}`);
+      return null;
+    }
+  }
+  
   try {
-    return JSON.parse(match[1]);
+    return JSON.parse(jsonBlockMatch[1]);
   } catch (err) {
     log(`⚠ 解析 JSON 失败: ${err.message}`);
     return null;
@@ -257,11 +280,6 @@ async function handleHasProblems(issue, result, dryRun = false) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const dryRun = args.dryRun || process.env.DRY_RUN === 'true';
-  
-  if (dryRun) {
-    log('=== DryRun Mode: Analysis only, no API calls ===');
-  }
   
   if (!process.env.ATOMGIT_TOKEN) {
     console.error('❌ ATOMGIT_TOKEN 未设置');
@@ -270,8 +288,6 @@ async function main() {
   
   const issue = await readInput(args);
   log(`处理 issue: ${issue.owner}/${issue.repo} #${issue.number}`);
-  
-  const cacheDir = process.env.CACHE_DIR || '/tmp/.cache/geo-bot/issue-analyze';
   
   try {
     const { outputFile } = await runOpencodeAnalyze(issue);
@@ -291,14 +307,13 @@ async function main() {
     
     let outcome;
     if (result.has_problems === false) {
-      outcome = await handleNoProblems(issue, result, dryRun);
+      outcome = await handleNoProblems(issue, result);
     } else {
-      outcome = await handleHasProblems(issue, result, dryRun);
+      outcome = await handleHasProblems(issue, result);
     }
     
     const finalResult = {
       run_at: new Date().toISOString(),
-      dry_run: dryRun,
       source_issue: {
         owner: issue.owner,
         repo: issue.repo,
@@ -309,14 +324,6 @@ async function main() {
       outcome
     };
     
-    if (dryRun) {
-      const dryRunDir = path.join(cacheDir, 'dryrun-results');
-      fs.mkdirSync(dryRunDir, { recursive: true });
-      const dryRunFile = path.join(dryRunDir, `${issue.owner}-${issue.repo}-${issue.number}.json`);
-      fs.writeFileSync(dryRunFile, JSON.stringify(finalResult, null, 2), 'utf-8');
-      log(`DryRun 结果保存到: ${dryRunFile}`);
-    }
-    
     console.log(JSON.stringify(finalResult, null, 2));
     log(`🏁 完成: ${outcome.status}`);
     
@@ -325,7 +332,6 @@ async function main() {
     
     const errorResult = {
       run_at: new Date().toISOString(),
-      dry_run: dryRun,
       source_issue: {
         owner: issue.owner,
         repo: issue.repo,
@@ -334,13 +340,6 @@ async function main() {
       error: err.message,
       status: 'failed'
     };
-    
-    if (dryRun) {
-      const dryRunDir = path.join(cacheDir, 'dryrun-results');
-      fs.mkdirSync(dryRunDir, { recursive: true });
-      const dryRunFile = path.join(dryRunDir, `${issue.owner}-${issue.repo}-${issue.number}-error.json`);
-      fs.writeFileSync(dryRunFile, JSON.stringify(errorResult, null, 2), 'utf-8');
-    }
     
     console.log(JSON.stringify(errorResult, null, 2));
     process.exit(1);

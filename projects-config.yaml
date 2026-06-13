@@ -2,6 +2,7 @@ projects:
   - name: openEuler
     owner: openeuler
     repo: openEuler-portal
+    project_type: portal
     repo_url: https://gitcode.com/openeuler/openEuler-portal.git
     branch: master
     framework: VitePress
@@ -21,6 +22,7 @@ projects:
   - name: openGauss
     owner: opengauss
     repo: website
+    project_type: portal
     repo_url: https://gitcode.com/opengauss/website.git
     branch: v2
     framework: VitePress
@@ -36,6 +38,25 @@ projects:
       schema: .geo/jsonld
     home:
       - https://opengauss.org/
+  - name: openGauss-docs
+    owner: opengauss
+    repo: website
+    project_type: docs
+    repo_url: https://gitcode.com/opengauss/website.git
+    branch: v2
+    framework: VitePress
+    build_dir: app/.vitepress/dist
+    accessible_routes:
+      - /zh/**/*
+      - /en/**/*
+    ignore_routes:
+      - /(zh|en)/(blogs|news|events|cookies|showcase|search|notification|summit|user-practice|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
+    build_script: build
+    seo_config_dir:
+      tdk: .geo/tdk
+      schema: .geo/jsonld
+    home:
+      - https://docs.opengauss.org/
   # - name: MindSpore
   #   owner: mindspore
   #   repo: mindspore-portal

@@ -1,0 +1,116 @@
+name: GEO Issue Analyze
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      project:
+        description: '只检查指定项目 (projects-config.yaml 里的 name)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run (仅扫描不创建 issue)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  analyze:
+    runs-on: portal-x86
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify opencode
+        timeout-minutes: 2
+        run: |
+          which opencode && opencode --version
+
+      - name: Scan GEO issues
+        id: scan
+        env:
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          PROJECT: ${{ inputs.project || '' }}
+          CACHE_DIR: /tmp/.cache/geo-bot/issue-analyze
+        run: |
+          mkdir -p "$CACHE_DIR/exist-issues"
+          
+          ARGS=""
+          if [ -n "$PROJECT" ]; then
+            ARGS="$ARGS --project=$PROJECT"
+          fi
+          
+          node scripts/geo-issue-analyze/scan-issues.js $ARGS \
+            > "$CACHE_DIR/issues-to-process.json"
+          
+          ISSUE_COUNT=$(jq '.issues | length' "$CACHE_DIR/issues-to-process.json")
+          echo "issue_count=$ISSUE_COUNT" >> $GITHUB_OUTPUT
+          echo "Found $ISSUE_COUNT issues to process"
+
+      - name: Process each issue
+        if: steps.scan.outputs.issue_count > 0
+        env:
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          CACHE_DIR: /tmp/.cache/geo-bot/issue-analyze
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: |
+          mkdir -p "$CACHE_DIR/dryrun-results"
+          
+          DRY_RUN_FLAG=""
+          if [ "$DRY_RUN" = "true" ]; then
+            DRY_RUN_FLAG="--dryRun"
+            echo "=== Dry Run Mode: Analysis only, no API calls ==="
+          fi
+          
+          jq -c '.issues[]' "$CACHE_DIR/issues-to-process.json" | while read ISSUE; do
+            OWNER=$(echo "$ISSUE" | jq -r '.owner')
+            REPO=$(echo "$ISSUE" | jq -r '.repo')
+            NUM=$(echo "$ISSUE" | jq -r '.number')
+            TITLE=$(echo "$ISSUE" | jq -r '.title')
+            
+            echo ""
+            echo "========================================"
+            echo "Processing issue #$NUM in $OWNER/$REPO"
+            echo "Title: $TITLE"
+            echo "========================================"
+            
+            echo "$ISSUE" > "$CACHE_DIR/current-issue.json"
+            
+            node scripts/geo-issue-analyze/process-single.js \
+              --input="$CACHE_DIR/current-issue.json" \
+              $DRY_RUN_FLAG
+            
+            echo "Done issue #$NUM"
+          done
+          
+          echo ""
+          echo "=== All issues processed ==="
+
+      - name: Dry run summary
+        if: inputs.dry_run == true
+        run: |
+          echo "=== Dry Run Analysis Results ==="
+          echo ""
+          echo "--- Result Files ---"
+          if [ -d "$CACHE_DIR/dryrun-results" ] && [ "$(ls -A $CACHE_DIR/dryrun-results 2>/dev/null)" ]; then
+            for f in "$CACHE_DIR/dryrun-results"/*.json; do
+              echo ""
+              echo "File: $f"
+              cat "$f" | jq '.'
+            done
+          else
+            echo "No dryrun result files found"
+          fi
+          echo ""
+          echo "--- Analyzed Output Files ---"
+          ls -la "$CACHE_DIR/exist-issues"/*-result.md 2>/dev/null || echo "No result.md files"
+          echo ""
+          echo "--- Full Analysis Logs ---"
+          cat "$CACHE_DIR/dryrun-results"/*.json 2>/dev/null | jq -s '{ total: length, results: . }' || echo "No results"

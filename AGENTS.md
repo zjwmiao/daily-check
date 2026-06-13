@@ -15,6 +15,17 @@ scan-geo-issues.js → build-fix-tasks.js → execute-fix-runs.js → comment-ge
 
 管道式处理：扫描issue → 获取questions.json → opencode修复 → 评论结果
 
+## GEO Issue Analyze Workflow
+
+另有一个定时分析流程 `geo-issue-analyze.yml`，扫描各项目的 `[GEO]` issues 并分析：
+
+- **触发**: 每天凌晨 3:00，或手动触发
+- **流程**: `scan-issues.js → process-single.js (opencode + issue-analyze skill)`
+- **结果处理**:
+  - `has_problems: false` → 评论到原 issue
+  - `has_problems: true` → 创建 `[GEO-ANALYZE]` issue
+- **Dry Run**: `dry_run: true` 时只分析不提 issue，结果保存到文件
+
 ## 详细文档
 
 完整流程说明、脚本接口、配置参数见: [docs/design.md](docs/design.md)
@@ -31,8 +42,12 @@ scan-geo-issues.js → build-fix-tasks.js → execute-fix-runs.js → comment-ge
 
 | 文件 | 用途 |
 |------|------|
-| `.github/workflows/geo-auto-fix.yml` | 主workflow |
-| `scripts/scan-geo-issues.js` | 扫描[GEO] issues |
+| `.github/workflows/geo-auto-fix.yml` | 修复 workflow |
+| `.github/workflows/geo-issue-analyze.yml` | 分析 workflow |
+| `scripts/scan-geo-issues.js` | 扫描[GEO] issues (修复) |
+| `scripts/geo-issue-analyze/scan-issues.js` | 扫描所有项目 issues (分析) |
+| `scripts/geo-issue-analyze/process-single.js` | AI分析处理 |
+| `.opencode/skills/issue-analyze/SKILL.md` | issue分析skill |
 | `scripts/lib/atomgit-api.js` | AtomGit API封装 |
 | `scripts/lib/utils.js` | 公共工具(parseArgs/log/readInput) |
 
@@ -49,9 +64,15 @@ scan-geo-issues.js → build-fix-tasks.js → execute-fix-runs.js → comment-ge
 ## 运行示例
 
 ```bash
-# 本地调试扫描
+# 本地调试扫描 (修复流程)
 node scripts/scan-geo-issues.js --owner=openeuler --repo=openEuler-portal
 
-# 管道式处理单个issue
+# 管道式处理单个issue (修复流程)
 cat issue.json | node scripts/build-fix-tasks.js | node scripts/execute-fix-runs.js
+
+# 本地调试分析流程
+node scripts/geo-issue-analyze/scan-issues.js --project=openEuler
+
+# Dry run 分析 (只分析不提issue)
+node scripts/geo-issue-analyze/process-single.js --dryRun --input=issue.json
 ```

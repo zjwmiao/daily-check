@@ -190,6 +190,43 @@ node scripts/scan-geo-issues.js --owner=openeuler --repo=openEuler-portal --dry_
 | `GEO_BUILD_DISABLE` | env | - | 设 `1` 跳过 baseline + post-agent build |
 | `CRITIC_DISABLE` | env | - | 设 `1` 跳过 critic |
 
+## GEO Issue Analyze Workflow
+
+另有一个定时分析流程 `geo-issue-analyze.yml`，扫描 AtomGit 各项目的 `[GEO]` issues 并使用 AI 分析：
+
+- **触发**: 每天凌晨 3:00 自动运行，或手动触发
+- **功能**: 扫描 → AI分析 → 评论/创建 issue
+- **配置**: 项目列表在 `projects-config.yaml`
+
+### 流程
+
+```
+scan-issues.js → process-single.js (opencode + issue-analyze skill)
+```
+
+- 扫描所有配置项目的 `[GEO]` issues
+- 保存 issue 内容到缓存目录
+- 调用 opencode 使用 `issue-analyze` skill 分析
+- 解析结果：
+  - `has_problems: false` → 评论到原 issue（不涉及 GEO 基础配置）
+  - `has_problems: true` → 在目标仓库创建 `[GEO-ANALYZE]` issue
+
+### Dry Run 模式
+
+`dry_run: true` 时：
+- ✅ 依然执行 AI 分析
+- ❌ 不调用 AtomGit API（不评论/创建 issue）
+- ✅ 保存分析结果到 `dryrun-results/` 目录
+
+### 关键文件
+
+| 文件 | 用途 |
+|------|------|
+| `.github/workflows/geo-issue-analyze.yml` | 分析 workflow |
+| `scripts/geo-issue-analyze/scan-issues.js` | 扫描所有项目的 [GEO] issues |
+| `scripts/geo-issue-analyze/process-single.js` | 调用 opencode 分析 + 处理结果 |
+| `.opencode/skills/issue-analyze/SKILL.md` | issue 分析 skill |
+
 ## 仓库结构
 
 ```text
@@ -209,18 +246,27 @@ scripts/
     sitemap-inclusion.js       sitemap 收录检查
     post-fix-verify.js         pre-push 自检
 
-  scan-geo-issues.js           扫描 [GEO] issues
+  scan-geo-issues.js           扫描 [GEO] issues (geo-auto-fix)
   build-fix-tasks.js           构建修复任务
   execute-fix-runs.js          执行修复流程
   comment-geo-result.js        评论修复结果
   poll-portal-status.js        PR 状态监控 + 重验
 
+  geo-issue-analyze/
+    scan-issues.js             扫描所有项目的 [GEO] issues
+    process-single.js          调用 opencode 分析 + 处理结果
+
 .github/
   workflows/
-    geo-auto-fix.yml           主 workflow
+    geo-auto-fix.yml           主 workflow (修复)
+    geo-issue-analyze.yml      分析 workflow
   agents/
     geo-fix-prompt.md          fix agent prompt
     geo-critic-prompt.md       critic agent prompt
+
+.opencode/
+  skills/
+    issue-analyze/SKILL.md     issue 分析 skill
 
 docs/
   design.md                 架构决策与流程文档

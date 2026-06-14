@@ -116,13 +116,13 @@ Issue 文件路径: ${cache_file}
       '--agent', process.env.AI_AGENT || 'build',
       '--dangerously-skip-permissions'
     ], {
-      stdio: ['ignore', 'inherit', 'ignore'],
+      stdio: ['ignore', 'inherit', 'inherit'],
       env: { ...process.env }
     });
 
     proc.on('close', code => {
       if (code !== 0) {
-        reject(new Error(`opencode exited with code ${code}: ${stderr}`));
+        reject(new Error(`opencode exited with code ${code}`));
       } else {
         resolve({ outputFile });
       }
@@ -245,6 +245,11 @@ async function handleHasProblems(issue, result, dryRun = false) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const dryRun = args.dryRun || process.env.DRY_RUN === 'true';
+  
+  if (dryRun) {
+    log('=== DryRun Mode: Analysis only, no API calls ===');
+  }
   
   if (!process.env.ATOMGIT_TOKEN) {
     console.error('❌ ATOMGIT_TOKEN 未设置');
@@ -253,6 +258,8 @@ async function main() {
   
   const issue = await readInput(args);
   log(`处理 issue: ${issue.owner}/${issue.repo} #${issue.number}`);
+  
+  const cacheDir = process.env.CACHE_DIR || '/tmp/.cache/geo-bot/issue-analyze';
   
   try {
     const { outputFile } = await runOpencodeAnalyze(issue);
@@ -277,13 +284,14 @@ async function main() {
     
     let outcome;
     if (result.has_problems === false) {
-      outcome = await handleNoProblems(issue, result);
+      outcome = await handleNoProblems(issue, result, dryRun);
     } else {
-      outcome = await handleHasProblems(issue, result);
+      outcome = await handleHasProblems(issue, result, dryRun);
     }
     
     const finalResult = {
       run_at: new Date().toISOString(),
+      dry_run: dryRun,
       source_issue: {
         owner: issue.owner,
         repo: issue.repo,
@@ -294,6 +302,14 @@ async function main() {
       outcome
     };
     
+    if (dryRun) {
+      const dryRunDir = path.join(cacheDir, 'dryrun-results');
+      fs.mkdirSync(dryRunDir, { recursive: true });
+      const dryRunFile = path.join(dryRunDir, `${issue.owner}-${issue.repo}-${issue.number}.json`);
+      fs.writeFileSync(dryRunFile, JSON.stringify(finalResult, null, 2), 'utf-8');
+      log(`DryRun 结果保存到: ${dryRunFile}`);
+    }
+    
     console.log(JSON.stringify(finalResult, null, 2));
     log(`🏁 完成: ${outcome.status}`);
     
@@ -302,6 +318,7 @@ async function main() {
     
     const errorResult = {
       run_at: new Date().toISOString(),
+      dry_run: dryRun,
       source_issue: {
         owner: issue.owner,
         repo: issue.repo,
@@ -310,6 +327,13 @@ async function main() {
       error: err.message,
       status: 'failed'
     };
+    
+    if (dryRun) {
+      const dryRunDir = path.join(cacheDir, 'dryrun-results');
+      fs.mkdirSync(dryRunDir, { recursive: true });
+      const dryRunFile = path.join(dryRunDir, `${issue.owner}-${issue.repo}-${issue.number}-error.json`);
+      fs.writeFileSync(dryRunFile, JSON.stringify(errorResult, null, 2), 'utf-8');
+    }
     
     console.log(JSON.stringify(errorResult, null, 2));
     process.exit(1);

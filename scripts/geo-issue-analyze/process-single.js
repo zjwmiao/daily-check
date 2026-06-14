@@ -16,37 +16,15 @@ const ANALYZE_SKIP_MARKER = '<!-- geo-analyze-skip -->';
 const ANALYZE_RESULT_MARKER = '<!-- geo-analyze-result -->';
 
 function parseAnalyzeResult(content) {
-  // 兼容两种格式：
-  // 1. <!-- ANALYZE_RESULT --> ```json ... ```
-  // 2. ```json <!-- ANALYZE_RESULT --> ... ```
-  const markerIdx = content.indexOf('<!-- ANALYZE_RESULT -->');
-  if (markerIdx === -1) {
-    log('⚠ 未找到 ANALYZE_RESULT 标记');
+  // 格式固定：```json 后紧跟 <!-- ANALYZE_RESULT --> 标记
+  const match = content.match(/```json\s*\n<!-- ANALYZE_RESULT -->\s*\n([\s\S]*?)\n```/);
+  if (!match) {
+    log('⚠ 未找到 ANALYZE_RESULT JSON block');
     return null;
   }
   
-  // 从标记位置开始，查找最近的 ```json 和 ``` 代码块
-  const afterMarker = content.slice(markerIdx);
-  const jsonBlockMatch = afterMarker.match(/```json\s*\n([\s\S]*?)\n```/);
-  
-  // 如果标记后面没有找到，尝试往前找
-  if (!jsonBlockMatch) {
-    const beforeMarker = content.slice(0, markerIdx);
-    const beforeMatch = beforeMarker.match(/```json\s*\n([\s\S]*?)\n```/);
-    if (!beforeMatch) {
-      log('⚠ 未找到 JSON 代码块');
-      return null;
-    }
-    try {
-      return JSON.parse(beforeMatch[1]);
-    } catch (err) {
-      log(`⚠ 解析 JSON 失败: ${err.message}`);
-      return null;
-    }
-  }
-  
   try {
-    return JSON.parse(jsonBlockMatch[1]);
+    return JSON.parse(match[1]);
   } catch (err) {
     log(`⚠ 解析 JSON 失败: ${err.message}`);
     return null;

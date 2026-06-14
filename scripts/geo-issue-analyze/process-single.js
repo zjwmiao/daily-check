@@ -138,28 +138,15 @@ Issue 文件路径: ${cache_file}
       '--agent', process.env.AI_AGENT || 'build',
       '--dangerously-skip-permissions'
     ], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'inherit', 'ignore'],
       env: { ...process.env }
     });
-    
-    let stdout = '';
-    let stderr = '';
-    
-    proc.stdout.on('data', data => {
-      stdout += data.toString();
-      process.stdout.write(data);
-    });
-    
-    proc.stderr.on('data', data => {
-      stderr += data.toString();
-      process.stderr.write(data);
-    });
-    
+
     proc.on('close', code => {
       if (code !== 0) {
         reject(new Error(`opencode exited with code ${code}: ${stderr}`));
       } else {
-        resolve({ stdout, stderr, outputFile });
+        resolve({ outputFile });
       }
     });
     
@@ -297,6 +284,11 @@ async function main() {
     }
     
     const content = fs.readFileSync(outputFile, 'utf-8');
+
+    log(`=============== Agent output (issue: ${issue.owner}/${issue.repo} #${issue.number}) ===============`)
+    log(content);
+    log('\n');
+
     const result = parseAnalyzeResult(content);
     
     if (!result) {

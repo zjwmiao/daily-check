@@ -31,7 +31,7 @@ projects:
       - /zh/**/*
       - /en/**/*
     ignore_routes:
-      - /(zh|en)/(blogs|news|events|cookies|showcase|search|notification|summit|user-practice|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
+      - /(zh|en)/(blogs|news|events|cookies|showcase|search|notification|summit|privacy|legal|data-sharing-with-third-parties|personal-data-collection-overview)
     build_script: build
     seo_config_dir:
       tdk: .geo/tdk

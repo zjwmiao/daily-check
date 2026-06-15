@@ -20,16 +20,28 @@ const ANALYZE_RESULT_MARKER = '<!-- geo-analyze-result -->';
 const ANALYZE_IGNORED_MARKER = '<!-- geo-analyze-ignored -->';
 const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot', 'issue-analyze');
 
+function saveAndPrintIssueBody(issue) {
+  const bodyDir = path.join(CACHE_DIR, 'issue-bodies');
+  fs.mkdirSync(bodyDir, { recursive: true });
+  const bodyFile = path.join(bodyDir, `${issue.owner}-${issue.repo}-${issue.number}.txt`);
+  
+  const bodyContent = `=== Issue #${issue.number} (${issue.owner}/${issue.repo}) ===
+Title: ${issue.title || ''}
+URL: ${issue.url}
+
+${issue.body || '(empty)'}
+`;
+  
+  fs.writeFileSync(bodyFile, bodyContent, 'utf-8');
+  console.log('\n' + bodyContent);
+}
+
 function parseAnalyzeResult(content) {
   const match = content.match(/```json\s*\n<!-- ANALYZE_RESULT -->\s*\n([\s\S]*?)\n```/);
-  if (!match) {
-    log('⚠ 未找到 ANALYZE_RESULT JSON block');
-    return null;
-  }
+  if (!match) return null;
   try {
     return JSON.parse(match[1]);
-  } catch (err) {
-    log(`⚠ 解析 JSON 失败: ${err.message}`);
+  } catch {
     return null;
   }
 }
@@ -71,7 +83,6 @@ async function runProgramChecks(urls, projects) {
     
     const checkResult = await runAllChecks(url, project);
     results.push(checkResult);
-    log(`程序检查 ${url}: project=${project.name}, isDocs=${checkResult.isDocs}`);
   }
   
   return { results, warnings };
@@ -139,7 +150,6 @@ async function handleAllUrlsIgnored(issue, urls, dryRun = false) {
   const { owner, repo, number } = issue;
   
   if (dryRun) {
-    log('DryRun: 模拟评论 (所有 URL 被 ignore_routes 跳过)');
     return {
       status: 'dry_run',
       would_do: 'add_comment',
@@ -151,20 +161,17 @@ async function handleAllUrlsIgnored(issue, urls, dryRun = false) {
   
   const alreadyProcessed = await checkAlreadyProcessed(owner, repo, number);
   if (alreadyProcessed) {
-    log('跳过: 已有分析评论');
     return { status: 'skipped', reason: 'already_processed' };
   }
   
   const commentBody = buildIgnoredComment(urls);
   
-  log(`▶ 评论到原 issue #${number}`);
   const comment = await addIssueComment({
     owner, repo,
     issue_number: number,
     body: commentBody
   });
   
-  log(`✅ 评论已添加`);
   return { status: 'commented_ignored', comment_url: comment.html_url };
 }
 
@@ -249,14 +256,11 @@ async function runOpencodeAnalyze(issue, urlsToAnalyze, projects) {
   const prompt = buildLLMPrompt(issue, urlsToAnalyze, projects);
   
   fs.writeFileSync(inputFile, prompt, 'utf-8');
-  log(`LLM 输入文件: ${inputFile}`);
   
   const outputFile = issue.cache_file?.replace('.md', '-result.md') || 
     path.join(CACHE_DIR, 'exist-issues', `${issue.owner}-${issue.repo}-${issue.number}-result.md`);
   
   return new Promise((resolve, reject) => {
-    log(`▶ 启动 LLM 语义分析...`);
-    
     const proc = spawn('opencode', [
       'run', inputFile,
       '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
@@ -342,7 +346,6 @@ async function handleNoProblems(issue, result, dryRun = false) {
   const { owner, repo, number } = issue;
   
   if (dryRun) {
-    log('DryRun: 模拟评论到原 issue');
     return {
       status: 'dry_run',
       would_do: 'add_comment',
@@ -355,20 +358,17 @@ async function handleNoProblems(issue, result, dryRun = false) {
   
   const alreadyProcessed = await checkAlreadyProcessed(owner, repo, number);
   if (alreadyProcessed) {
-    log('跳过: 已有分析评论');
     return { status: 'skipped', reason: 'already_processed' };
   }
   
   const commentBody = buildNoProblemComment(result);
   
-  log(`▶ 评论到原 issue #${number}`);
   const comment = await addIssueComment({ 
     owner, repo, 
     issue_number: number, 
     body: commentBody 
   });
   
-  log(`✅ 评论已添加`);
   return { status: 'commented', comment_url: comment.html_url };
 }
 
@@ -378,7 +378,6 @@ async function handleHasProblems(issue, result, dryRun = false) {
   const targetRepo = result.target_repo;
   
   if (!targetOwner || !targetRepo) {
-    log('⚠ 缺少 target_owner/target_repo，跳过创建 issue');
     return { status: 'error', reason: 'missing_target_repo' };
   }
   
@@ -391,8 +390,6 @@ async function handleHasProblems(issue, result, dryRun = false) {
   const body = buildProblemIssueBody(result, issue);
   
   if (dryRun) {
-    log('DryRun: 模拟创建 issue');
-    log(body + '\n');
     return {
       status: 'dry_run',
       would_do: 'create_issue',
@@ -408,8 +405,6 @@ async function handleHasProblems(issue, result, dryRun = false) {
     };
   }
   
-  log(`▶ 检查目标仓库 ${targetOwner}/${targetRepo} 是否已有相关 issue`);
-  
   const existing = await findIssueByTitlePrefix({
     owner: targetOwner,
     repo: targetRepo,
@@ -420,28 +415,24 @@ async function handleHasProblems(issue, result, dryRun = false) {
   const exactMatch = existing && existing.title.includes(`(from #${number})`);
   
   if (exactMatch) {
-    log(`已有 issue #${existing.number}, 更新内容`);
     await updateIssue({
       owner: targetOwner,
       repo: targetRepo,
       issue_number: existing.number,
       body
     });
-    log(`✅ Issue #${existing.number} 已更新`);
     return { 
       status: 'updated', 
       issue_number: existing.number,
       issue_url: existing.html_url
     };
   } else {
-    log(`▶ 创建新 issue: ${title}`);
     const newIssue = await createIssue({
       owner: targetOwner,
       repo: targetRepo,
       title,
       body
     });
-    log(`✅ Issue #${newIssue.number} 已创建`);
     return { 
       status: 'created', 
       issue_number: newIssue.number,
@@ -464,17 +455,13 @@ async function main() {
   }
   
   const issue = await readInput(args);
-  log(`处理 issue: ${issue.owner}/${issue.repo} #${issue.number}`);
   
   const projects = loadProjectsConfig();
-  log(`加载 ${projects.length} 个项目配置`);
   
   try {
     const urls = extractUrlsFromIssue(issue.body);
-    log(`从 issue 提取 ${urls.length} 个 URL`);
     
     if (urls.length === 0) {
-      log('issue 中未包含 URL，跳过分析');
       const result = {
         has_problems: false,
         source_issue_id: issue.number,
@@ -484,47 +471,29 @@ async function main() {
       };
       
       const outcome = await handleNoProblems(issue, result, dryRun);
-      console.log(JSON.stringify({ run_at: new Date().toISOString(), result, outcome }, null, 2));
+      saveAndPrintIssueBody(issue);
+      console.log(JSON.stringify({
+        issue: `${issue.owner}/${issue.repo} #${issue.number}`,
+        status: outcome.status,
+        message: result.message
+      }, null, 2));
       return;
     }
     
-    log('\n========== Phase 1: 程序化检查 (sitemap + llms.txt) ==========');
     const { results: checkResults, warnings } = await runProgramChecks(urls, projects);
     
     if (isAllUrlsIgnored(checkResults)) {
-      log('所有 URL 都在 ignore_routes 中，跳过 GEO 检查');
-      
       const outcome = await handleAllUrlsIgnored(issue, urls, dryRun);
-      
-      const output = {
-        run_at: new Date().toISOString(),
-        dry_run: dryRun,
-        source_issue: {
-          owner: issue.owner,
-          repo: issue.repo,
-          number: issue.number,
-          url: issue.url
-        },
-        check_results: checkResults,
-        outcome,
+      saveAndPrintIssueBody(issue);
+      console.log(JSON.stringify({
+        issue: `${issue.owner}/${issue.repo} #${issue.number}`,
+        status: outcome.status,
         message: '所有 URL 被 ignore_routes 跳过，建议单独分析'
-      };
-      
-      if (dryRun) {
-        const dryRunDir = path.join(CACHE_DIR, 'dryrun-results');
-        fs.mkdirSync(dryRunDir, { recursive: true });
-        const dryRunFile = path.join(dryRunDir, `${issue.owner}-${issue.repo}-${issue.number}.json`);
-        fs.writeFileSync(dryRunFile, JSON.stringify(output, null, 2), 'utf-8');
-        log(`DryRun 结果保存到: ${dryRunFile}`);
-      }
-      
-      console.log(JSON.stringify(output, null, 2));
-      log(`\n🏁 完成: ${outcome.status}`);
+      }, null, 2));
       return;
     }
     
     const programProblems = buildProblemsFromCheckResults(checkResults);
-    log(`程序检查发现 ${programProblems.length} 个问题`);
     
     let llmProblems = [];
     let llmResult = null;
@@ -532,24 +501,15 @@ async function main() {
     const urlsToAnalyze = checkResults.filter(r => !r.isDocs).map(r => r.url);
     
     if (urlsToAnalyze.length > 0) {
-      log('\n========== Phase 2: LLM 语义分析 (TDK + Schema) ==========');
-      log(`待分析 URL: ${urlsToAnalyze.length} 个`);
-      
       const { outputFile } = await runOpencodeAnalyze(issue, urlsToAnalyze, projects);
       
       if (fs.existsSync(outputFile)) {
         const content = fs.readFileSync(outputFile, 'utf-8');
-        log('=============== LLM output ===============');
-        log(content);
-        
         llmResult = parseAnalyzeResult(content);
         if (llmResult?.problems) {
           llmProblems = llmResult.problems;
-          log(`LLM 语义分析发现 ${llmProblems.length} 个问题`);
         }
       }
-    } else {
-      log('\n跳过 Phase 2 (所有 URL 都是 docs 类型)');
     }
     
     const allProblems = [...programProblems, ...llmProblems];
@@ -569,9 +529,6 @@ async function main() {
       message: allProblems.length === 0 ? '所有 GEO 配置检查通过' : undefined
     };
     
-    log(`\n========== 分析结果 ==========`);
-    log(`总问题数: ${allProblems.length} (程序: ${programProblems.length}, LLM: ${llmProblems.length})`);
-    
     let outcome;
     if (finalResult.has_problems) {
       outcome = await handleHasProblems(issue, finalResult, dryRun);
@@ -579,30 +536,29 @@ async function main() {
       outcome = await handleNoProblems(issue, finalResult, dryRun);
     }
     
-    const output = {
-      run_at: new Date().toISOString(),
-      dry_run: dryRun,
-      source_issue: {
-        owner: issue.owner,
-        repo: issue.repo,
-        number: issue.number,
-        url: issue.url
-      },
-      check_results: checkResults,
-      analyze_result: finalResult,
-      outcome
-    };
-    
     if (dryRun) {
       const dryRunDir = path.join(CACHE_DIR, 'dryrun-results');
       fs.mkdirSync(dryRunDir, { recursive: true });
       const dryRunFile = path.join(dryRunDir, `${issue.owner}-${issue.repo}-${issue.number}.json`);
+      const output = {
+        run_at: new Date().toISOString(),
+        dry_run: dryRun,
+        source_issue: { owner: issue.owner, repo: issue.repo, number: issue.number, url: issue.url },
+        check_results: checkResults,
+        analyze_result: finalResult,
+        outcome
+      };
       fs.writeFileSync(dryRunFile, JSON.stringify(output, null, 2), 'utf-8');
-      log(`DryRun 结果保存到: ${dryRunFile}`);
     }
     
-    console.log(JSON.stringify(output, null, 2));
-    log(`\n🏁 完成: ${outcome.status}`);
+    saveAndPrintIssueBody(issue);
+    console.log(JSON.stringify({
+      issue: `${issue.owner}/${issue.repo} #${issue.number}`,
+      status: outcome.status,
+      problems: allProblems.length,
+      urls: urls.length,
+      message: finalResult.message
+    }, null, 2));
     
   } catch (err) {
     log(`❌ 处理失败: ${err.message}`);
@@ -626,7 +582,12 @@ async function main() {
       fs.writeFileSync(dryRunFile, JSON.stringify(errorResult, null, 2), 'utf-8');
     }
     
-    console.log(JSON.stringify(errorResult, null, 2));
+    saveAndPrintIssueBody(issue);
+    console.log(JSON.stringify({
+      issue: `${issue.owner}/${issue.repo} #${issue.number}`,
+      status: 'failed',
+      error: err.message
+    }, null, 2));
     process.exit(1);
   }
 }

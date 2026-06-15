@@ -242,24 +242,84 @@ function hasConfig(workDir, seoDir, key) {
 
 // ============ 检查项实现（新版） ============
 
-async function checkOnlineSitemapConfig(project, workDir, skip) {
+async function checkRobotsTxt(project, skip) {
+  if (skip.includes('robots-txt')) return { findings: [], skipped: true, robotsContent: null };
+
+  const home = project.home?.[0] || project.home;
+  if (!home) return { findings: [], skipped: true, robotsContent: null };
+
+  const robotsUrl = new URL('/robots.txt', home).toString();
+  const findings = [];
+  let robotsContent = null;
+
+  log(`${project.name} robots.txt 检查: ${robotsUrl}`);
+
+  try {
+    const { html } = await fetchHttp(robotsUrl, { timeout: 20000 });
+    robotsContent = html;
+
+    if (blocksAllCrawlers(html)) {
+      findings.push({ url: robotsUrl, check: 'robots-txt', message: 'robots.txt 对 User-agent:* 全站 Disallow: /，禁止爬虫访问' });
+    }
+
+    const hasSitemap = /^\s*sitemap:\s*\S+/gim.test(html);
+    if (!hasSitemap) {
+      findings.push({ url: robotsUrl, check: 'robots-txt', message: 'robots.txt 未声明 Sitemap 地址' });
+    }
+  } catch (err) {
+    findings.push({ url: robotsUrl, check: 'robots-txt', message: `robots.txt 无法访问: ${err.message}` });
+  }
+
+  return { findings, robotsContent };
+}
+
+async function checkSitemapAccessible(project, robotsContent, skip) {
+  if (skip.includes('sitemap-access')) return { findings: [], skipped: true, sitemapUrls: [] };
+
   const home = project.home?.[0] || project.home;
   if (!home) return { findings: [], skipped: true, sitemapUrls: [] };
 
-  const sitemapUrls = await discoverSitemaps(home);
-  let allEntries = [];
+  let sitemapUrls = [];
+  if (robotsContent) {
+    sitemapUrls = [...robotsContent.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map(m => m[1].trim());
+  }
+  if (!sitemapUrls.length) {
+    sitemapUrls = [new URL('/sitemap.xml', home).toString()];
+  }
+
+  log(`${project.name} sitemap 可访问性检查: ${sitemapUrls.length} 个地址`);
+
+  const findings = [];
+  const accessibleSitemaps = [];
+
   for (const sm of sitemapUrls) {
     try {
-      allEntries.push(...await getSitemapUrls(sm));
+      await getSitemapUrls(sm);
+      accessibleSitemaps.push(sm);
     } catch (err) {
-      log(`sitemap拉取失败 ${sm}: ${err.message}`);
+      findings.push({ url: sm, check: 'sitemap-access', message: `sitemap 无法访问或无有效内容: ${err.message}` });
     }
   }
 
-  if (!allEntries.length) return { findings: [], skipped: true, sitemapUrls: [] };
+  if (!accessibleSitemaps.length && sitemapUrls.length > 0) {
+    findings.push({ url: home, check: 'sitemap-access', message: '所有 sitemap 地址均无法访问，SEO/GEO 将无法发现页面' });
+  }
+
+  let allEntries = [];
+  for (const sm of accessibleSitemaps) {
+    try {
+      allEntries.push(...await getSitemapUrls(sm));
+    } catch {}
+  }
+
+  return { findings, sitemapUrls: allEntries };
+}
+
+async function checkSitemapConfig(project, workDir, sitemapUrls, skip) {
+  if (!sitemapUrls?.length) return { findings: [], skipped: true };
 
   const findings = [];
-  for (const url of allEntries) {
+  for (const url of sitemapUrls) {
     let pathname;
     try { pathname = new URL(url).pathname; } catch { continue; }
     if (shouldIgnore(pathname, project.ignore_routes)) continue;
@@ -281,8 +341,8 @@ async function checkOnlineSitemapConfig(project, workDir, skip) {
     }
   }
 
-  log(`${project.name} sitemap配置检查完成: 条目 ${allEntries.length}, 问题 ${findings.length}`);
-  return { findings, sitemapUrls: allEntries };
+  log(`${project.name} TDK/Schema 配置检查完成: 条目 ${sitemapUrls.length}, 问题 ${findings.length}`);
+  return { findings };
 }
 
 async function checkUrlAccessibility(project, sitemapUrls, skip) {
@@ -400,24 +460,6 @@ function blocksAllCrawlers(text) {
   return groups.some((g) => g.agents.includes('*') && g.disallowRoot && !g.allowRoot);
 }
 
-// 从 robots.txt 发现 sitemap 地址; 解析不到则回退 {home}/sitemap.xml
-async function discoverSitemaps(homeUrl) {
-  let robotsUrl;
-  try {
-    robotsUrl = new URL('/robots.txt', homeUrl).toString();
-  } catch {
-    return [];
-  }
-  try {
-    const { html } = await fetchHttp(robotsUrl, { timeout: 20000 });
-    const found = [...html.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => m[1].trim());
-    if (found.length) return found;
-  } catch {
-    // robots.txt 拉取失败, 回退默认路径
-  }
-  return [new URL('/sitemap.xml', homeUrl).toString()];
-}
-
 // 归一化 pathname 用于跨域名比对: 解码、去尾斜杠、去 .html、空串视为根
 function normalizePathname(p) {
   let s = p;
@@ -432,7 +474,7 @@ function normalizePathname(p) {
 }
 
 // 检查项注册表
-const CHECK_DIMENSIONS = ['sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage', 'ssr-rendering'];
+const CHECK_DIMENSIONS = ['robots-txt', 'sitemap-access', 'sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage', 'ssr-rendering'];
 
 /**
  * 检测页面是否为 SSR/SSG 渲染
@@ -551,6 +593,8 @@ function buildIssueBody(findings, project) {
   lines.push('');
   lines.push('### 维度说明');
   lines.push('');
+  lines.push('- **robots-txt**: robots.txt 不存在、全站封禁爬虫或未声明 Sitemap');
+  lines.push('- **sitemap-access**: sitemap 无法访问或无有效内容');
   lines.push('- **sitemap-tdk**: sitemap条目缺少TDK配置文件');
   lines.push('- **sitemap-schema**: sitemap条目缺少Schema配置文件');
   lines.push('- **url-access**: URL无法访问');
@@ -629,22 +673,30 @@ async function runProject(project, { dryRun }) {
   const onlineFindings = [];
   let sitemapUrls = [];
 
-  // 3a. sitemap配置检查
-  const sitemapRes = await checkOnlineSitemapConfig(project, workDir, skip);
-  sitemapUrls = sitemapRes.sitemapUrls;
-  onlineFindings.push(...sitemapRes.findings);
+  // 3a. robots.txt检查
+  const robotsRes = await checkRobotsTxt(project, skip);
+  onlineFindings.push(...robotsRes.findings);
 
-  // 3b. URL可访问性抽样
+  // 3b. sitemap可访问性检查
+  const sitemapAccessRes = await checkSitemapAccessible(project, robotsRes.robotsContent, skip);
+  onlineFindings.push(...sitemapAccessRes.findings);
+  sitemapUrls = sitemapAccessRes.sitemapUrls;
+
+  // 3c. TDK/Schema配置检查
+  const configRes = await checkSitemapConfig(project, workDir, sitemapUrls, skip);
+  onlineFindings.push(...configRes.findings);
+
+  // 3d. URL可访问性抽样
   if (sitemapUrls.length > 0) {
     const accessRes = await checkUrlAccessibility(project, sitemapUrls, skip);
     onlineFindings.push(...accessRes.findings);
   }
 
-  // 3c. llms.txt检查
+  // 3e. llms.txt检查
   const llmsRes = await checkLlmsTxt(project, skip);
   onlineFindings.push(...llmsRes.findings);
 
-  // 3d. SSR渲染检查
+  // 3f. SSR渲染检查
   const ssrRes = await checkSsrRendering(project, sitemapUrls, skip);
   onlineFindings.push(...ssrRes.findings);
 

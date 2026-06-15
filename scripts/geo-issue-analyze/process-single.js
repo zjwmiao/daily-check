@@ -20,16 +20,15 @@ const ANALYZE_RESULT_MARKER = '<!-- geo-analyze-result -->';
 const ANALYZE_IGNORED_MARKER = '<!-- geo-analyze-ignored -->';
 const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot', 'issue-analyze');
 
-function saveAndPrintIssueBody(issue) {
-  const bodyDir = path.join(CACHE_DIR, 'issue-bodies');
+function saveAndPrintGeneratedBody(issue, generatedBody, type = 'comment') {
+  const bodyDir = path.join(CACHE_DIR, 'generated-bodies');
   fs.mkdirSync(bodyDir, { recursive: true });
-  const bodyFile = path.join(bodyDir, `${issue.owner}-${issue.repo}-${issue.number}.txt`);
+  const bodyFile = path.join(bodyDir, `${issue.owner}-${issue.repo}-${issue.number}-${type}.md`);
   
-  const bodyContent = `=== Issue #${issue.number} (${issue.owner}/${issue.repo}) ===
-Title: ${issue.title || ''}
-URL: ${issue.url}
+  const bodyContent = `=== Generated ${type} for Issue #${issue.number} (${issue.owner}/${issue.repo}) ===
+Source: ${issue.url}
 
-${issue.body || '(empty)'}
+${generatedBody}
 `;
   
   fs.writeFileSync(bodyFile, bodyContent, 'utf-8');
@@ -471,7 +470,8 @@ async function main() {
       };
       
       const outcome = await handleNoProblems(issue, result, dryRun);
-      saveAndPrintIssueBody(issue);
+      const commentBody = buildNoProblemComment(result);
+      saveAndPrintGeneratedBody(issue, commentBody, 'comment');
       console.log(JSON.stringify({
         issue: `${issue.owner}/${issue.repo} #${issue.number}`,
         status: outcome.status,
@@ -484,7 +484,8 @@ async function main() {
     
     if (isAllUrlsIgnored(checkResults)) {
       const outcome = await handleAllUrlsIgnored(issue, urls, dryRun);
-      saveAndPrintIssueBody(issue);
+      const ignoredBody = buildIgnoredComment(urls);
+      saveAndPrintGeneratedBody(issue, ignoredBody, 'comment');
       console.log(JSON.stringify({
         issue: `${issue.owner}/${issue.repo} #${issue.number}`,
         status: outcome.status,
@@ -551,7 +552,15 @@ async function main() {
       fs.writeFileSync(dryRunFile, JSON.stringify(output, null, 2), 'utf-8');
     }
     
-    saveAndPrintIssueBody(issue);
+    let generatedBody, bodyType;
+    if (finalResult.has_problems) {
+      generatedBody = buildProblemIssueBody(finalResult, issue);
+      bodyType = 'issue';
+    } else {
+      generatedBody = buildNoProblemComment(finalResult);
+      bodyType = 'comment';
+    }
+    saveAndPrintGeneratedBody(issue, generatedBody, bodyType);
     console.log(JSON.stringify({
       issue: `${issue.owner}/${issue.repo} #${issue.number}`,
       status: outcome.status,
@@ -582,7 +591,15 @@ async function main() {
       fs.writeFileSync(dryRunFile, JSON.stringify(errorResult, null, 2), 'utf-8');
     }
     
-    saveAndPrintIssueBody(issue);
+    const errorBody = `## 处理失败
+
+**Issue**: ${issue.owner}/${issue.repo} #${issue.number}
+**URL**: ${issue.url}
+**错误**: ${err.message}
+
+处理过程中发生错误，请检查日志或手动分析。
+`;
+    saveAndPrintGeneratedBody(issue, errorBody, 'error');
     console.log(JSON.stringify({
       issue: `${issue.owner}/${issue.repo} #${issue.number}`,
       status: 'failed',

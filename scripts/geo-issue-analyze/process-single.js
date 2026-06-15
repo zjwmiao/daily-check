@@ -337,6 +337,7 @@ async function handleHasProblems(issue, result, dryRun = false) {
   
   if (dryRun) {
     log('DryRun: 模拟创建 issue');
+    log(body + '\n');
     return {
       status: 'dry_run',
       would_do: 'create_issue',

@@ -432,7 +432,104 @@ function normalizePathname(p) {
 }
 
 // 检查项注册表
-const CHECK_DIMENSIONS = ['sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage'];
+const CHECK_DIMENSIONS = ['sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage', 'ssr-rendering'];
+
+/**
+ * 检测页面是否为 SSR/SSG 渲染
+ * @param {string} html 页面 HTML 内容
+ * @param {string} framework 框架标识 'VitePress' | 'Nuxt' | undefined
+ * @returns {{ isSsr: boolean, reason: string }}
+ */
+function detectSsr(html, framework) {
+  // 1. 框架特定检测
+  if (framework === 'VitePress') {
+    if (/class="VPContent"/.test(html) && /class=["']vpi/.test(html)) {
+      return { isSsr: true, reason: 'VitePress 预渲染检测通过' };
+    }
+    if (/class="VPContent"/.test(html)) {
+      const vpMatch = /class="VPContent"[\s\S]*?class="vp-doc"/.test(html);
+      if (vpMatch) return { isSsr: true, reason: 'VitePress 预渲染检测通过' };
+    }
+  }
+
+  if (framework === 'Nuxt') {
+    const hasNuxtData = /window\.__NUXT__|data-n-head/.test(html);
+    const nuxtMatch = /id="__nuxt"[^>]*>([\s\S]*?)<\/div>/i.exec(html);
+    const hasNuxtContent = nuxtMatch && nuxtMatch[1].replace(/<[^>]+>/g, '').trim().length > 100;
+    if (hasNuxtData || hasNuxtContent) {
+      return { isSsr: true, reason: 'Nuxt SSR 检测通过' };
+    }
+  }
+
+  // 2. 通用内容丰富度检测
+  const bodyMatch = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(html);
+  if (!bodyMatch) return { isSsr: false, reason: '无 body 标签' };
+
+  const bodyContent = bodyMatch[1];
+  const plainText = bodyContent
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (plainText.length >= 500) {
+    return { isSsr: true, reason: `body 内容丰富 (${plainText.length} 字符)` };
+  }
+
+  // 3. CSR 典型特征检测
+  const csrPatterns = [
+    [/<div\s+id="app"\s*>\s*<\/div>/, 'Vue SPA 空挂载点'],
+    [/<div\s+id="root"\s*>\s*<\/div>/, 'React SPA 空挂载点'],
+    [/<div\s+id="__nuxt"\s*>\s*<\/div>/, 'Nuxt CSR 模式'],
+  ];
+
+  for (const [p, desc] of csrPatterns) {
+    if (p.test(html)) {
+      return { isSsr: false, reason: `检测到 CSR 特征: ${desc}` };
+    }
+  }
+
+  // 4. 默认判断: 内容稀疏但无明确 CSR 标记
+  return { isSsr: false, reason: `body 内容不足 (${plainText.length} 字符)` };
+}
+
+async function checkSsrRendering(project, sitemapUrls, skip) {
+  if (skip.includes('ssr-rendering')) return { findings: [], skipped: true };
+
+  const home = project.home?.[0] || project.home;
+  if (!home) return { findings: [], skipped: true };
+
+  const framework = project.framework;
+  const sampleUrls = [home];
+
+  if (sitemapUrls?.length) {
+    const extra = pickRandom(
+      sitemapUrls.filter(u => {
+        try { return !shouldIgnore(new URL(u).pathname, project.ignore_routes); } catch { return false; }
+      }),
+      10
+    );
+    sampleUrls.push(...extra);
+  }
+
+  log(`${project.name} SSR渲染检查: ${sampleUrls.length} 个URL`);
+
+  const findings = [];
+  for (const url of sampleUrls) {
+    try {
+      const { html } = await fetchHttp(url, { timeout: 20000 });
+      const result = detectSsr(html, framework);
+      if (!result.isSsr) {
+        findings.push({ url, check: 'ssr-rendering', message: result.reason });
+      }
+    } catch (err) {
+      findings.push({ url, check: 'ssr-rendering', message: `检测失败: ${err.message}` });
+    }
+  }
+
+  return { findings };
+}
 
 // ============ issue 上报 ============
 
@@ -459,6 +556,7 @@ function buildIssueBody(findings, project) {
   lines.push('- **url-access**: URL无法访问');
   lines.push('- **llms-txt**: llms.txt/llms-full.txt缺失或为空');
   lines.push('- **sitemap-coverage**: 构建页面未被sitemap收录');
+  lines.push('- **ssr-rendering**: 页面疑似客户端渲染(CSR)，不利于SEO/GEO');
   lines.push('');
   lines.push('### 建议操作');
   lines.push('');
@@ -545,6 +643,10 @@ async function runProject(project, { dryRun }) {
   // 3c. llms.txt检查
   const llmsRes = await checkLlmsTxt(project, skip);
   onlineFindings.push(...llmsRes.findings);
+
+  // 3d. SSR渲染检查
+  const ssrRes = await checkSsrRendering(project, sitemapUrls, skip);
+  onlineFindings.push(...ssrRes.findings);
 
   // 4. 等待构建完成
   log(`等待构建完成...`);

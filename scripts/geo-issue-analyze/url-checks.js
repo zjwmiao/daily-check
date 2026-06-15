@@ -21,23 +21,17 @@ async function fetchRobots(home) {
   }
 }
 
-async function fetchLlmsTxt(home) {
+async function fetchLlmsFullTxt(home) {
   if (LLMS_CACHE.has(home)) return LLMS_CACHE.get(home);
   
-  const result = { llmsTxt: null, llmsFullTxt: null };
-  
+  let llmsFullTxt = null;
   try {
-    const res1 = await fetchHttp(new URL('/llms.txt', home).toString(), { timeout: 15000 });
-    result.llmsTxt = res1.html;
+    const res = await fetchHttp(new URL('/llms-full.txt', home).toString(), { timeout: 15000 });
+    llmsFullTxt = res.html;
   } catch {}
   
-  try {
-    const res2 = await fetchHttp(new URL('/llms-full.txt', home).toString(), { timeout: 15000 });
-    result.llmsFullTxt = res2.html;
-  } catch {}
-  
-  LLMS_CACHE.set(home, result);
-  return result;
+  LLMS_CACHE.set(home, llmsFullTxt);
+  return llmsFullTxt;
 }
 
 async function getSitemapUrlsFromRobots(home) {
@@ -106,23 +100,13 @@ export async function checkUrlInLlmsTxt(url, project) {
     return { covered: false, error: '项目未配置 home URL' };
   }
   
-  const llms = await fetchLlmsTxt(home);
-  const inFiles = [];
-  let covered = false;
+  const llmsFullTxt = await fetchLlmsFullTxt(home);
   
   const urlNorm = url.toLowerCase().replace(/#.*$/, '').replace(/\?.*$/, '');
   
-  if (llms.llmsTxt && llms.llmsTxt.toLowerCase().includes(urlNorm)) {
-    covered = true;
-    inFiles.push('llms.txt');
-  }
+  const covered = llmsFullTxt && llmsFullTxt.toLowerCase().includes(urlNorm);
   
-  if (llms.llmsFullTxt && llms.llmsFullTxt.toLowerCase().includes(urlNorm)) {
-    covered = true;
-    inFiles.push('llms-full.txt');
-  }
-  
-  return { covered, inFiles, llmsTxtExists: !!llms.llmsTxt, llmsFullTxtExists: !!llms.llmsFullTxt };
+  return { covered, llmsFullTxtExists: !!llmsFullTxt };
 }
 
 export function matchProjectByUrl(url, projects) {

@@ -93,18 +93,18 @@ function buildProblemsFromCheckResults(checkResults) {
     }
     
     if (checks.llmsTxt && !checks.llmsTxt.covered) {
-      if (!checks.llmsTxt.llmsTxtExists && !checks.llmsTxt.llmsFullTxtExists) {
+      if (!checks.llmsTxt.llmsFullTxtExists) {
         problems.push({
           url,
           dimension: 'llms.txt',
-          description: '/llms.txt 和 /llms-full.txt 均不存在',
+          description: '/llms-full.txt 不存在',
           source: 'program'
         });
       } else {
         problems.push({
           url,
           dimension: 'llms.txt',
-          description: '/llms.txt 和 /llms-full.txt 中均未列出该页面',
+          description: '/llms-full.txt 中未列出该页面',
           source: 'program'
         });
       }

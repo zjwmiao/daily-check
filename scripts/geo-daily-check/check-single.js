@@ -39,7 +39,7 @@ import { checkSsrRendering } from './checks/ssr.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const DEFAULT_CONFIG = path.join(REPO_ROOT, 'daily-check-config.yaml');
+const DEFAULT_CONFIG = path.join(REPO_ROOT, 'projects-config.yaml');
 const CACHE_BASE_DIR = path.join(os.tmpdir(), '.cache/geo-bot/projects');
 
 function parseArgs(argv) {

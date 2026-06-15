@@ -4,17 +4,65 @@ description: 分析AI发现性、SEO/GEO相关问题的issue，输出具体问�
 compatibility: opencode
 ---
 
-分析用户给定的一个AtomGit issue内容、owner、 repo、 issueID,issue一般会提及网页内容的AI发现性、SEO/GEO相关问题
+分析用户给定的一个 AtomGit issue 内容，针对其中涉及的 URL 进行 GEO 配置检查。分析流程分为两个阶段：**程序化检查** 和 **LLM 语义分析**。
 
-1. 从issue内容中提取出涉及到的网页地址
-2. 根据网页域名判断该网页属于哪个project(project相关信息、涉及到的网站域名等在`projects-config.yaml`文件中有配置)
-3. 根据匹配到的project类型判断
-    - 如果project是非docs类型,则结合issue内容以及网页具体内容做分析,主要的分析项是:1. TDK/JSON-LD, **确保TDK和JSON-LD信息完全由页面内容得来,不要出现任何不存在于页面内容中的信息**;例如project名为openGauss,TDK和JSON-LD中不要出现openEuler等其他社区名称, **除非在页面内容中有提及**。 2. sitemap,查找域名下是否存在sitemap文件以及sitemap中是否包含该页面地址; 3. 查找域名下是否存在 `/llms.txt` 和 `/llms-full.txt` ,以及这两个文件中是否有把该页面列出(查找文件中是否存在页面地址)。注意**只基于以上提到的三个维度去分析**不要有涉及到页面具体内容,项目业务代码,DOM结构相关的修改
-    - 如果project是docs类型,则只查找sitemap、`/llms.txt` 和 `/llms-full.txt`是否存在以及这三个文件中是否覆盖该页面
-4. 将TDK/JSON-LD/sitemap/llmstxt这几个维度中查出来的问题整理输出到 `/tmp/.cache/geo-bot/issue-analyze/exist-issues/{owner}-{repo}-{issueID}.md` 文件中
-5. 在分析结果文件末尾,必须输出以下格式的 JSON block,供后续自动化流程解析:
-**输出格式要求**
-如果所有维度都没有问题,输出:
+## 分析流程
+
+### Phase 1: 程序化检查（自动执行）
+
+此阶段由脚本自动执行，无需 LLM 参与。检查项：
+
+1. **sitemap 覆盖检查**：
+   - 从 robots.txt 提取 sitemap 地址
+   - 递归解析 sitemap index
+   - 检查目标 URL 是否被 sitemap 收录
+
+2. **llms.txt 覆盖检查**：
+   - 检查 `/llms.txt` 和 `/llms-full.txt` 是否存在
+   - 检查目标 URL 是否在这两个文件中被列出
+
+3. **TDK/Schema 存在性检查**（仅非 docs 项目）：
+   - 根据 URL pathname 定位配置文件路径
+   - 检查 `.geo/tdks/{pathname}/index.json` 是否存在
+   - 检查 `.geo/jsonld/{pathname}/index.json` 是否存在
+
+### Phase 2: LLM 语义分析（仅对非 docs 项目 + 已有配置）
+
+只有满足以下条件才执行此阶段：
+- 项目类型为 `portal`（非 docs）
+- URL 存在 TDK 或 Schema 配置文件
+
+**语义分析要求**：
+
+1. **内容一致性检查**：
+   - 确保 TDK 和 JSON-LD 信息完全由页面内容得来
+   - 不要出现任何不存在于页面内容中的信息
+   - 例如 project 名为 openGauss，TDK/JSON-LD 中不要出现 openEuler 等其他社区名称（除非页面内容中有提及）
+
+2. **内容质量检查**：
+   - description 是否过长/过短（建议 100-200 字符）
+   - keywords 是否覆盖页面核心内容
+   - JSON-LD schema 类型是否合适（Article/WebPage/Product 等）
+
+### docs 与非 docs 项目差异
+
+根据 `projects-config.yaml` 中的 `project_type` 字段判断：
+
+| 项目类型 | 检查范围 |
+|---------|---------|
+| `docs` | 只执行 Phase 1（sitemap + llms.txt） |
+| `portal` | Phase 1 + Phase 2（存在配置时做语义分析） |
+
+## URL 匹配与项目识别
+
+1. 从 issue 内容中提取所有 URL
+2. 根据 URL 域名匹配 `projects-config.yaml` 中的 `home` 字段
+3. 未匹配到的 URL 记录为警告，跳过检查
+
+## 输出格式要求
+
+### 无问题时的输出
+
 ```json
 <!-- ANALYZE_RESULT -->
 {
@@ -22,10 +70,15 @@ compatibility: opencode
   "source_issue_id": 123,
   "source_issue_url": "https://atomgit.com/owner/repo/issues/123",
   "analyzed_urls": ["https://www.openeuler.org/zh/..."],
-  "message": "不涉及GEO基础配置问题,TDK配置正确,sitemap已收录,llms.txt已覆盖..."
+  "warnings": [
+    { "url": "https://unknown-domain.com/...", "message": "URL 域名未匹配到已知项目" }
+  ],
+  "message": "所有 GEO 配置检查通过"
 }
 ```
-如果发现有需要整改的问题,输出:
+
+### 有问题时的输出
+
 ```json
 <!-- ANALYZE_RESULT -->
 {
@@ -34,37 +87,47 @@ compatibility: opencode
   "source_issue_url": "https://atomgit.com/owner/repo/issues/123",
   "target_owner": "openeuler",
   "target_repo": "openEuler-portal",
+  "analyzed_urls": ["https://www.openeuler.org/zh/security/"],
   "problems": [
     {
       "url": "https://www.openeuler.org/zh/security/",
-      "dimension": "tdk",
-      "description": "description 过短 (< 100字符),建议补充页面首段内容作为description"
+      "dimension": "sitemap",
+      "description": "sitemap.xml 中未收录该页面",
+      "source": "program"
     },
     {
       "url": "https://www.openeuler.org/zh/download/",
-      "dimension": "schema",
-      "description": "缺少 JSON-LD schema,该页面应添加Article或WebPage类型的schema"
-    },
-    {
-      "url": "https://www.openeuler.org/zh/docs/",
-      "dimension": "sitemap",
-      "description": "sitemap.xml 中未收录该页面地址"
-    },
-    {
-      "url": "https://www.openeuler.org/zh/community/",
       "dimension": "llms.txt",
-      "description": "/llms.txt 和 /llms-full.txt 中均未列出该页面"
+      "description": "/llms.txt 和 /llms-full.txt 中均未列出该页面",
+      "source": "program"
+    },
+    {
+      "url": "https://www.openeuler.org/zh/about/",
+      "dimension": "tdk-quality",
+      "description": "description 包含无关的 openEuler 社区名称，页面内容未提及",
+      "source": "llm"
     }
   ]
 }
 ```
 
-**注意事项**
-- JSON block 格式必须严格遵循示例：`<!-- ANALYZE_RESULT -->` 标记放在 ```json 代码块内第一行（紧跟 ```json 之后）
-- 脚本会查找此标记来定位 JSON 内容，标记位置错误会导致解析失败
-- `target_owner` 和 `target_repo` 是根据 URL 域名匹配 project 后得出的目标仓库,后续自动化流程会在此仓库创建 issue
-- 如果 URL 涉及的域名不属于任何已配置的 project,则 `target_owner` 和 `target_repo` 应设为 null
-- `dimension` 只能是 `tdk`, `schema`, `sitemap`, `llms.txt` 之一
-- 获取网站sitemap的时候,可以先访问网站的`robots.txt`中的Sitemap字段,此sitemap可能是sitemap索引文件,根据索引文件内的sitemap条目递归的访问具体的sitemap内容
-- 如果是docs类型的页面,不同文档版本的sitemap地址不同,例如 `https://docs.openeuler.org/zh/docs/24.03_LTS_SP2/.../` 的sitemap地址为 `https://docs.openeuler.org/docs/24.03_LTS_SP2/sitemap.xml`, **优先以`robots.txt`中的sitemap地址以及sitemap索引中列出的地址为准**
-- 输出文件路径: `/tmp/.cache/geo-bot/issue-analyze/exist-issues/{owner}-{repo}-{issueID}.md`
+## 问题维度说明
+
+| dimension | 来源 | 说明 |
+|-----------|------|------|
+| `sitemap` | program | URL 未被 sitemap 收录 |
+| `llms.txt` | program | URL 未在 llms.txt 中列出 |
+| `tdk` | program | 缺少 TDK 配置文件 |
+| `schema` | program | 缺少 JSON-LD Schema 配置文件 |
+| `tdk-quality` | llm | TDK 内容与页面不匹配或质量问题 |
+| `schema-quality` | llm | Schema 内容与页面不匹配或类型不合适 |
+
+## 输出文件路径
+
+分析结果写入：`/tmp/.cache/geo-bot/issue-analyze/exist-issues/{owner}-{repo}-{issueID}-result.md`
+
+**注意事项**：
+- JSON block 格式必须严格遵循示例：`<!-- ANALYZE_RESULT -->` 标记放在 ```json 代码块内第一行
+- `target_owner` 和 `target_repo` 是根据 URL 域名匹配 project 后得出的目标仓库
+- 如果 URL 涉及的域名不属于任何已配置的 project，则 `target_owner` 和 `target_repo` 应设为 null
+- 获取网站 sitemap 时，优先从 `robots.txt` 的 Sitemap 字段获取地址

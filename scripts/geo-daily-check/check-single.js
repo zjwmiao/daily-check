@@ -308,6 +308,10 @@ async function runProject(project, { dryRun }) {
     allFindings.push(...coverageRes.findings);
   }
 
+  log(`================= Check result (${project.name}) =================`)
+  log(JSON.stringify(allFindings, null, 2));
+  log('\n\n');
+
   // 6. 汇总 + 提issue
   if (allFindings.length > 0 && !dryRun) {
     if (!process.env.ATOMGIT_TOKEN) {

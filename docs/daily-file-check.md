@@ -92,6 +92,21 @@ projects:
 
 ## 核心脚本说明
 
+### scripts/geo-daily-check/ 目录结构
+
+```
+scripts/geo-daily-check/
+  check-single.js         # 入口脚本，配置驱动逐项目运行
+  utils.js                # 共享工具函数（log/shouldIgnore/pathnameToKey等）
+  checks/
+    robots.js             # robots.txt 检查
+    sitemap.js            # sitemap 可访问性 + TDK/Schema 配置检查
+    url-access.js         # URL 可访问性抽样检查
+    llms-txt.js           # llms.txt 检查
+    coverage.js           # 构建产物 sitemap 覆盖检查
+    ssr.js                # SSR 渲染检查
+```
+
 ### scripts/geo-daily-check/check-single.js
 
 唯一入口脚本，配置驱动逐项目运行。
@@ -111,22 +126,26 @@ projects:
 | `loadConfig(path)` | 解析 YAML，返回 `projects` 数组 |
 | `injectToken(repoUrl, token)` | 把 token 注入 https 仓库地址（公开仓库免 token） |
 | `prepareProjectDir(owner, repo, repoUrl)` | clone 或 `git pull --rebase`，返回 `{ dir, skipBuild }` |
-| `enumeratePages(buildDir)` | 扫描产物 HTML，归一化出 `{ key, url }` 页面列表 |
-| `hasConfig(workDir, seoDir, key)` | 判断 `{seoDir}/{key}/index.json` 是否存在 |
 | `runProject(project, { dryRun })` | 单项目主流程：构建 → 跑检查 → 提 issue |
 | `createOrUpdateIssue(project, findings)` | 按 `[GEO配置缺失]` 前缀查找并创建/更新 issue |
 
-**页面路径约定**（`enumeratePages`）：产物 HTML 归一化为配置定位用的 `key` 与展示用的 `url`：
+检查函数从 `checks/` 子目录导入，每个检查项为独立模块。
 
-| 产物文件 | key（定位配置） | url（展示） |
-|----------|----------------|-------------|
-| `index.html` | `index` | `/` |
-| `about/index.html` | `about` | `/about` |
-| `en/docs/index.html` | `en/docs` | `/en/docs` |
+### scripts/geo-daily-check/utils.js
 
-SEO 配置文件即查 `{workDir}/{seo_config_dir.*}/{key}/index.json` 是否存在。
+共享工具函数模块，导出：
 
-**扫描忽略规则**（`HTML_IGNORE`）：`200/404/error.html`、`baidu_verify`、`blog(s)/news/showcase(s)` 目录。
+| 导出 | 用途 |
+|------|------|
+| `HTML_IGNORE` | 扫描构建产物时忽略的文件 pattern 数组 |
+| `CHECK_DIMENSIONS` | 检查维度注册表 |
+| `log(msg)` | 带时间戳的日志输出 |
+| `shouldIgnore(pathname, patterns)` | 判断 pathname 是否应忽略 |
+| `pathnameToKey(pathname)` | pathname → 配置定位 key |
+| `normalizePathname(p)` | 归一化 pathname（解码、去尾斜杠、去.html） |
+| `matchGlob(pattern, pathname)` | glob 模式匹配 |
+| `pickRandom(arr, n)` | 随机抽取 n 个元素 |
+| `iterateFiles(root, pattern, ignore)` | 遍历文件 Generator
 
 ### scripts/lib/portal-build.js
 
@@ -157,25 +176,49 @@ const CHECKS = {
 
 | 检查项 | 状态 | 逻辑 |
 |--------|------|------|
-| `checkTDK` | ✅ 已实现 | 遍历页面，缺 `{seo_config_dir.tdk}/{key}/index.json` 即记一条 finding |
-| `checkSchema` | ✅ 已实现 | 遍历页面，缺 `{seo_config_dir.schema}/{key}/index.json` 即记一条 finding |
-| `checkRobots` | ✅ 已实现 | 拉取 `project.home` 的 robots.txt：校验可访问、未对 `*` 全站 `Disallow: /`、声明了 `Sitemap:` 且声明的 sitemap 可正常访问 |
-| `checkSitemap` | ✅ 已实现 | 从 robots.txt 发现 sitemap（回退 `/sitemap.xml`），拉取并展开 `<sitemapindex>`，与产物页面**按 pathname** 比对，列出未收录路径 |
+| `checkRobotsTxt` | ✅ 已实现 | 检查 robots.txt 存在性、合法性（未全站封禁）、是否声明 Sitemap |
+| `checkSitemapAccessible` | ✅ 已实现 | 从 robots.txt 提取 sitemap 地址，检查可访问性和有效内容 |
+| `checkSitemapConfig` | ✅ 已实现 | 遍历 sitemap 条目，检查 TDK/Schema 配置文件是否存在 |
+| `checkUrlAccessibility` | ✅ 已实现 | 从 sitemap 抽样检查 URL 可访问性 |
+| `checkLlmsTxt` | ✅ 已实现 | 检查 llms.txt/llms-full.txt 是否存在且非空 |
+| `checkBuildSitemapCoverage` | ✅ 已实现 | 检查构建产物页面是否被 sitemap 收录 |
+| `checkSsrRendering` | ✅ 已实现 | 检测首页 + sitemap 抽样 URL 是否为 SSR/SSG 渲染，识别 CSR 空壳页面 |
 
-**checkRobots 细节**（`needsBuild: false`，仅需线上站点）：
+**checkRobotsTxt 细节**：
 
-1. 拉 `{home}/robots.txt`，拉取失败即记一条 finding
-2. `blocksAllCrawlers` —— 按分组解析，若作用于 `User-agent: *` 的组出现 `Disallow: /` 且无 `Allow: /` 放开 → 判为全站封禁
+1. 拉 `{home}/robots.txt`，拉取失败 → 记一条 finding
+2. `blocksAllCrawlers` —— 按分组解析，若作用于 `User-agent: *` 的组出现 `Disallow: /` 且无 `Allow: /` 放开 → 判为全站封禁，记一条 finding
 3. 无 `Sitemap:` 声明 → 记一条 finding
-4. 对每个声明的 sitemap 发请求，不可访问 → 记一条 finding
+4. 返回 `robotsContent` 供后续检查使用
 
-**checkSitemap 细节**（`needsBuild: true`，需遍历产物页面）：
+**checkSitemapAccessible 细节**：
 
-1. `discoverSitemaps(home)` —— 拉 `{home}/robots.txt`，正则提取 `Sitemap:` 行；解析不到则回退 `{home}/sitemap.xml`
-2. 复用 [`getSitemapUrls`](../scripts/checks/sitemap-inclusion.js)（已导出）拉取并递归展开 sitemap index，带缓存
-3. `normalizePathname` —— URL 解码、去尾斜杠、去 `.html`，**只比 pathname 忽略 host**（`project.home` 可能含双等价域名，sitemap 仅产一份）
-4. 产物页面 `page.url` 归一化后不在收录集合 → 记一条 `页面未被 sitemap 收录` finding
-5. sitemap 全部拉取失败 / 为空 → `skipped`，不误报
+1. 从 `robotsContent` 提取 `Sitemap:` 地址；无声明则回退 `{home}/sitemap.xml`
+2. 对每个 sitemap URL 调用 `getSitemapUrls` 验证可访问性
+3. 单个 sitemap 无法访问 → 记一条 finding
+4. 所有 sitemap 都无法访问 → 记一条总问题 finding
+5. 返回成功的 sitemap 条目 URL 供后续检查使用
+
+**checkSitemapConfig 细节**：
+
+1. 遍历 sitemap 条目 URL，归一化 pathname 得到 `key`
+2. 检查 `{seo_config_dir.tdk}/{key}/index.json` 是否存在 → 不存在记一条 `sitemap-tdk` finding
+3. 检查 `{seo_config_dir.schema}/{key}/index.json` 是否存在 → 不存在记一条 `sitemap-schema` finding
+
+**checkSsrRendering 细节**（`needsBuild: false`，仅需线上站点）：
+
+1. 检测范围：首页 + 从 sitemap 随机抽取 10 个 URL
+2. 框架特定检测（根据 `project.framework`）：
+   - **VitePress**：检查 `class="VPContent"` 和 `class="vpi"` 等特征标记
+   - **Nuxt**：检查 `window.__NUXT__` / `data-n-head` 数据注入，或 `#__nuxt` 容器内容丰富度
+3. 通用内容丰富度检测：
+   - 提取 `<body>` 内容，移除 `<script>` / `<style>` 标签后统计纯文本长度
+   - 纯文本 ≥ 500 字符 → 判定为 SSR/SSG（或纯静态）
+4. CSR 特征检测：
+   - `<div id="app"></div>`（Vue SPA 空挂载点）
+   - `<div id="root"></div>`（React SPA 空挂载点）
+   - `<div id="__nuxt"></div>`（Nuxt CSR 模式）
+5. 判定为 CSR → 记一条 finding，建议改用 SSR/SSG 提升搜索引擎可发现性
 
 > 新增检查项：实现 `checkXxx(ctx)` 函数并在 `CHECKS` 注册即可；若依赖线上站点设 `needsBuild: false`，若依赖构建产物设 `needsBuild: true`。
 
@@ -253,6 +296,9 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.5.0 | 2026-06-15 | 模块拆分：检查函数移至 `checks/` 子目录（robots/sitemap/url-access/llms-txt/coverage/ssr），共享工具函数移至 `utils.js`，入口脚本精简为 ~350 行 |
+| 2.4.0 | 2026-06-15 | 重构检查流程：拆分 robots.txt 检查（checkRobotsTxt）和 sitemap 可访问性检查（checkSitemapAccessible）为独立维度；sitemap 无法访问时上报问题；调整检查顺序为先 robots.txt → sitemap → TDK/Schema |
+| 2.3.0 | 2026-06-15 | 实现 checkSsrRendering：检测首页 + sitemap 抽样页面是否为 SSR/SSG 渲染，识别 CSR 空壳页面并上报 |
 | 2.2.0 | 2026-06-02 | 实现 checkRobots：校验 robots.txt 可访问、未全站封禁 `*`、声明 Sitemap 且 sitemap 可访问 |
 | 2.1.0 | 2026-06-02 | 实现 checkSitemap：robots.txt 发现 sitemap → 展开 index → 按 pathname 比对产物页面收录覆盖；复用并导出 checks/sitemap-inclusion.js 的 getSitemapUrls |
 | 2.0.0 | 2026-06-02 | 重构为配置驱动多项目（daily-check-config.yaml）+ 可插拔检查项（checkTDK/checkSchema + robots/sitemap 占位）；修复 TDK/Schema 标志位写反 bug；portal-build 支持显式 build_script/build_dir；删除 check-batch.js，workflow 改单次运行 |

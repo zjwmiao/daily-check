@@ -8,23 +8,16 @@ import {
   createIssue,
   updateIssue
 } from '../lib/atomgit-api.js';
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import yaml from 'yaml';
-import { 
-  matchProjectByUrl, 
-  runAllChecks,
-  checkUrlInSitemap,
-  checkUrlInLlmsTxt,
-  checkTdkSchemaExists
-} from './url-checks.js';
+import { matchProjectByUrl, runAllChecks } from './url-checks.js';
 
 const ANALYZE_SKIP_MARKER = '<!-- geo-analyze-skip -->';
 const ANALYZE_RESULT_MARKER = '<!-- geo-analyze-result -->';
 const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot', 'issue-analyze');
-const PROJECTS_CACHE_DIR = path.join(process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot'), 'projects');
 
 function parseAnalyzeResult(content) {
   const match = content.match(/```json\s*\n<!-- ANALYZE_RESULT -->\s*\n([\s\S]*?)\n```/);
@@ -32,7 +25,6 @@ function parseAnalyzeResult(content) {
     log('⚠ 未找到 ANALYZE_RESULT JSON block');
     return null;
   }
-  
   try {
     return JSON.parse(match[1]);
   } catch (err) {
@@ -64,60 +56,6 @@ function extractUrlsFromIssue(body) {
   });
 }
 
-async function prepareProjectWorkDir(project) {
-  const { owner, repo, repo_url } = project;
-  const projectDir = path.join(PROJECTS_CACHE_DIR, `${owner}-${repo}`);
-  
-  if (!repo_url) {
-    log(`项目 ${project.name} 缺少 repo_url，无法 clone`);
-    return null;
-  }
-  
-  const authUrl = repo_url.replace(/^https:\/\//, `https://oauth2:${process.env.ATOMGIT_TOKEN}@`);
-  
-  fs.mkdirSync(PROJECTS_CACHE_DIR, { recursive: true });
-  
-  if (fs.existsSync(projectDir)) {
-    const gitDir = path.join(projectDir, '.git');
-    if (fs.existsSync(gitDir)) {
-      log(`项目目录已存在: ${projectDir}, 尝试更新`);
-      try {
-        execSync('git pull --rebase', { cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
-        log(`✅ 项目已更新`);
-      } catch (err) {
-        log(`⚠ git pull 失败，清理后重新克隆`);
-        fs.rmSync(projectDir, { recursive: true, force: true });
-      }
-      if (fs.existsSync(projectDir)) {
-        return projectDir;
-      }
-    } else {
-      log(`目录存在但非 git 仓库，删除`);
-      try {
-        fs.rmSync(projectDir, { recursive: true, force: true });
-      } catch (err) {
-        log(`⚠ 删除失败: ${err.message}`);
-        return null;
-      }
-    }
-  }
-  
-  log(`克隆项目: ${owner}/${repo}`);
-  
-  try {
-    execSync(`git clone --depth=50 "${authUrl}" "${projectDir}"`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'inherit', 'inherit'],
-      timeout: 120000
-    });
-    log(`✅ 项目已克隆`);
-    return projectDir;
-  } catch (err) {
-    log(`❌ 克隆失败: ${err.message}`);
-    return null;
-  }
-}
-
 async function runProgramChecks(urls, projects) {
   const results = [];
   const warnings = [];
@@ -130,14 +68,8 @@ async function runProgramChecks(urls, projects) {
       continue;
     }
     
-    let workDir = null;
-    if (project.project_type !== 'docs' && project.repo_url) {
-      workDir = await prepareProjectWorkDir(project);
-    }
-    
-    const checkResult = await runAllChecks(url, project, workDir || '');
+    const checkResult = await runAllChecks(url, project);
     results.push(checkResult);
-    
     log(`程序检查 ${url}: project=${project.name}, isDocs=${checkResult.isDocs}`);
   }
   
@@ -172,26 +104,7 @@ function buildProblemsFromCheckResults(checkResults) {
         problems.push({
           url,
           dimension: 'llms.txt',
-          description: `/llms.txt 和 /llms-full.txt 中均未列出该页面`,
-          source: 'program'
-        });
-      }
-    }
-    
-    if (checks.tdkSchema) {
-      if (!checks.tdkSchema.tdkExists && !checks.tdkSchema.ignored) {
-        problems.push({
-          url,
-          dimension: 'tdk',
-          description: '缺少 TDK 配置文件',
-          source: 'program'
-        });
-      }
-      if (!checks.tdkSchema.schemaExists && !checks.tdkSchema.ignored) {
-        problems.push({
-          url,
-          dimension: 'schema',
-          description: '缺少 JSON-LD Schema 配置文件',
+          description: '/llms.txt 和 /llms-full.txt 中均未列出该页面',
           source: 'program'
         });
       }
@@ -201,72 +114,91 @@ function buildProblemsFromCheckResults(checkResults) {
   return problems;
 }
 
-function needsLLMAnalysis(checkResults) {
-  for (const r of checkResults) {
-    if (r.isDocs) continue;
-    
-    const checks = r.checks;
-    if (checks.tdkSchema?.tdkExists || checks.tdkSchema?.schemaExists) {
-      return true;
+function buildLLMPrompt(issue, urlsToAnalyze, projects) {
+  const urlList = urlsToAnalyze.map(u => `- ${u}`).join('\n');
+  const firstUrl = urlsToAnalyze[0];
+  const project = matchProjectByUrl(firstUrl, projects);
+  const outputFile = issue.cache_file?.replace('.md', '-result.md') || 
+    path.join(CACHE_DIR, 'exist-issues', `${issue.owner}-${issue.repo}-${issue.number}-result.md`);
+  
+  return `请分析以下 URL 的 TDK 和 JSON-LD Schema 语义质量。
+
+## 待分析 URL
+
+${urlList}
+
+## 分析要求
+
+1. **抓取页面**：访问每个 URL，获取 HTML 内容
+2. **提取信息**：
+   - 从 HTML 提取 <title>、<meta name="description">、<meta name="keywords">
+   - 提取 <script type="application/ld+json"> 中的 JSON-LD 内容
+3. **语义分析**：
+   - TDK/Schema 内容是否与页面实际内容一致
+   - 是否包含不存在于页面中的信息（如其他社区名称、无关关键词）
+   - description 长度是否合理（建议 100-200 字符）
+   - JSON-LD schema 类型是否合适
+
+## 输出格式
+
+分析完成后，请将结果写入文件：${outputFile}
+
+文件内容末尾必须包含以下结构化 JSON block：
+
+\`\`\`json
+<!-- ANALYZE_RESULT -->
+{
+  "has_problems": true,
+  "source_issue_id": ${issue.number},
+  "source_issue_url": "${issue.url}",
+  "target_owner": "${project?.owner || 'null'}",
+  "target_repo": "${project?.repo || 'null'}",
+  "analyzed_urls": ${JSON.stringify(urlsToAnalyze)},
+  "problems": [
+    {
+      "url": "具体URL",
+      "dimension": "tdk-quality",
+      "description": "问题描述：例如 description 包含无关的 openEuler 社区名称",
+      "source": "llm"
     }
-  }
-  return false;
+  ],
+  "message": null
 }
+\`\`\`
 
-function buildLLMInputContent(issue, checkResults, projects) {
-  const urls = checkResults.map(r => r.url);
-  const urlsWithConfig = checkResults.filter(r => 
-    !r.isDocs && (r.checks.tdkSchema?.tdkExists || r.checks.tdkSchema?.schemaExists)
-  );
-  
-  const configInfo = urlsWithConfig.map(r => {
-    const lines = [`URL: ${r.url}`];
-    if (r.checks.tdkSchema?.tdkContent) {
-      lines.push(`TDK 配置: ${JSON.stringify(r.checks.tdkSchema.tdkContent)}`);
-    }
-    if (r.checks.tdkSchema?.schemaContent) {
-      lines.push(`Schema 配置: ${JSON.stringify(r.checks.tdkSchema.schemaContent)}`);
-    }
-    return lines.join('\n');
-  }).join('\n\n');
-  
-  return `请使用 issue-analyze skill 对以下 issue 进行 **TDK/Schema 语义分析**（Phase 2）:
+**如果无问题**，输出：
 
-- **owner**: ${issue.owner}
-- **repo**: ${issue.repo}
-- **issue_number**: ${issue.number}
+\`\`\`json
+<!-- ANALYZE_RESULT -->
+{
+  "has_problems": false,
+  "source_issue_id": ${issue.number},
+  "source_issue_url": "${issue.url}",
+  "target_owner": "${project?.owner || 'null'}",
+  "target_repo": "${project?.repo || 'null'}",
+  "analyzed_urls": ${JSON.stringify(urlsToAnalyze)},
+  "problems": [],
+  "message": "TDK 和 Schema 语义检查通过，内容与页面一致"
+}
+\`\`\`
 
-Issue 文件路径: ${issue.cache_file}
-
-## 已完成的程序检查（Phase 1）
-
-已通过程序检查的 URL：
-${urls.map(u => `- ${u}`).join('\n')}
-
-## 需要进行语义分析的 URL（已有 TDK/Schema 配置）
-
-${configInfo || '无'}
-
-## 语义分析要求
-
-请只针对**已有 TDK/Schema 配置**的 URL 进行内容质量分析：
-1. 检查 TDK/Schema 内容是否与页面实际内容一致
-2. 确保不出现不存在于页面内容中的信息
-3. 检查 description 是否过长/过短、keywords 是否合理
-
-分析完成后，请将结果写入: ${issue.cache_file.replace('.md', '-result.md')}
+**注意事项**：
+- \`<!-- ANALYZE_RESULT -->\` 标记必须放在 \`\`\`json 代码块内第一行
+- \`dimension\` 只能是 \`tdk-quality\` 或 \`schema-quality\`
+- 如果 URL 涉及的域名不属于已知项目，target_owner/target_repo 设为 null
+- description 字段要具体说明问题，便于后续修复
 `;
 }
 
-async function runOpencodeAnalyze(issue, checkResults, projects) {
+async function runOpencodeAnalyze(issue, urlsToAnalyze, projects) {
   const inputFile = path.join(CACHE_DIR, `input-${issue.owner}-${issue.repo}-${issue.number}.txt`);
+  const prompt = buildLLMPrompt(issue, urlsToAnalyze, projects);
   
-  const inputContent = buildLLMInputContent(issue, checkResults, projects);
-  
-  fs.writeFileSync(inputFile, inputContent, 'utf-8');
+  fs.writeFileSync(inputFile, prompt, 'utf-8');
   log(`LLM 输入文件: ${inputFile}`);
   
-  const outputFile = issue.cache_file.replace('.md', '-result.md');
+  const outputFile = issue.cache_file?.replace('.md', '-result.md') || 
+    path.join(CACHE_DIR, 'exist-issues', `${issue.owner}-${issue.repo}-${issue.number}-result.md`);
   
   return new Promise((resolve, reject) => {
     log(`▶ 启动 LLM 语义分析...`);
@@ -274,7 +206,6 @@ async function runOpencodeAnalyze(issue, checkResults, projects) {
     const proc = spawn('opencode', [
       'run', inputFile,
       '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
-      '--agent', process.env.AI_AGENT || 'build',
       '--dangerously-skip-permissions'
     ], {
       stdio: ['ignore', 'inherit', 'inherit'],
@@ -295,29 +226,15 @@ async function runOpencodeAnalyze(issue, checkResults, projects) {
   });
 }
 
-function mergeProgramAndLLMResults(programProblems, llmResult) {
-  const allProblems = [...programProblems];
-  
-  if (llmResult?.problems) {
-    for (const p of llmResult.problems) {
-      if (!['sitemap', 'llms.txt', 'tdk', 'schema'].includes(p.dimension)) {
-        allProblems.push({ ...p, source: 'llm' });
-      }
-    }
-  }
-  
-  return allProblems;
-}
-
 function buildNoProblemComment(result) {
   const urls = result.analyzed_urls || [];
   const urlList = urls.map(u => `- ${u}`).join('\n');
   const warnings = result.warnings || [];
-  const warningList = warnings.map(w => `- ${w.url}: ${w.message}`).join('\n');
+  const warningList = warnings.length > 0 ? warnings.map(w => `- ${w.url}: ${w.message}`).join('\n') : '';
   
   return `## GEO 分析结果
 
-经分析，此 issue **不涉及GEO基础配置问题**（TDK/JSON-LD/sitemap/llms.txt）。
+经分析，此 issue **不涉及GEO基础配置问题**（sitemap/llms.txt/TDK/Schema）。
 
 **分析详情**:
 
@@ -326,7 +243,7 @@ ${result.message || '所有检查项均通过'}
 **涉及页面**:
 ${urlList || '未识别到具体页面'}
 
-${warnings.length > 0 ? `**警告**:\n${warningList}` : ''}
+${warningList ? `**警告**:\n${warningList}` : ''}
 
 建议关注：页面内容质量、HTML结构优化、用户体验等。
 
@@ -335,7 +252,6 @@ ${ANALYZE_SKIP_MARKER}`;
 
 function buildProblemIssueBody(result, sourceIssue) {
   const problems = result.problems || [];
-  
   const problemTable = problems.map(p => 
     `| ${p.dimension} | ${p.url || '-'} | ${p.description} |`
   ).join('\n');
@@ -516,20 +432,22 @@ async function main() {
       return;
     }
     
-    log('\n========== Phase 1: 程序化检查 ==========');
+    log('\n========== Phase 1: 程序化检查 (sitemap + llms.txt) ==========');
     const { results: checkResults, warnings } = await runProgramChecks(urls, projects);
     
     const programProblems = buildProblemsFromCheckResults(checkResults);
     log(`程序检查发现 ${programProblems.length} 个问题`);
     
-    let llmResult = null;
     let llmProblems = [];
+    let llmResult = null;
     
-    const needLLM = needsLLMAnalysis(checkResults);
+    const urlsToAnalyze = checkResults.filter(r => !r.isDocs).map(r => r.url);
     
-    if (needLLM) {
-      log('\n========== Phase 2: LLM 语义分析 ==========');
-      const { outputFile } = await runOpencodeAnalyze(issue, checkResults, projects);
+    if (urlsToAnalyze.length > 0) {
+      log('\n========== Phase 2: LLM 语义分析 (TDK + Schema) ==========');
+      log(`待分析 URL: ${urlsToAnalyze.length} 个`);
+      
+      const { outputFile } = await runOpencodeAnalyze(issue, urlsToAnalyze, projects);
       
       if (fs.existsSync(outputFile)) {
         const content = fs.readFileSync(outputFile, 'utf-8');
@@ -538,28 +456,25 @@ async function main() {
         
         llmResult = parseAnalyzeResult(content);
         if (llmResult?.problems) {
-          llmProblems = llmResult.problems.filter(p => 
-            !['sitemap', 'llms.txt', 'tdk', 'schema'].includes(p.dimension)
-          );
+          llmProblems = llmResult.problems;
           log(`LLM 语义分析发现 ${llmProblems.length} 个问题`);
         }
       }
     } else {
-      log('\n跳过 Phase 2 (无需要语义分析的 URL)');
+      log('\n跳过 Phase 2 (所有 URL 都是 docs 类型)');
     }
     
     const allProblems = [...programProblems, ...llmProblems];
     
-    const firstResult = checkResults[0];
-    const targetProject = firstResult ? 
-      projects.find(p => p.name === firstResult.project) : null;
+    const firstCheck = checkResults.find(r => !r.isDocs) || checkResults[0];
+    const targetProject = firstCheck ? matchProjectByUrl(firstCheck.url, projects) : null;
     
     const finalResult = {
       has_problems: allProblems.length > 0,
       source_issue_id: issue.number,
       source_issue_url: issue.url,
-      target_owner: targetProject?.owner || null,
-      target_repo: targetProject?.repo || null,
+      target_owner: llmResult?.target_owner || targetProject?.owner || null,
+      target_repo: llmResult?.target_repo || targetProject?.repo || null,
       analyzed_urls: urls,
       warnings,
       problems: allProblems,

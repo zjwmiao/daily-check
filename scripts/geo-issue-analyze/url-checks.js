@@ -1,8 +1,6 @@
-import path from 'path';
-import fs from 'fs';
 import { fetchHttp } from '../lib/html-fetch.js';
 import { getSitemapUrls } from '../checks/sitemap-inclusion.js';
-import { pathnameToKey, shouldIgnore } from '../geo-daily-check/utils.js';
+import { shouldIgnore } from '../geo-daily-check/utils.js';
 import { log } from '../lib/utils.js';
 
 const ROBOTS_CACHE = new Map();
@@ -127,50 +125,6 @@ export async function checkUrlInLlmsTxt(url, project) {
   return { covered, inFiles, llmsTxtExists: !!llms.llmsTxt, llmsFullTxtExists: !!llms.llmsFullTxt };
 }
 
-export async function checkTdkSchemaExists(url, project, workDir) {
-  const result = { tdkExists: false, schemaExists: false, tdkContent: null, schemaContent: null };
-  
-  if (!project.seo_config_dir) {
-    return { ...result, error: '项目未配置 seo_config_dir' };
-  }
-  
-  let urlObj;
-  try {
-    urlObj = new URL(url);
-  } catch {
-    return { ...result, error: 'URL 格式无效' };
-  }
-  
-  const pathname = urlObj.pathname;
-  if (shouldIgnore(pathname, project.ignore_routes)) {
-    return { ...result, ignored: true, message: 'URL 在 ignore_routes 中' };
-  }
-  
-  const key = pathnameToKey(pathname);
-  
-  if (project.seo_config_dir.tdk) {
-    const tdkPath = path.join(workDir, project.seo_config_dir.tdk, key, 'index.json');
-    if (fs.existsSync(tdkPath)) {
-      result.tdkExists = true;
-      try {
-        result.tdkContent = JSON.parse(fs.readFileSync(tdkPath, 'utf-8'));
-      } catch {}
-    }
-  }
-  
-  if (project.seo_config_dir.schema) {
-    const schemaPath = path.join(workDir, project.seo_config_dir.schema, key, 'index.json');
-    if (fs.existsSync(schemaPath)) {
-      result.schemaExists = true;
-      try {
-        result.schemaContent = JSON.parse(fs.readFileSync(schemaPath, 'utf-8'));
-      } catch {}
-    }
-  }
-  
-  return result;
-}
-
 export function matchProjectByUrl(url, projects) {
   let urlObj;
   try {
@@ -197,21 +151,15 @@ export function matchProjectByUrl(url, projects) {
   return null;
 }
 
-export async function runAllChecks(url, project, workDir) {
+export async function runAllChecks(url, project) {
   const isDocs = project.project_type === 'docs';
-  const results = {
+  return {
     url,
     project: project.name,
     isDocs,
-    checks: {}
+    checks: {
+      sitemap: await checkUrlInSitemap(url, project),
+      llmsTxt: await checkUrlInLlmsTxt(url, project)
+    }
   };
-  
-  results.checks.sitemap = await checkUrlInSitemap(url, project);
-  results.checks.llmsTxt = await checkUrlInLlmsTxt(url, project);
-  
-  if (!isDocs) {
-    results.checks.tdkSchema = await checkTdkSchemaExists(url, project, workDir);
-  }
-  
-  return results;
 }

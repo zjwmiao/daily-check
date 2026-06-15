@@ -17,6 +17,7 @@ import { matchProjectByUrl, runAllChecks } from './url-checks.js';
 
 const ANALYZE_SKIP_MARKER = '<!-- geo-analyze-skip -->';
 const ANALYZE_RESULT_MARKER = '<!-- geo-analyze-result -->';
+const ANALYZE_IGNORED_MARKER = '<!-- geo-analyze-ignored -->';
 const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot', 'issue-analyze');
 
 function parseAnalyzeResult(content) {
@@ -112,6 +113,59 @@ function buildProblemsFromCheckResults(checkResults) {
   }
   
   return problems;
+}
+
+function isAllUrlsIgnored(checkResults) {
+  return checkResults.length > 0 && 
+    checkResults.every(r => r.checks.sitemap?.ignored === true);
+}
+
+function buildIgnoredComment(urls) {
+  const urlList = urls.map(u => `- ${u}`).join('\n');
+  
+  return `## GEO 分析结果
+
+经分析，此 issue 涉及的页面均在项目配置的 \`ignore_routes\` 中，属于**非GEO优化范围**的页面类型。
+
+**涉及页面**:
+${urlList}
+
+这些页面类型（如博客、新闻、活动等）通常不需要统一的 TDK/Schema 配置，建议单独分析处理。
+
+${ANALYZE_IGNORED_MARKER}`;
+}
+
+async function handleAllUrlsIgnored(issue, urls, dryRun = false) {
+  const { owner, repo, number } = issue;
+  
+  if (dryRun) {
+    log('DryRun: 模拟评论 (所有 URL 被 ignore_routes 跳过)');
+    return {
+      status: 'dry_run',
+      would_do: 'add_comment',
+      target: { owner, repo, issue_number: number },
+      message: '所有 URL 被 ignore_routes 跳过，建议单独分析',
+      ignored_urls: urls
+    };
+  }
+  
+  const alreadyProcessed = await checkAlreadyProcessed(owner, repo, number);
+  if (alreadyProcessed) {
+    log('跳过: 已有分析评论');
+    return { status: 'skipped', reason: 'already_processed' };
+  }
+  
+  const commentBody = buildIgnoredComment(urls);
+  
+  log(`▶ 评论到原 issue #${number}`);
+  const comment = await addIssueComment({
+    owner, repo,
+    issue_number: number,
+    body: commentBody
+  });
+  
+  log(`✅ 评论已添加`);
+  return { status: 'commented_ignored', comment_url: comment.html_url };
 }
 
 function buildLLMPrompt(issue, urlsToAnalyze, projects) {
@@ -279,7 +333,8 @@ async function checkAlreadyProcessed(owner, repo, issueNumber) {
   const comments = await listIssueComments({ owner, repo, issue_number: issueNumber });
   return comments.some(c => 
     (c.body || '').includes(ANALYZE_SKIP_MARKER) ||
-    (c.body || '').includes(ANALYZE_RESULT_MARKER)
+    (c.body || '').includes(ANALYZE_RESULT_MARKER) ||
+    (c.body || '').includes(ANALYZE_IGNORED_MARKER)
   );
 }
 
@@ -435,6 +490,38 @@ async function main() {
     
     log('\n========== Phase 1: 程序化检查 (sitemap + llms.txt) ==========');
     const { results: checkResults, warnings } = await runProgramChecks(urls, projects);
+    
+    if (isAllUrlsIgnored(checkResults)) {
+      log('所有 URL 都在 ignore_routes 中，跳过 GEO 检查');
+      
+      const outcome = await handleAllUrlsIgnored(issue, urls, dryRun);
+      
+      const output = {
+        run_at: new Date().toISOString(),
+        dry_run: dryRun,
+        source_issue: {
+          owner: issue.owner,
+          repo: issue.repo,
+          number: issue.number,
+          url: issue.url
+        },
+        check_results: checkResults,
+        outcome,
+        message: '所有 URL 被 ignore_routes 跳过，建议单独分析'
+      };
+      
+      if (dryRun) {
+        const dryRunDir = path.join(CACHE_DIR, 'dryrun-results');
+        fs.mkdirSync(dryRunDir, { recursive: true });
+        const dryRunFile = path.join(dryRunDir, `${issue.owner}-${issue.repo}-${issue.number}.json`);
+        fs.writeFileSync(dryRunFile, JSON.stringify(output, null, 2), 'utf-8');
+        log(`DryRun 结果保存到: ${dryRunFile}`);
+      }
+      
+      console.log(JSON.stringify(output, null, 2));
+      log(`\n🏁 完成: ${outcome.status}`);
+      return;
+    }
     
     const programProblems = buildProblemsFromCheckResults(checkResults);
     log(`程序检查发现 ${programProblems.length} 个问题`);

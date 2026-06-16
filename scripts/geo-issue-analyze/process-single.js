@@ -263,7 +263,7 @@ async function runOpencodeAnalyze(issue, urlsToAnalyze, projects) {
       '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
       '--dangerously-skip-permissions'
     ], {
-      stdio: ['ignore', 'inherit', 'inherit'],
+      stdio: ['ignore', 'inherit', 'ignore'],
       env: { ...process.env }
     });
 

@@ -241,11 +241,17 @@ async function createOrUpdateIssue(project, findings) {
 // ============ 单项目流程 ============
 
 async function runProject(project, { dryRun }) {
-  const { name, owner, repo, repo_url: repoUrl, type } = project;
-  log(`\n========== 项目: ${name} (${owner}/${repo}) [${type || 'portal'}] ==========`);
+  const { name, owner, repo, repo_url: repoUrl, project_type } = project;
+  log(`\n========== 项目: ${name} (${owner}/${repo}) [${project_type || 'portal'}] ==========`);
 
   const skip = Array.isArray(project.skip_check) ? project.skip_check : [];
-  const isDocsProject = type === 'docs';
+  const isDocsProject = project_type === 'docs' || project_type === 'docs-website';
+
+  // skip_check 包含 'all' 则跳过整个项目
+  if (skip.includes('all')) {
+    log(`⏭️ ${name} 配置了 skip_check: ['all']，跳过所有检查`);
+    return { name, ok: true, findings: 0, skipped: true };
+  }
 
   // 1. 准备项目目录
   if (!repoUrl) {

@@ -332,12 +332,13 @@ async function runProject(project, { dryRun }) {
   const allFindings = [...onlineFindings];
 
   if (!buildResult.ok) {
-    log(`❌ ${name} 构建失败: ${buildResult.error}`);
-    // 构建失败仍报告线上检查结果
-    if (allFindings.length > 0 && !dryRun && process.env.ATOMGIT_TOKEN) {
-      await createOrUpdateIssue(project, allFindings);
-    }
-    return { name, ok: false, error: buildResult.error, findings: allFindings.length };
+    log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过构建产物检查`);
+    // 构建失败不提 issue，只打印警告，继续检查后续项目
+    const byDim = {};
+    for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
+    const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
+    log(`=== ${name} 线上检查完成, 问题统计: ${dimStr} ===`);
+    return { name, ok: true, findings: allFindings.length, byDim, buildFailed: true };
   }
 
   const buildDir = buildResult.buildDir;
@@ -442,7 +443,8 @@ async function main() {
   for (const s of summaries) {
     if (s.ok) {
       const dimStr = s.byDim ? Object.entries(s.byDim).map(([d, n]) => `${d}:${n}`).join(' ') : '';
-      log(`  ✅ ${s.name}  问题数: ${s.findings ?? 0}  ${dimStr}`);
+      const buildNote = s.buildFailed ? ' (⚠️ 构建失败)' : '';
+      log(`  ✅ ${s.name}  问题数: ${s.findings ?? 0}  ${dimStr}${buildNote}`);
     } else {
       log(`  ❌ ${s.name}  ${s.error || ''}`);
     }

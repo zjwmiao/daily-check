@@ -206,7 +206,7 @@ function buildIssueBody(findings, project) {
 
 async function createOrUpdateIssue(project, findings) {
   const { owner, repo } = project;
-  const titlePrefix = '[GEO配置缺失]';
+  const titlePrefix = '[GEO Daily Check]';
   const title = `${titlePrefix} ${owner}/${repo}: ${findings.length} 项检查未通过`;
   const body = buildIssueBody(findings, project);
 

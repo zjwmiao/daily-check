@@ -139,7 +139,7 @@ export function matchProjectByUrl(url, projects) {
 }
 
 export async function runAllChecks(url, project) {
-  const isDocs = project.project_type === 'docs';
+  const isDocs = project.project_type === 'docs' || project.project_type === 'docs-website';
   return {
     url,
     project: project.name,

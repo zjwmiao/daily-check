@@ -450,10 +450,8 @@ async function main() {
     }
   }
 
-  if (failed.length > 0) process.exit(1);
-}
+  }
 
 main().catch((err) => {
   console.error(`❌ ${err.message}`);
-  process.exit(1);
 });

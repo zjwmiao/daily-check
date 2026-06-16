@@ -305,6 +305,37 @@ ${warningList ? `**警告**:\n${warningList}` : ''}
 ${ANALYZE_SKIP_MARKER}`;
 }
 
+function buildHasProblemsComment(result, newIssueUrl, newIssueNumber) {
+  const problems = result.problems || [];
+  const urls = result.analyzed_urls || [];
+  const urlList = urls.map(u => `- ${u}`).join('\n');
+  
+  const byDimension = {};
+  for (const p of problems) {
+    byDimension[p.dimension] = (byDimension[p.dimension] || 0) + 1;
+  }
+  const dimSummary = Object.entries(byDimension)
+    .map(([d, n]) => `${d}: ${n}个`)
+    .join('、');
+  
+  return `## GEO 分析结果
+
+经分析，此 issue 涉及的页面存在 **${problems.length} 个 GEO 配置问题**。
+
+**问题分布**: ${dimSummary}
+
+**涉及页面**:
+${urlList}
+
+**处理结果**: 已在目标仓库创建 issue 进行跟踪
+
+🔗 新 issue: [#${newIssueNumber}](${newIssueUrl})
+
+请关注新 issue 的修复进展。
+
+${ANALYZE_RESULT_MARKER}`;
+}
+
 function buildProblemIssueBody(result, sourceIssue) {
   const problems = result.problems || [];
   const problemTable = problems.map(p => 
@@ -389,7 +420,7 @@ async function handleHasProblems(issue, result, dryRun = false) {
   if (dryRun) {
     return {
       status: 'dry_run',
-      would_do: 'create_issue',
+      would_do: 'create_issue_and_comment',
       target: { owner: targetOwner, repo: targetRepo },
       title,
       problems_count: problems.length,
@@ -398,7 +429,8 @@ async function handleHasProblems(issue, result, dryRun = false) {
         dimension: p.dimension,
         description: p.description,
         source: p.source
-      }))
+      })),
+      would_comment_to_source: true
     };
   }
   
@@ -411,6 +443,8 @@ async function handleHasProblems(issue, result, dryRun = false) {
   
   const exactMatch = existing && existing.title.includes(`(from #${number})`);
   
+  let targetIssueNumber, targetIssueUrl;
+  
   if (exactMatch) {
     await updateIssue({
       owner: targetOwner,
@@ -418,11 +452,8 @@ async function handleHasProblems(issue, result, dryRun = false) {
       issue_number: existing.number,
       body
     });
-    return { 
-      status: 'updated', 
-      issue_number: existing.number,
-      issue_url: existing.html_url
-    };
+    targetIssueNumber = existing.number;
+    targetIssueUrl = existing.html_url;
   } else {
     const newIssue = await createIssue({
       owner: targetOwner,
@@ -430,12 +461,26 @@ async function handleHasProblems(issue, result, dryRun = false) {
       title,
       body
     });
-    return { 
-      status: 'created', 
-      issue_number: newIssue.number,
-      issue_url: newIssue.html_url
-    };
+    targetIssueNumber = newIssue.number;
+    targetIssueUrl = newIssue.html_url;
   }
+  
+  const alreadyProcessed = await checkAlreadyProcessed(owner, repo, number);
+  if (!alreadyProcessed) {
+    const commentBody = buildHasProblemsComment(result, targetIssueUrl, targetIssueNumber);
+    await addIssueComment({
+      owner, repo,
+      issue_number: number,
+      body: commentBody
+    });
+  }
+  
+  return {
+    status: exactMatch ? 'updated' : 'created',
+    issue_number: targetIssueNumber,
+    issue_url: targetIssueUrl,
+    commented_to_source: !alreadyProcessed
+  };
 }
 
 async function main() {

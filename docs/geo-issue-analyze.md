@@ -235,9 +235,35 @@ allProblems = [...programProblems, ...llmProblems]
 | 场景 | 操作 | Body 类型 |
 |------|------|----------|
 | 无问题 | 评论到原 issue | `buildNoProblemComment` → comment |
-| 有问题 | 创建新 `[GEO-ANALYZE]` issue | `buildProblemIssueBody` → issue |
+| 有问题 | 1. 创建新 `[GEO-ANALYZE]` issue | `buildProblemIssueBody` → issue |
+| 有问题 | 2. 回评原 issue（告知结论+新issue链接） | `buildHasProblemsComment` → comment |
 
-#### 5.3 打印与保存
+#### 5.3 回评原 issue
+
+当发现问题并创建新 issue 后，会回评原 issue，内容包括：
+- 问题总数和分布
+- 涉及的页面列表
+- 新 issue 的链接
+
+示例：
+```markdown
+## GEO 分析结果
+
+经分析，此 issue 涉及的页面存在 **5 个 GEO 配置问题**。
+
+**问题分布**: sitemap: 2个、llms.txt: 1个、tdk-quality: 2个
+
+**涉及页面**:
+- https://www.openeuler.org/zh/download/
+
+**处理结果**: 已在目标仓库创建 issue 进行跟踪
+
+🔗 新 issue: [#456](https://atomgit.com/openeuler/openEuler-portal/issues/456)
+
+<!-- geo-analyze-result -->
+```
+
+#### 5.4 打印与保存
 
 ```js
 saveAndPrintGeneratedBody(issue, generatedBody, type)

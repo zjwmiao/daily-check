@@ -25,7 +25,10 @@ export async function checkSitemapAccessible(project, robotsContent, { skip }) {
   for (const sm of sitemapUrls) {
     try {
       const result = await getSitemapUrls(sm);
-      allEntries.push(...result.urls);
+      // 使用循环避免大数组 spread 导致栈溢出
+      for (const url of result.urls) {
+        allEntries.push(url);
+      }
       
       for (const failed of result.failedUrls) {
         findings.push({ 

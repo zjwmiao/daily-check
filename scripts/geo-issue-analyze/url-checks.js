@@ -76,7 +76,9 @@ export async function checkUrlInSitemap(url, project) {
   for (const sm of sitemapUrls) {
     try {
       const result = await getSitemapUrls(sm);
-      allEntries.push(...result.urls);
+      for (const url of result.urls) {
+        allEntries.push(url);
+      }
     } catch (err) {
       log(`sitemap ${sm} 获取失败: ${err.message}`);
     }

@@ -71,12 +71,14 @@ flowchart TB
 | `seo_config_dir.schema` | schema 检查必填 | JSON-LD 配置根目录（如 `.geo/jsonld`） |
 | `skip_check` | 可选 | 跳过的检查项数组，如 `[sitemap-tdk, sitemap-schema]` |
 | `home` | 可选 | 线上站点 URL 数组，供 robots/sitemap 检查使用 |
+| `enable_render_change_analysis` | 可选 | 启用 render-change 分析，默认 `false`；启用后检测代码变更并分析受影响页面 |
+| `render_change_commits_count` | 可选 | 分析最近 N 个 commits，默认 `5` |
 
 示例：
 
 ```yaml
 projects:
-  # portal 类型项目（默认）- 需要构建
+  # portal 类型项目（默认）- 需要构建，启用 render-change 分析
   - name: openEuler
     owner: openeuler
     repo: openEuler-portal
@@ -90,6 +92,8 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.openeuler.org/
+    enable_render_change_analysis: true
+    render_change_commits_count: 10
 
   # docs 类型项目 - 跳过构建
   - name: openEuler-docs
@@ -196,6 +200,8 @@ const CHECKS = {
 | `checkLlmsTxt` | ✅ 已实现 | 检查 llms.txt/llms-full.txt 是否存在且非空 |
 | `checkBuildSitemapCoverage` | ✅ 已实现 | 检查构建产物页面是否被 sitemap 收录 |
 | `checkSsrRendering` | ✅ 已实现 | 检测首页 + sitemap 抽样 URL 是否为 SSR/SSG 渲染，识别 CSR 空壳页面 |
+| `checkRenderChange` | ✅ 已实现 | 分析代码变更，识别受渲染影响的页面（需要 `enable_render_change_analysis`） |
+| `checkTdkSchemaSemantic` | ✅ 已实现 | 对受影响页面进行 TDK/Schema 语义检查，验证内容一致性 |
 
 **checkRobotsTxt 细节**：
 
@@ -232,6 +238,23 @@ const CHECKS = {
    - `<div id="root"></div>`（React SPA 空挂载点）
    - `<div id="__nuxt"></div>`（Nuxt CSR 模式）
 5. 判定为 CSR → 记一条 finding，建议改用 SSR/SSG 提升搜索引擎可发现性
+
+**checkRenderChange 细节**（需要 `enable_render_change_analysis: true`）：
+
+1. 检测 git pull 是否有新 commits → 无变更则跳过
+2. 调用 `opencode` agent + `render-change-analyzer` skill 分析最近 N 个 commits
+3. 输出受影响页面 pathname 列表（JSON 数组）
+4. 不产生 findings，仅产出页面列表供后续检查
+
+**checkTdkSchemaSemantic 细节**（依赖 `checkRenderChange` 输出）：
+
+1. 接收受影响页面 pathname 列表
+2. 转换为构建产物 HTML 文件路径
+3. 调用 `opencode` agent 对每个 HTML 文件进行语义检查：
+   - 提取 TDK 和 JSON-LD 内容
+   - 验证与页面实际内容的一致性
+   - 检查是否包含无关关键词/其他社区名称
+4. 发现语义问题 → 记一条 `tdk-schema-semantic` finding
 
 > 新增检查项：实现 `checkXxx(ctx)` 函数并在 `CHECKS` 注册即可；若依赖线上站点设 `needsBuild: false`，若依赖构建产物设 `needsBuild: true`。
 
@@ -309,6 +332,7 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.7.0 | 2026-06-15 | 新增 render-change 分析和 TDK/Schema 语义检查：检测代码变更 → 调用 agent 分析受影响页面 → 对构建产物 HTML 进行语义一致性检查；新增配置项 `enable_render_change_analysis` |
 | 2.6.0 | 2026-06-15 | 支持 `type: docs` 项目类型：docs 类型跳过构建和构建产物检查（sitemap-coverage），仅执行线上检查项 |
 | 2.5.0 | 2026-06-15 | 模块拆分：检查函数移至 `checks/` 子目录（robots/sitemap/url-access/llms-txt/coverage/ssr），共享工具函数移至 `utils.js`，入口脚本精简为 ~350 行 |
 | 2.4.0 | 2026-06-15 | 重构检查流程：拆分 robots.txt 检查（checkRobotsTxt）和 sitemap 可访问性检查（checkSitemapAccessible）为独立维度；sitemap 无法访问时上报问题；调整检查顺序为先 robots.txt → sitemap → TDK/Schema |

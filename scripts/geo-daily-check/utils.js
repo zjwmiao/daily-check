@@ -7,7 +7,7 @@ export const HTML_IGNORE = [
   /\b(blog|blogs|news|showcase|showcases)\b/,
 ];
 
-export const CHECK_DIMENSIONS = ['robots-txt', 'sitemap-access', 'sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage', 'ssr-rendering'];
+export const CHECK_DIMENSIONS = ['robots-txt', 'sitemap-access', 'sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage', 'ssr-rendering', 'tdk-schema-semantic'];
 
 export function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);

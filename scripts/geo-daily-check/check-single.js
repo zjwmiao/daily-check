@@ -36,6 +36,8 @@ import { checkUrlAccessibility } from './checks/url-access.js';
 import { checkLlmsTxt } from './checks/llms-txt.js';
 import { checkBuildSitemapCoverage } from './checks/coverage.js';
 import { checkSsrRendering } from './checks/ssr.js';
+import { checkRenderChange } from './checks/render-change.js';
+import { checkTdkSchemaSemantic } from './checks/tdk-schema-semantic.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -123,17 +125,20 @@ function prepareProjectDir(owner, repo, repoUrl) {
           stdio: ['ignore', 'pipe', 'inherit'],
         }).trim();
         log(`✅ 项目已更新`);
-        if (res.includes('Already up to date.')) {
-          return { skipBuild: true, dir: projectDir };
-        }
+        const hasNewCommits = !res.includes('Already up to date.');
+        const buildDir = authUrl.includes('openEuler-portal') 
+          ? path.join(projectDir, 'app/.vitepress/dist')
+          : null;
+        const skipBuild = !hasNewCommits && buildDir && fs.existsSync(buildDir);
+        return { skipBuild, dir: projectDir, hasNewCommits };
       } catch (err) {
         log(`⚠ 更新失败，重新克隆: ${err.message}`);
         fs.rmSync(projectDir, { recursive: true, force: true });
         fs.mkdirSync(projectDir, { recursive: true });
         runCmd(`git clone --depth=100 "${authUrl}" "${projectDir}"`);
         log(`✅ 项目已重新克隆`);
+        return { skipBuild: false, dir: projectDir, hasNewCommits: true };
       }
-      return { skipBuild: false, dir: projectDir };
     } else {
       log(`目录存在但非 Git 仓库，删除并重新克隆`);
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -150,7 +155,7 @@ function prepareProjectDir(owner, repo, repoUrl) {
     throw err;
   }
 
-  return { skipBuild: false, dir: projectDir };
+  return { skipBuild: false, dir: projectDir, hasNewCommits: true };
 }
 
 function hasConfig(workDir, seoDir, key) {
@@ -185,6 +190,7 @@ function buildIssueBody(findings, project) {
   lines.push('- **llms-txt**: llms.txt/llms-full.txt缺失或为空');
   lines.push('- **sitemap-coverage**: 构建页面未被sitemap收录');
   lines.push('- **ssr-rendering**: 页面疑似客户端渲染(CSR)，不利于SEO/GEO');
+  lines.push('- **tdk-schema-semantic**: TDK/Schema 语义不一致，内容与页面实际内容不符');
   lines.push('');
   lines.push('### 建议操作');
   lines.push('');
@@ -203,6 +209,9 @@ async function createOrUpdateIssue(project, findings) {
   const titlePrefix = '[GEO配置缺失]';
   const title = `${titlePrefix} ${owner}/${repo}: ${findings.length} 项检查未通过`;
   const body = buildIssueBody(findings, project);
+
+  log(`================== issue body (${project.name}) ==================`);
+  log(body + '\n\n');
 
   try {
     log(`🔍 查找已存在的 issue: "${titlePrefix}" on ${owner}/${repo}`);
@@ -244,9 +253,11 @@ async function runProject(project, { dryRun }) {
     return { name, ok: false, error: 'missing repo_url' };
   }
 
-  let workDir;
+  let workDir, hasNewCommits;
   try {
-    workDir = prepareProjectDir(owner, repo, repoUrl).dir;
+    const prepared = prepareProjectDir(owner, repo, repoUrl);
+    workDir = prepared.dir;
+    hasNewCommits = prepared.hasNewCommits;
   } catch (err) {
     return { name, ok: false, error: err.message };
   }
@@ -332,7 +343,22 @@ async function runProject(project, { dryRun }) {
     allFindings.push(...coverageRes.findings);
   }
 
-  // 6. 汇总 + 提issue
+  // 6. render-change 分析 + TDK/Schema 语义检查
+  if (hasNewCommits && project.enable_render_change_analysis) {
+    log(`${name} 检测到代码变更，运行 render-change 分析...`);
+    const renderChangeRes = await checkRenderChange(project, workDir, { skip });
+    const affectedPages = renderChangeRes.affectedPages;
+    
+    if (affectedPages.length > 0) {
+      log(`render-change 分析完成: ${affectedPages.length} 个受影响页面`);
+      const semanticRes = await checkTdkSchemaSemantic(project, buildDir, affectedPages, { skip });
+      allFindings.push(...semanticRes.findings);
+    } else {
+      log(`render-change 分析完成: 无受影响页面`);
+    }
+  }
+
+  // 7. 汇总 + 提issue
   if (allFindings.length > 0 && !dryRun) {
     if (!process.env.ATOMGIT_TOKEN) {
       log(`⚠ 未设置 ATOMGIT_TOKEN, 跳过 issue 上报`);

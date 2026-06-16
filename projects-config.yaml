@@ -139,6 +139,24 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.mindspore.cn/
+  - name: openUBMC
+    owner: openUBMC
+    repo: website
+    repo_url: https://gitcode.com/openUBMC/website.git
+    project_type: portal
+    branch: main
+    framework: Nuxt
+    build_dir: packages/website/.output/public
+    build_script: generate
+    accessible_routes:
+      - /
+    ignore_routes:
+      - /(zh|en)/(blogs|marketplace)/?
+    seo_config_dir:
+      tdk: .geo/tdk
+      schema: .geo/jsonld
+    home:
+      - https://www.openubmc.cn/
   - name: HiFloat
     owner: hifloat
     repo: hifloat-portal

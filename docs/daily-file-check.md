@@ -62,19 +62,21 @@ flowchart TB
 | `name` | ✅ | 项目名，`--project` 按此精确匹配 |
 | `owner` / `repo` | ✅ | 仓库 owner/repo，用于缓存目录与提 issue |
 | `repo_url` | 构建类检查必填 | clone 地址；私有仓库会注入 `ATOMGIT_TOKEN` |
+| `type` | 可选 | 项目类型，`portal`（默认）或 `docs`；docs 类型跳过构建和构建产物检查 |
 | `branch` | 可选 | 目标分支（当前用 `git pull --rebase` 跟随默认分支） |
 | `framework` | 可选 | 框架标识（VitePress / Nuxt，仅作记录） |
-| `build_script` | 构建类检查必填 | 构建用的 npm script（如 `build:geo` / `generate:geo`） |
-| `build_dir` | 构建类检查必填 | 构建产物目录（相对仓库根，如 `app/.vitepress/dist`） |
+| `build_script` | portal 类型必填 | 构建用的 npm script（如 `build:geo` / `generate:geo`） |
+| `build_dir` | portal 类型必填 | 构建产物目录（相对仓库根，如 `app/.vitepress/dist`） |
 | `seo_config_dir.tdk` | tdk 检查必填 | TDK 配置根目录（如 `.geo/tdks`） |
 | `seo_config_dir.schema` | schema 检查必填 | JSON-LD 配置根目录（如 `.geo/jsonld`） |
-| `skip_check` | 可选 | 跳过的检查项数组，如 `[tdk, schema]` |
+| `skip_check` | 可选 | 跳过的检查项数组，如 `[sitemap-tdk, sitemap-schema]` |
 | `home` | 可选 | 线上站点 URL 数组，供 robots/sitemap 检查使用 |
 
 示例：
 
 ```yaml
 projects:
+  # portal 类型项目（默认）- 需要构建
   - name: openEuler
     owner: openeuler
     repo: openEuler-portal
@@ -88,6 +90,17 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.openeuler.org/
+
+  # docs 类型项目 - 跳过构建
+  - name: openEuler-docs
+    owner: openeuler
+    repo: openEuler-docs
+    repo_url: https://gitcode.com/openeuler/openEuler-docs.git
+    type: docs
+    seo_config_dir:
+      tdk: .geo/tdks
+    home:
+      - https://docs.openeuler.org/
 ```
 
 ## 核心脚本说明
@@ -296,6 +309,7 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.6.0 | 2026-06-15 | 支持 `type: docs` 项目类型：docs 类型跳过构建和构建产物检查（sitemap-coverage），仅执行线上检查项 |
 | 2.5.0 | 2026-06-15 | 模块拆分：检查函数移至 `checks/` 子目录（robots/sitemap/url-access/llms-txt/coverage/ssr），共享工具函数移至 `utils.js`，入口脚本精简为 ~350 行 |
 | 2.4.0 | 2026-06-15 | 重构检查流程：拆分 robots.txt 检查（checkRobotsTxt）和 sitemap 可访问性检查（checkSitemapAccessible）为独立维度；sitemap 无法访问时上报问题；调整检查顺序为先 robots.txt → sitemap → TDK/Schema |
 | 2.3.0 | 2026-06-15 | 实现 checkSsrRendering：检测首页 + sitemap 抽样页面是否为 SSR/SSG 渲染，识别 CSR 空壳页面并上报 |

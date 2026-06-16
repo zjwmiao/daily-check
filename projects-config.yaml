@@ -29,6 +29,7 @@ projects:
     skip_check:
       - tdk
       - schema
+      - sitemap-coverage
     home:
       - https://docs.openeuler.org/
       - https://docs.openeuler.openatom.cn/
@@ -56,17 +57,14 @@ projects:
     owner: opengauss
     repo: docs
     project_type: docs
-    repo_url: https://gitcode.com/opengauss/website.git
+    repo_url: https://gitcode.com/opengauss/docs-website.git
     branch: v2
     framework: VitePress
     build_dir: app/.vitepress/dist
-    accessible_routes:
-      - /zh/**/*
-      - /en/**/*
-    build_script: build
-    seo_config_dir:
-      tdk: .geo/tdks
-      schema: .geo/jsonld
+    skip_check:
+      - tdk
+      - schema
+      - sitemap-coverage
     home:
       - https://docs.opengauss.org/
   - name: MindSpore
@@ -86,3 +84,20 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.mindspore.cn/
+  - name: HiFloat
+    owner: hifloat
+    repo: hifloat-portal
+    repo_url: https://gitcode.com/hifloat/hifloat-portal
+    branch: main
+    framework: Nuxt
+    build_dir: .output/public
+    build_script: generate
+    accessible_routes:
+      - /
+    ignore_routes:
+      - /?(technology-blogs|search|online-showroom)/?(zh|en)
+    seo_config_dir:
+      tdk: .geo/tdk
+      schema: .geo/jsonld
+    home:
+      - https://hifloat.gccorg.com/

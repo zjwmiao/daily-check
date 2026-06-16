@@ -232,10 +232,11 @@ async function createOrUpdateIssue(project, findings) {
 // ============ 单项目流程 ============
 
 async function runProject(project, { dryRun }) {
-  const { name, owner, repo, repo_url: repoUrl } = project;
-  log(`\n========== 项目: ${name} (${owner}/${repo}) ==========`);
+  const { name, owner, repo, repo_url: repoUrl, type } = project;
+  log(`\n========== 项目: ${name} (${owner}/${repo}) [${type || 'portal'}] ==========`);
 
   const skip = Array.isArray(project.skip_check) ? project.skip_check : [];
+  const isDocsProject = type === 'docs';
 
   // 1. 准备项目目录
   if (!repoUrl) {
@@ -250,8 +251,11 @@ async function runProject(project, { dryRun }) {
     return { name, ok: false, error: err.message };
   }
 
-  // 2. 启动构建子进程（非阻塞）
-  const buildPromise = spawnBuild(workDir, `pnpm ${project.build_script}`, project.build_dir);
+  // 2. 启动构建子进程（非阻塞） - docs 类型跳过构建
+  let buildPromise = null;
+  if (!isDocsProject) {
+    buildPromise = spawnBuild(workDir, `pnpm ${project.build_script}`, project.build_dir);
+  }
 
   // 3. 并行执行线上检查
   const onlineFindings = [];
@@ -284,6 +288,26 @@ async function runProject(project, { dryRun }) {
   const ssrRes = await checkSsrRendering(project, sitemapUrls, { skip });
   onlineFindings.push(...ssrRes.findings);
 
+  // docs 类型项目：跳过构建，直接汇总线上检查结果
+  if (isDocsProject) {
+    log(`📖 docs 项目，跳过构建和构建产物检查`);
+    const allFindings = [...onlineFindings];
+
+    // 统计
+    const byDim = {};
+    for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
+    const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
+    log(`=== ${name} 检查完成, 问题统计: ${dimStr} ===`);
+    log(JSON.stringify(allFindings, null, 2));
+
+    // 提 issue
+    if (allFindings.length > 0 && !dryRun && process.env.ATOMGIT_TOKEN) {
+      await createOrUpdateIssue(project, allFindings);
+    }
+
+    return { name, ok: true, findings: allFindings.length, byDim };
+  }
+
   // 4. 等待构建完成
   log(`等待构建完成...`);
   const buildResult = await buildPromise;
@@ -307,10 +331,6 @@ async function runProject(project, { dryRun }) {
     const coverageRes = await checkBuildSitemapCoverage(project, buildDir, sitemapUrls, { skip });
     allFindings.push(...coverageRes.findings);
   }
-
-  log(`================= Check result (${project.name}) =================`)
-  log(JSON.stringify(allFindings, null, 2));
-  log('\n\n');
 
   // 6. 汇总 + 提issue
   if (allFindings.length > 0 && !dryRun) {

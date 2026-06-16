@@ -1,56 +1,85 @@
 import path from 'path';
 import fs from 'fs';
 import { getSitemapUrls } from '../../checks/sitemap-inclusion.js';
+import { fetchHttp } from '../../lib/html-fetch.js';
 import { log, shouldIgnore, pathnameToKey } from '../utils.js';
 
 export async function checkSitemapAccessible(project, robotsContent, { skip }) {
-  if (skip.includes('sitemap-access')) return { findings: [], skipped: true, sitemapUrls: [] };
+  if (skip.includes('sitemap-access')) return { findings: [], skipped: true, sitemapIndexUrls: [] };
 
   const home = project.home?.[0] || project.home;
-  if (!home) return { findings: [], skipped: true, sitemapUrls: [] };
+  if (!home) return { findings: [], skipped: true, sitemapIndexUrls: [] };
 
-  let sitemapUrls = [];
+  // 从 robots.txt 解析 sitemap URL
+  let sitemapIndexUrls = [];
   if (robotsContent) {
-    sitemapUrls = [...robotsContent.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map(m => m[1].trim());
+    sitemapIndexUrls = [...robotsContent.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map(m => m[1].trim());
   }
-  if (!sitemapUrls.length) {
-    sitemapUrls = [new URL('/sitemap.xml', home).toString()];
+  if (!sitemapIndexUrls.length) {
+    sitemapIndexUrls = [new URL('/sitemap.xml', home).toString()];
   }
 
-  log(`${project.name} sitemap 可访问性检查: ${sitemapUrls.length} 个地址`);
+  log(`${project.name} sitemap 可访问性检查: ${sitemapIndexUrls.length} 个地址`);
 
   const findings = [];
-  const allEntries = [];
 
-  for (const sm of sitemapUrls) {
+  // GET 请求检查每个 sitemap URL 是否可访问
+  for (const url of sitemapIndexUrls) {
     try {
-      const result = await getSitemapUrls(sm);
-      // 使用循环避免大数组 spread 导致栈溢出
-      for (const url of result.urls) {
-        allEntries.push(url);
-      }
-      
-      for (const failed of result.failedUrls) {
-        findings.push({ 
-          url: failed.url, 
-          check: 'sitemap-access', 
-          message: `sitemap 无法访问: ${failed.error}` 
-        });
+      const res = await fetchHttp(url, { timeout: 30000 });
+      if (!res.html) {
+        findings.push({ url, check: 'sitemap-access', message: 'sitemap 返回空内容' });
       }
     } catch (err) {
-      findings.push({ url: sm, check: 'sitemap-access', message: `sitemap 处理异常: ${err.message}` });
+      findings.push({ url, check: 'sitemap-access', message: `sitemap 无法访问: ${err.message}` });
     }
   }
 
-  if (allEntries.length === 0 && sitemapUrls.length > 0) {
-    findings.push({ url: home, check: 'sitemap-access', message: '所有 sitemap 地址均无法访问，SEO/GEO 将无法发现页面' });
-  }
-
-  return { findings, sitemapUrls: allEntries };
+  return { findings, sitemapIndexUrls };
 }
 
-export async function checkSitemapConfig(project, workDir, sitemapUrls, { skip }) {
-  if (!sitemapUrls?.length) return { findings: [], skipped: true };
+async function fetchAllSitemapEntries(sitemapIndexUrls) {
+  const allUrls = [];
+  const failedUrls = [];
+
+  for (const sm of sitemapIndexUrls) {
+    try {
+      const result = await getSitemapUrls(sm);
+      // 使用 for 循环避免大数组 spread 导致栈溢出
+      for (const url of result.urls) {
+        allUrls.push(url);
+      }
+      for (const failed of result.failedUrls) {
+        failedUrls.push(failed);
+      }
+    } catch (err) {
+      failedUrls.push({ url: sm, error: err.message });
+    }
+  }
+
+  return { urls: allUrls, failedUrls };
+}
+
+export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { skip }) {
+  // 如果跳过 TDK/Schema 检查，直接返回
+  if (skip.includes('sitemap-tdk') && skip.includes('sitemap-schema')) {
+    return { findings: [], skipped: true, sitemapUrls: [] };
+  }
+
+  if (!sitemapIndexUrls?.length) {
+    return { findings: [], skipped: true, sitemapUrls: [] };
+  }
+
+  // 获取所有 sitemap 条目
+  const { urls: sitemapUrls, failedUrls } = await fetchAllSitemapEntries(sitemapIndexUrls);
+
+  if (failedUrls.length > 0) {
+    log(`sitemap 条目获取失败: ${failedUrls.length} 个`);
+  }
+
+  if (!sitemapUrls.length) {
+    return { findings: [], skipped: true, sitemapUrls: [] };
+  }
 
   const findings = [];
   for (const url of sitemapUrls) {
@@ -76,5 +105,5 @@ export async function checkSitemapConfig(project, workDir, sitemapUrls, { skip }
   }
 
   log(`${project.name} TDK/Schema 配置检查完成: 条目 ${sitemapUrls.length}, 问题 ${findings.length}`);
-  return { findings };
+  return { findings, sitemapUrls };
 }

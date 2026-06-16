@@ -282,14 +282,14 @@ async function runProject(project, { dryRun }) {
   const robotsRes = await checkRobotsTxt(project, { skip });
   onlineFindings.push(...robotsRes.findings);
 
-  // 3b. sitemap可访问性检查
+  // 3b. sitemap可访问性检查（只检查 URL 本身）
   const sitemapAccessRes = await checkSitemapAccessible(project, robotsRes.robotsContent, { skip });
   onlineFindings.push(...sitemapAccessRes.findings);
-  sitemapUrls = sitemapAccessRes.sitemapUrls;
 
-  // 3c. TDK/Schema配置检查
-  const configRes = await checkSitemapConfig(project, workDir, sitemapUrls, { skip });
+  // 3c. TDK/Schema配置检查（内部获取所有条目）
+  const configRes = await checkSitemapConfig(project, workDir, sitemapAccessRes.sitemapIndexUrls, { skip });
   onlineFindings.push(...configRes.findings);
+  sitemapUrls = configRes.sitemapUrls;
 
   // 3d. URL可访问性抽样
   if (sitemapUrls.length > 0) {
@@ -379,7 +379,7 @@ async function runProject(project, { dryRun }) {
   for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
   const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
   log(`=== ${name} 检查完成, 问题统计: ${dimStr} ===`);
-  log(JSON.stringify(allFindings, null, 2));
+  log(JSON.stringify(allFindings.slice(0, 20), null, 2));
 
   return { name, ok: true, findings: allFindings.length, byDim };
 }

@@ -34,6 +34,7 @@ export async function getSitemapUrls(sitemapUrl) {
   const urls = new Set();
   const queue = [sitemapUrl];
   const visited = new Set();
+  const failedUrls = [];
 
   while (queue.length > 0) {
     const cur = queue.shift();
@@ -45,7 +46,8 @@ export async function getSitemapUrls(sitemapUrl) {
       const res = await fetchHttp(cur, { timeout: 30000 });
       xml = res.html;
     } catch (err) {
-      throw new Error(`fetch sitemap ${cur} failed: ${err.message}`);
+      failedUrls.push({ url: cur, error: err.message });
+      continue;
     }
 
     const isIndex = /<sitemapindex/i.test(xml);
@@ -59,9 +61,9 @@ export async function getSitemapUrls(sitemapUrl) {
     }
   }
 
-  const arr = [...urls];
-  SITEMAP_CACHE.set(sitemapUrl, arr);
-  return arr;
+  const result = { urls: [...urls], failedUrls };
+  SITEMAP_CACHE.set(sitemapUrl, result);
+  return result;
 }
 
 export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
@@ -75,9 +77,9 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
     };
   }
 
-  let urls;
+  let result;
   try {
-    urls = await getSitemapUrls(sitemapUrl);
+    result = await getSitemapUrls(sitemapUrl);
   } catch (err) {
     return {
       dimension: 'sitemap_inclusion',
@@ -92,6 +94,8 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
       pass: false,
     };
   }
+
+  const urls = result.urls;
 
   const target = normalizeUrlForSitemap(targetUrl, community);
   const normalizedSet = new Set(urls.map((u) => normalizeUrlForSitemap(u, community)));
@@ -118,5 +122,3 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
     pass: included,
   };
 }
-
-console.log(await getSitemapUrls('https://docs.opengauss.org/sitemap_index.xml'));

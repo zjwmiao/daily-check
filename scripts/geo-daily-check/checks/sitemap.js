@@ -20,26 +20,27 @@ export async function checkSitemapAccessible(project, robotsContent, { skip }) {
   log(`${project.name} sitemap 可访问性检查: ${sitemapUrls.length} 个地址`);
 
   const findings = [];
-  const accessibleSitemaps = [];
+  const allEntries = [];
 
   for (const sm of sitemapUrls) {
     try {
-      await getSitemapUrls(sm);
-      accessibleSitemaps.push(sm);
+      const result = await getSitemapUrls(sm);
+      allEntries.push(...result.urls);
+      
+      for (const failed of result.failedUrls) {
+        findings.push({ 
+          url: failed.url, 
+          check: 'sitemap-access', 
+          message: `sitemap 无法访问: ${failed.error}` 
+        });
+      }
     } catch (err) {
-      findings.push({ url: sm, check: 'sitemap-access', message: `sitemap 无法访问或无有效内容: ${err.message}` });
+      findings.push({ url: sm, check: 'sitemap-access', message: `sitemap 处理异常: ${err.message}` });
     }
   }
 
-  if (!accessibleSitemaps.length && sitemapUrls.length > 0) {
+  if (allEntries.length === 0 && sitemapUrls.length > 0) {
     findings.push({ url: home, check: 'sitemap-access', message: '所有 sitemap 地址均无法访问，SEO/GEO 将无法发现页面' });
-  }
-
-  let allEntries = [];
-  for (const sm of accessibleSitemaps) {
-    try {
-      allEntries.push(...await getSitemapUrls(sm));
-    } catch {}
   }
 
   return { findings, sitemapUrls: allEntries };

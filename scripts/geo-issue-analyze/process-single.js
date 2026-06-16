@@ -135,12 +135,10 @@ function buildIgnoredComment(urls) {
   
   return `## GEO 分析结果
 
-经分析，此 issue 涉及的页面均在项目配置的 \`ignore_routes\` 中，属于**非GEO优化范围**的页面类型。
+**非GEO优化范围**，建议单独分析处理。
 
 **涉及页面**:
 ${urlList}
-
-这些页面类型（如博客、新闻、活动等）通常不需要统一的 TDK/Schema 配置，建议单独分析处理。
 
 ${ANALYZE_IGNORED_MARKER}`;
 }

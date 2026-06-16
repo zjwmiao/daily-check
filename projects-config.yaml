@@ -22,6 +22,7 @@ projects:
   - name: openEuler-docs
     owner: openeuler
     repo: docs-website
+    project_type: docs
     repo_url: https://gitcode.com/openeuler/docs-website.git
     branch: master
     framework: VitePress

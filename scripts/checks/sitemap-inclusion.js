@@ -8,20 +8,24 @@ function normalizeLocUrl(loc, baseUrl) {
     return loc;
   }
   
-  let urlObj;
   try {
-    urlObj = new URL(baseUrl);
+    const base = new URL(baseUrl);
+    
+    // 如果 loc 以 / 开头，解析为相对于 sitemap 文件目录的路径
+    // 例如：baseUrl = https://docs.opengauss.org/docs/5.0.0/sitemap.xml
+    //       loc = /en/sitemap.xml
+    //       结果 = https://docs.opengauss.org/docs/5.0.0/en/sitemap.xml
+    if (loc.startsWith('/')) {
+      const basePathname = base.pathname;
+      const dir = basePathname.substring(0, basePathname.lastIndexOf('/') + 1);
+      return `${base.origin}${dir}${loc.substring(1)}`;
+    }
+    
+    // 否则使用标准 URL 解析（相对于当前目录）
+    return new URL(loc, baseUrl).href;
   } catch {
     return loc;
   }
-  
-  const base = `${urlObj.protocol}//${urlObj.hostname}`;
-  
-  if (loc.startsWith('/')) {
-    return base + loc;
-  }
-  
-  return base + '/' + loc;
 }
 
 export async function getSitemapUrls(sitemapUrl) {
@@ -114,3 +118,5 @@ export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
     pass: included,
   };
 }
+
+console.log(await getSitemapUrls('https://docs.opengauss.org/sitemap_index.xml'));

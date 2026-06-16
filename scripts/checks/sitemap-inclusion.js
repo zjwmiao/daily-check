@@ -3,6 +3,27 @@ import { normalizeUrlForSitemap } from '../lib/url-normalize.js';
 
 const SITEMAP_CACHE = new Map();
 
+function normalizeLocUrl(loc, baseUrl) {
+  if (loc.startsWith('http://') || loc.startsWith('https://')) {
+    return loc;
+  }
+  
+  let urlObj;
+  try {
+    urlObj = new URL(baseUrl);
+  } catch {
+    return loc;
+  }
+  
+  const base = `${urlObj.protocol}//${urlObj.hostname}`;
+  
+  if (loc.startsWith('/')) {
+    return base + loc;
+  }
+  
+  return base + '/' + loc;
+}
+
 export async function getSitemapUrls(sitemapUrl) {
   if (SITEMAP_CACHE.has(sitemapUrl)) return SITEMAP_CACHE.get(sitemapUrl);
 
@@ -24,7 +45,8 @@ export async function getSitemapUrls(sitemapUrl) {
     }
 
     const isIndex = /<sitemapindex/i.test(xml);
-    const locs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+    const rawLocs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+    const locs = rawLocs.map(loc => normalizeLocUrl(loc, cur));
 
     if (isIndex) {
       for (const loc of locs) queue.push(loc);

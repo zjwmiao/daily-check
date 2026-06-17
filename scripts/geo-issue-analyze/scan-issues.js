@@ -45,11 +45,11 @@ async function scanIssuesForProject(project) {
     let skippedCount = 0;
     
     for (const issue of geoIssues) {
-      const alreadyProcessed = await isIssueAlreadyProcessed(owner, repo, issue.number);
-      if (alreadyProcessed) {
-        skippedCount++;
-        continue;
-      }
+      // const alreadyProcessed = await isIssueAlreadyProcessed(owner, repo, issue.number);
+      // if (alreadyProcessed) {
+      //   skippedCount++;
+      //   continue;
+      // }
       filteredIssues.push(issue);
     }
     

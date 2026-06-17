@@ -414,7 +414,7 @@ async function handleHasProblems(issue, result, dryRun = false) {
     ? problems[0].description.slice(0, 50)
     : 'GEO配置问题';
   
-  const title = `[GEO-ANALYZE] ${shortDesc} (from #${number})`;
+  const title = `[GEO-ISSUE-ANALYZE] ${shortDesc} (from #${number})`;
   const body = buildProblemIssueBody(result, issue);
   
   if (dryRun) {
@@ -437,7 +437,7 @@ async function handleHasProblems(issue, result, dryRun = false) {
   const existing = await findIssueByTitlePrefix({
     owner: targetOwner,
     repo: targetRepo,
-    prefix: `[GEO-ANALYZE]`,
+    prefix: `[GEO-ISSUE-ANALYZE]`,
     state: 'open'
   });
   

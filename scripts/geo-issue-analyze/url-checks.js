@@ -105,9 +105,9 @@ export async function checkUrlInLlmsTxt(url, project) {
   
   const llmsFullTxt = await fetchLlmsFullTxt(home);
   
-  const urlNorm = url.toLowerCase().replace(/#.*$/, '').replace(/\?.*$/, '');
+  const urlPath = new URL(url).pathname.replace(/(\/index)?\.html$/, '');
   
-  const covered = llmsFullTxt && llmsFullTxt.toLowerCase().includes(urlNorm);
+  const covered = llmsFullTxt && llmsFullTxt.includes(urlPath);
   
   return { covered, llmsFullTxtExists: !!llmsFullTxt };
 }

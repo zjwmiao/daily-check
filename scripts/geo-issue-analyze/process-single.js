@@ -563,7 +563,7 @@ async function main() {
       analyzed_urls: urls,
       warnings,
       problems: allProblems,
-      message: allProblems.length === 0 ? '所有 GEO 配置检查通过' : undefined
+      message: allProblems.length === 0 ? '所有 GEO 配置检查通过, sitemap/llms-full已覆盖页面，TDK/Schema无问题（文档站点跳过TDK/Schema检查）' : undefined
     };
     
     let outcome;

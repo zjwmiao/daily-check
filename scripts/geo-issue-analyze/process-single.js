@@ -56,10 +56,7 @@ function loadProjectsConfig() {
 }
 
 function extractUrlsFromIssue(body) {
-  console.log(`========================== body`)
-  console.log(body)
-  console.log(`========================== body`)
-  const urlPattern = /### 根本原因分析\s*```\s*\[官方页面:\s*(https:\/\/.+)\]/;
+  const urlPattern = /###.*?根本原因分析.*?```.*?\[官方页面:.*?(https:\/\/.+)\]/;
   const urls = body.match(urlPattern)?.[1];
   return [urls];
 }

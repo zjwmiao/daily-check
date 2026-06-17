@@ -151,7 +151,8 @@ projects:
     accessible_routes:
       - /
     ignore_routes:
-      - /(zh|en)/(blogs|marketplace|docs)/?
+      - /(zh|en)/(blogs|marketplace)/?
+      - /docs
     seo_config_dir:
       tdk: .geo/tdk
       schema: .geo/jsonld

@@ -28,10 +28,32 @@ function normalizeLocUrl(loc, baseUrl) {
   }
 }
 
+function parseUrlEntry(xml) {
+  const entry = {};
+  
+  const locMatch = xml.match(/<loc>\s*([^<\s]+)\s*<\/loc>/i);
+  if (locMatch) entry.loc = locMatch[1].trim();
+  
+  const lastmodMatch = xml.match(/<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i);
+  if (lastmodMatch) entry.lastmod = lastmodMatch[1].trim();
+  
+  const changefreqMatch = xml.match(/<changefreq>\s*([^<\s]+)\s*<\/changefreq>/i);
+  if (changefreqMatch) entry.changefreq = changefreqMatch[1].trim();
+  
+  const priorityMatch = xml.match(/<priority>\s*([^<\s]+)\s*<\/priority>/i);
+  if (priorityMatch) {
+    const val = parseFloat(priorityMatch[1].trim());
+    if (!isNaN(val)) entry.priority = val;
+  }
+  
+  return entry;
+}
+
 export async function getSitemapUrls(sitemapUrl) {
   if (SITEMAP_CACHE.has(sitemapUrl)) return SITEMAP_CACHE.get(sitemapUrl);
 
   const urls = new Set();
+  const entries = [];
   const queue = [sitemapUrl];
   const visited = new Set();
   const failedUrls = [];
@@ -51,17 +73,26 @@ export async function getSitemapUrls(sitemapUrl) {
     }
 
     const isIndex = /<sitemapindex/i.test(xml);
-    const rawLocs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
-    const locs = rawLocs.map(loc => normalizeLocUrl(loc, cur));
 
     if (isIndex) {
+      const rawLocs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+      const locs = rawLocs.map(loc => normalizeLocUrl(loc, cur));
       for (const loc of locs) queue.push(loc);
     } else {
-      for (const loc of locs) urls.add(loc);
+      const urlBlocks = xml.match(/<url>[\s\S]*?<\/url>/gi) || [];
+      for (const block of urlBlocks) {
+        const entry = parseUrlEntry(block);
+        if (entry.loc) {
+          const normalizedLoc = normalizeLocUrl(entry.loc, cur);
+          entry.loc = normalizedLoc;
+          urls.add(normalizedLoc);
+          entries.push(entry);
+        }
+      }
     }
   }
 
-  const result = { urls: [...urls], failedUrls };
+  const result = { urls: [...urls], entries, failedUrls };
   SITEMAP_CACHE.set(sitemapUrl, result);
   return result;
 }

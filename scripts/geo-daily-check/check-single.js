@@ -186,6 +186,7 @@ function buildIssueBody(findings, project) {
   lines.push('- **sitemap-access**: sitemap 无法访问或无有效内容');
   lines.push('- **sitemap-tdk**: sitemap条目缺少TDK配置文件');
   lines.push('- **sitemap-schema**: sitemap条目缺少Schema配置文件');
+  lines.push('- **sitemap-priority**: sitemap条目缺少priority属性');
   lines.push('- **url-access**: URL无法访问');
   lines.push('- **llms-txt**: llms.txt/llms-full.txt缺失或为空');
   lines.push('- **sitemap-coverage**: 构建页面未被sitemap收录');

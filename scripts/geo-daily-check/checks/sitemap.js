@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import { getSitemapUrls } from '../../checks/sitemap-inclusion.js';
 import { fetchHttp } from '../../lib/html-fetch.js';
-import { log, shouldIgnore, pathnameToKey } from '../utils.js';
+import { log, shouldIgnore, pathnameToKey, pickRandom } from '../utils.js';
 
 export async function checkSitemapAccessible(project, robotsContent, { skip }) {
   if (skip.includes('sitemap-access')) return { findings: [], skipped: true, sitemapIndexUrls: [] };
@@ -39,15 +39,14 @@ export async function checkSitemapAccessible(project, robotsContent, { skip }) {
 }
 
 async function fetchAllSitemapEntries(sitemapIndexUrls) {
-  const allUrls = [];
+  const allEntries = [];
   const failedUrls = [];
 
   for (const sm of sitemapIndexUrls) {
     try {
       const result = await getSitemapUrls(sm);
-      // 使用 for 循环避免大数组 spread 导致栈溢出
-      for (const url of result.urls) {
-        allUrls.push(url);
+      for (const entry of result.entries) {
+        allEntries.push(entry);
       }
       for (const failed of result.failedUrls) {
         failedUrls.push(failed);
@@ -57,12 +56,12 @@ async function fetchAllSitemapEntries(sitemapIndexUrls) {
     }
   }
 
-  return { urls: allUrls, failedUrls };
+  const urls = allEntries.map(e => e.loc);
+  return { urls, entries: allEntries, failedUrls };
 }
 
 export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { skip }) {
-  // 如果跳过 TDK/Schema 检查，直接返回
-  if (skip.includes('sitemap-tdk') && skip.includes('sitemap-schema')) {
+  if (skip.includes('sitemap-tdk') && skip.includes('sitemap-schema') && skip.includes('sitemap-priority')) {
     return { findings: [], skipped: true, sitemapUrls: [] };
   }
 
@@ -70,8 +69,7 @@ export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { s
     return { findings: [], skipped: true, sitemapUrls: [] };
   }
 
-  // 获取所有 sitemap 条目
-  const { urls: sitemapUrls, failedUrls } = await fetchAllSitemapEntries(sitemapIndexUrls);
+  const { urls: sitemapUrls, entries, failedUrls } = await fetchAllSitemapEntries(sitemapIndexUrls);
 
   if (failedUrls.length > 0) {
     log(`sitemap 条目获取失败: ${failedUrls.length} 个`);
@@ -82,9 +80,9 @@ export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { s
   }
 
   const findings = [];
-  for (const url of sitemapUrls) {
+  for (const entry of entries) {
     let pathname;
-    try { pathname = new URL(url).pathname; } catch { continue; }
+    try { pathname = new URL(entry.loc).pathname; } catch { continue; }
     if (shouldIgnore(pathname, project.ignore_routes)) continue;
 
     const key = pathnameToKey(pathname);
@@ -92,18 +90,28 @@ export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { s
     if (!skip.includes('sitemap-tdk') && project.seo_config_dir?.tdk) {
       const tdkPath = path.join(workDir, project.seo_config_dir.tdk, key, 'index.json');
       if (!fs.existsSync(tdkPath)) {
-        findings.push({ url, check: 'sitemap-tdk', message: 'sitemap条目缺少TDK配置文件' });
+        findings.push({ url: entry.loc, check: 'sitemap-tdk', message: 'sitemap条目缺少TDK配置文件' });
       }
     }
 
     if (!skip.includes('sitemap-schema') && project.seo_config_dir?.schema) {
       const schemaPath = path.join(workDir, project.seo_config_dir.schema, key, 'index.json');
       if (!fs.existsSync(schemaPath)) {
-        findings.push({ url, check: 'sitemap-schema', message: 'sitemap条目缺少Schema配置文件' });
+        findings.push({ url: entry.loc, check: 'sitemap-schema', message: 'sitemap条目缺少Schema配置文件' });
       }
     }
   }
 
-  log(`${project.name} TDK/Schema 配置检查完成: 条目 ${sitemapUrls.length}, 问题 ${findings.length}`);
+  if (!skip.includes('sitemap-priority') && entries.length > 0) {
+    const SAMPLE_SIZE = 10;
+    const samples = pickRandom(entries, SAMPLE_SIZE);
+    for (const entry of samples) {
+      if (entry.priority === undefined || entry.priority === null) {
+        findings.push({ url: entry.loc, check: 'sitemap-priority', message: 'sitemap 条目缺少 priority 属性' });
+      }
+    }
+  }
+
+  log(`${project.name} TDK/Schema/Priority 配置检查完成: 条目 ${sitemapUrls.length}, 问题 ${findings.length}`);
   return { findings, sitemapUrls };
 }

@@ -7,7 +7,7 @@ export const HTML_IGNORE = [
   /\b(blog|blogs|news|showcase|showcases)\b/,
 ];
 
-export const CHECK_DIMENSIONS = ['robots-txt', 'sitemap-access', 'sitemap-tdk', 'sitemap-schema', 'url-access', 'llms-txt', 'sitemap-coverage', 'ssr-rendering', 'tdk-schema-semantic'];
+export const CHECK_DIMENSIONS = ['robots-txt', 'sitemap-access', 'sitemap-tdk', 'sitemap-schema', 'sitemap-priority', 'url-access', 'llms-txt', 'sitemap-coverage', 'ssr-rendering', 'tdk-schema-semantic'];
 
 export function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);
@@ -79,6 +79,7 @@ export function* iterateFiles(rootPath, pattern, ignore) {
       for (const pat of patterns) {
         if (pat.test(filePath)) {
           yield filePath;
+          continue outer;
         }
       }
       if (file.isDirectory()) {

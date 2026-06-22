@@ -195,7 +195,7 @@ const CHECKS = {
 |--------|------|------|
 | `checkRobotsTxt` | ✅ 已实现 | 检查 robots.txt 存在性、合法性（未全站封禁）、是否声明 Sitemap |
 | `checkSitemapAccessible` | ✅ 已实现 | 从 robots.txt 提取 sitemap 地址，检查可访问性和有效内容 |
-| `checkSitemapConfig` | ✅ 已实现 | 遍历 sitemap 条目，检查 TDK/Schema 配置文件是否存在 |
+| `checkSitemapConfig` | ✅ 已实现 | 遍历 sitemap 条目，检查 TDK/Schema 配置文件是否存在；随机抽样检查 priority 属性 |
 | `checkUrlAccessibility` | ✅ 已实现 | 从 sitemap 抽样检查 URL 可访问性 |
 | `checkLlmsTxt` | ✅ 已实现 | 检查 llms.txt/llms-full.txt 是否存在且非空 |
 | `checkBuildSitemapCoverage` | ✅ 已实现 | 检查构建产物页面是否被 sitemap 收录 |
@@ -223,6 +223,7 @@ const CHECKS = {
 1. 遍历 sitemap 条目 URL，归一化 pathname 得到 `key`
 2. 检查 `{seo_config_dir.tdk}/{key}/index.json` 是否存在 → 不存在记一条 `sitemap-tdk` finding
 3. 检查 `{seo_config_dir.schema}/{key}/index.json` 是否存在 → 不存在记一条 `sitemap-schema` finding
+4. 随机抽样 10 个 sitemap 条目，检查 `<priority>` 属性是否存在 → 缺失记一条 `sitemap-priority` finding
 
 **checkSsrRendering 细节**（`needsBuild: false`，仅需线上站点）：
 
@@ -332,6 +333,7 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.8.0 | 2026-06-22 | 新增 sitemap-priority 检查：随机抽样 10 个条目，检查 `<priority>` 属性是否存在；修改 `getSitemapUrls` 返回完整条目对象（包含 lastmod/changefreq/priority）；支持 `skip_check: ['all']` 跳过整个项目 |
 | 2.7.0 | 2026-06-15 | 新增 render-change 分析和 TDK/Schema 语义检查：检测代码变更 → 调用 agent 分析受影响页面 → 对构建产物 HTML 进行语义一致性检查；新增配置项 `enable_render_change_analysis` |
 | 2.6.0 | 2026-06-15 | 支持 `type: docs` 项目类型：docs 类型跳过构建和构建产物检查（sitemap-coverage），仅执行线上检查项 |
 | 2.5.0 | 2026-06-15 | 模块拆分：检查函数移至 `checks/` 子目录（robots/sitemap/url-access/llms-txt/coverage/ssr），共享工具函数移至 `utils.js`，入口脚本精简为 ~350 行 |

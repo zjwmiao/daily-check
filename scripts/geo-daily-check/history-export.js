@@ -33,6 +33,28 @@ function createSheetWithHeader(wb, sheetName) {
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
 }
 
+function ensureSheetHeader(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+  if (data.length === 0) return;
+  
+  const expectedHeader = ['检查时间', '状态', '问题总数', '错误信息', 'Issue链接', ...DIMENSIONS];
+  const firstRow = data[0];
+  
+  if (firstRow[0] !== '检查时间') {
+    const headerWs = XLSX.utils.aoa_to_sheet([expectedHeader]);
+    for (let i = 0; i < data.length; i++) {
+      XLSX.utils.sheet_add_aoa(headerWs, [data[i]], { origin: `A${i + 2}` });
+    }
+    
+    for (const key in ws) {
+      if (key.startsWith('!')) delete ws[key];
+    }
+    for (const key in headerWs) {
+      ws[key] = headerWs[key];
+    }
+  }
+}
+
 export function exportToExcel(summaries) {
   const filePath = path.join(REPO_ROOT, HISTORY_FILE);
   const wb = fs.existsSync(filePath) ? XLSX.readFile(filePath) : XLSX.utils.book_new();
@@ -41,7 +63,11 @@ export function exportToExcel(summaries) {
 
   for (const s of summaries) {
     const sheetName = sanitizeSheetName(s.name);
-    if (!wb.Sheets[sheetName]) createSheetWithHeader(wb, sheetName);
+    if (!wb.Sheets[sheetName]) {
+      createSheetWithHeader(wb, sheetName);
+    } else {
+      ensureSheetHeader(wb.Sheets[sheetName]);
+    }
 
     const ws = wb.Sheets[sheetName];
     const status = s.skipped ? '跳过' : s.ok ? '成功' : '失败';

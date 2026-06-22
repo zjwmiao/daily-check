@@ -355,6 +355,7 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.9.2 | 2026-06-22 | 修复已有 Excel sheet 无表头问题：检测首行是否为表头，若无则插入表头行 |
 | 2.9.1 | 2026-06-22 | 修复 Excel sheet 表头丢失问题；新增 Issue链接 列记录提交的 issue URL |
 | 2.9.0 | 2026-06-22 | 新增检查历史导出：每次运行后导出到 `daily-check-history.xlsx`（按项目分 sheet），推送到仓库证明 workflow 实际运行；依赖新增 `xlsx` |
 | 2.8.0 | 2026-06-22 | 新增 sitemap-priority 检查：随机抽样 10 个条目，检查 `<priority>` 属性是否存在；修改 `getSitemapUrls` 返回完整条目对象（包含 lastmod/changefreq/priority）；支持 `skip_check: ['all']` 跳过整个项目 |

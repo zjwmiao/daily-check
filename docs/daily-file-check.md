@@ -329,10 +329,32 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 
 > Windows 本地完整 checkout openEuler-portal 可能因 260 字符路径限制失败，属系统限制；Linux runner 不受影响。
 
+## 检查历史记录
+
+每次 workflow 运行（非 dryRun）会将检查结果导出到 `daily-check-history.xlsx` 并推送到仓库：
+
+- **文件位置**：仓库根目录 `daily-check-history.xlsx`
+- **Sheet 结构**：每个项目一个独立 sheet，sheet 名为项目 `name`
+- **记录内容**：检查时间、状态、问题总数、错误信息、各维度问题数
+- **累积策略**：所有历史记录累积保存，追加新行
+
+**Excel 列结构**：
+
+| 列 | 表头 | 说明 |
+|---|---|---|
+| A | 检查时间 | `YYYY-MM-DD HH:mm:ss` |
+| B | 状态 | `成功` / `失败` / `跳过` |
+| C | 问题总数 | findings 数量 |
+| D | 错误信息 | error（失败时） |
+| E-N | 各维度 | robots-txt/sitemap-access/sitemap-tdk/sitemap-schema/sitemap-priority/url-access/llms-txt/sitemap-coverage/ssr-rendering/tdk-schema-semantic |
+
+**实现文件**：`scripts/geo-daily-check/history-export.js`
+
 ## 版本历史
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| 2.9.0 | 2026-06-22 | 新增检查历史导出：每次运行后导出到 `daily-check-history.xlsx`（按项目分 sheet），推送到仓库证明 workflow 实际运行；依赖新增 `xlsx` |
 | 2.8.0 | 2026-06-22 | 新增 sitemap-priority 检查：随机抽样 10 个条目，检查 `<priority>` 属性是否存在；修改 `getSitemapUrls` 返回完整条目对象（包含 lastmod/changefreq/priority）；支持 `skip_check: ['all']` 跳过整个项目 |
 | 2.7.0 | 2026-06-15 | 新增 render-change 分析和 TDK/Schema 语义检查：检测代码变更 → 调用 agent 分析受影响页面 → 对构建产物 HTML 进行语义一致性检查；新增配置项 `enable_render_change_analysis` |
 | 2.6.0 | 2026-06-15 | 支持 `type: docs` 项目类型：docs 类型跳过构建和构建产物检查（sitemap-coverage），仅执行线上检查项 |

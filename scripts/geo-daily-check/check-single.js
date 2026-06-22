@@ -38,6 +38,7 @@ import { checkBuildSitemapCoverage } from './checks/coverage.js';
 import { checkSsrRendering } from './checks/ssr.js';
 import { checkRenderChange } from './checks/render-change.js';
 import { checkTdkSchemaSemantic } from './checks/tdk-schema-semantic.js';
+import { exportToExcel, pushHistoryFile } from './history-export.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -449,7 +450,20 @@ async function main() {
     }
   }
 
+  if (!dryRun) {
+    try {
+      const filePath = exportToExcel(summaries);
+      log(`✅ 检查历史已导出: ${filePath}`);
+      if (pushHistoryFile()) {
+        log(`✅ 历史文件已推送`);
+      } else {
+        log(`⚠️ 历史文件未推送（无变更或推送失败）`);
+      }
+    } catch (err) {
+      log(`❌ 导出历史失败: ${err.message}`);
+    }
   }
+}
 
 main().catch((err) => {
   console.error(`❌ ${err.message}`);

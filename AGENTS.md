@@ -76,3 +76,17 @@ node scripts/geo-issue-analyze/scan-issues.js --project=openEuler
 # Dry run 分析 (只分析不提issue)
 node scripts/geo-issue-analyze/process-single.js --dryRun --input=issue.json
 ```
+
+## 包管理器
+
+本仓库使用 **pnpm** 作为包管理器。安装依赖：
+
+```bash
+pnpm install
+```
+
+添加新依赖：
+
+```bash
+pnpm add <package-name>
+```

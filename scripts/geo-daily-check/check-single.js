@@ -315,7 +315,6 @@ async function runProject(project, { dryRun }) {
     for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
     const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
     log(`=== ${name} 检查完成, 问题统计: ${dimStr} ===`);
-    log(JSON.stringify(allFindings.slice(0, 20), null, 2));
 
     // 提 issue
     if (allFindings.length > 0 && !dryRun && process.env.ATOMGIT_TOKEN) {
@@ -380,7 +379,6 @@ async function runProject(project, { dryRun }) {
   for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
   const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
   log(`=== ${name} 检查完成, 问题统计: ${dimStr} ===`);
-  log(JSON.stringify(allFindings.slice(0, 20), null, 2));
 
   return { name, ok: true, findings: allFindings.length, byDim };
 }

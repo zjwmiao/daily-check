@@ -27,6 +27,7 @@
 # sitemap-access:            sitemap 无法访问或无有效内容
 # sitemap-tdk:               sitemap条目缺少TDK配置文件
 # sitemap-schema:            sitemap条目缺少Schema配置文件
+# sitemap-priority:          sitemap条目是否存在priority属性
 # url-access:                URL无法访问
 # llms-txt:                  llms.txt/llms-full.txt缺失或为空
 # sitemap-coverage:          构建页面未被sitemap收录

@@ -75,6 +75,7 @@ projects:
       - sitemap-tdk
       - sitemap-schema
       - sitemap-coverage
+      - sitemap-priority
     home:
       - https://docs.openeuler.org/
       - https://docs.openeuler.openatom.cn/
@@ -110,6 +111,7 @@ projects:
       - sitemap-tdk
       - sitemap-schema
       - sitemap-coverage
+      - sitemap-priority
     home:
       - https://docs.opengauss.org/
   - name: openGauss-docs
@@ -134,6 +136,7 @@ projects:
       - /
     ignore_routes:
       - /?(technology-blogs|search|online-showroom)/?(zh|en)
+      - /docs/
     seo_config_dir:
       tdk: .geo/tdk
       schema: .geo/jsonld

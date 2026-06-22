@@ -38,7 +38,7 @@ export async function checkSitemapAccessible(project, robotsContent, { skip }) {
   return { findings, sitemapIndexUrls };
 }
 
-async function fetchAllSitemapEntries(sitemapIndexUrls) {
+async function fetchAllSitemapEntries(sitemapIndexUrls, project) {
   const allEntries = [];
   const failedUrls = [];
 
@@ -46,6 +46,9 @@ async function fetchAllSitemapEntries(sitemapIndexUrls) {
     try {
       const result = await getSitemapUrls(sm);
       for (const entry of result.entries) {
+        let pathname;
+        try { pathname = new URL(entry.loc).pathname; } catch { continue; }
+        if (shouldIgnore(pathname, project.ignore_routes)) continue;
         allEntries.push(entry);
       }
       for (const failed of result.failedUrls) {
@@ -69,7 +72,7 @@ export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { s
     return { findings: [], skipped: true, sitemapUrls: [] };
   }
 
-  const { urls: sitemapUrls, entries, failedUrls } = await fetchAllSitemapEntries(sitemapIndexUrls);
+  const { urls: sitemapUrls, entries, failedUrls } = await fetchAllSitemapEntries(sitemapIndexUrls, project);
 
   if (failedUrls.length > 0) {
     log(`sitemap 条目获取失败: ${failedUrls.length} 个`);
@@ -83,7 +86,6 @@ export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { s
   for (const entry of entries) {
     let pathname;
     try { pathname = new URL(entry.loc).pathname; } catch { continue; }
-    if (shouldIgnore(pathname, project.ignore_routes)) continue;
 
     const key = pathnameToKey(pathname);
 

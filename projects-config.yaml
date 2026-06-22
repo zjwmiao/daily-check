@@ -94,7 +94,7 @@ projects:
       - /en/user-practice
     build_script: build
     seo_config_dir:
-      tdk: .geo/tdk
+      tdk: .geo/tdks
       schema: .geo/jsonld
     home:
       - https://opengauss.org/

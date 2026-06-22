@@ -26,10 +26,10 @@
   </thead>
   <tbody>
     <tr>
-      <td rowspan="7">网站自建开源社区</td>
+      <td rowspan="8">网站自建开源社区</td>
       <td>openEuler</td>
       <td>A</td>
-      <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td>
+      <td>✅<br/>sig详情页未做SSG</td><td>✅</td><td>✅<br/>⚠存在问题：部分页面缺失字段priority</td><td>✅<br/>⚠存在问题：未完全覆盖全量页面（news、sig详情、showcase、规章文档等）</td><td>✅<br/>⚠存在问题：未完全覆盖全量页面（news、sig详情、showcase、规章文档等）</td><td>✅</td>
       <td></td>
       <td></td>
       <td></td>
@@ -37,7 +37,7 @@
     <tr>
       <td>openEuler 文档站点</td>
       <td>A</td>
-      <td>✅</td><td>✅</td><td>✅</td><td>✅<br/>title取自文稿本身，description、keywords暂不做配置</td><td>⏩<br/>文档站目前不加schema</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>✅</td><td>✅<br/>title取自文稿本身，description、keywords暂不做配置</td><td>❌<br/>待增加Schema</td><td>✅</td>
       <td>sitemap通过 <a href=https://developers.google.com/search/docs/crawling-indexing/sitemaps/large-sitemaps?hl=zh-cn>sitemapindex</a> 的方式做合并、llms.txt/llms-full.txt直接合并文本</td>
       <td></td>
       <td></td>
@@ -45,31 +45,39 @@
     <tr>
       <td>MindSpore</td>
       <td>A</td>
-      <td>✅</td><td>✅</td><td>❌（文档sitemap未合并）</td><td>✅</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ❌缺失</td>
-      <td>1. 文档站点 sitemap、llms.txt 的多版本合并策略需要再审视,并需要考虑过大的问题</td>
+      <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ❌缺失</td>
+      <td></td>
+      <td></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td>MindSpore 文档</td>
+      <td>A</td>
+      <td>✅</td><td>✅</td><td>⚠文档站sitemap待上线</td><td>✅</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ❌缺失</td>
+      <td>1. llms.txt 的多版本合并策略需要再审视,并需要考虑过大的问题</td>
       <td></td>
       <td></td>
     </tr>
     <tr>
-      <td>openGauss（待上线）</td>
+      <td>openGauss</td>
       <td>B</td>
-      <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ✅</td>
+      <td>✅</td><td>✅</td><td>✅<br/>⚠存在问题：待补充priority</td><td>✅<br/>⚠存在问题：未完全覆盖全量页面（news、user-practice、规章文档等）</td><td>✅<br/>⚠存在问题：未完全覆盖全量页面（news、user-practice、规章文档等）</td><td>✅</td>
       <td></td><td></td><td></td>
     </tr>
     <tr>
-      <td>openGauss-docs（待上线）</td>
+      <td>openGauss-docs</td>
       <td>B</td>
-      <td>✅</td><td>✅</td><td>✅</td><td>✅<br/>title取自文稿本身，description、keywords暂不做配置</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ✅</td>
+      <td>✅</td><td>✅</td><td>✅</td><td>✅<br/>title取自文稿本身，description、keywords暂不做配置</td><td>❌<br/>待增加Schema</td><td>llms.txt: ✅，llms-full.txt: ✅</td>
       <td></td><td></td><td></td>
     </tr>
     <tr>
-      <td>openUBMC（待上线）</td>
+      <td>openUBMC</td>
       <td>B</td>
-      <td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ✅</td>
+      <td>✅</td><td>✅</td><td>✅<br/>⚠存在问题：待补充priority</td><td>✅</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ✅</td>
       <td></td><td></td><td></td>
     </tr>
     <tr>
-      <td>openUBMC-docs（待上线）</td>
+      <td>openUBMC-docs</td>
       <td>B</td>
       <td>✅</td><td>✅</td><td>✅</td><td>✅<br/>title取自文稿本身，description、keywords暂不做配置</td><td>✅</td><td>llms.txt: ✅，llms-full.txt: ✅</td>
       <td></td><td></td><td></td>

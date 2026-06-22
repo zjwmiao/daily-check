@@ -29,8 +29,7 @@ function sanitizeSheetName(name) {
 }
 
 function createSheetWithHeader(wb, sheetName) {
-  const ws = XLSX.utils.aoa_to_sheet([['检查时间', '状态', '问题总数', '错误信息', ...DIMENSIONS]]);
-  wb.Sheets[sheetName] = ws;
+  const ws = XLSX.utils.aoa_to_sheet([['检查时间', '状态', '问题总数', '错误信息', 'Issue链接', ...DIMENSIONS]]);
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
 }
 
@@ -48,7 +47,8 @@ export function exportToExcel(summaries) {
     const status = s.skipped ? '跳过' : s.ok ? '成功' : '失败';
     const byDim = s.byDim || {};
     const dimCounts = DIMENSIONS.map((d) => byDim[d] || 0);
-    const row = [now, status, s.findings || 0, s.error || '', ...dimCounts];
+    const issueUrl = s.issueUrl || '';
+    const row = [now, status, s.findings || 0, s.error || '', issueUrl, ...dimCounts];
 
     const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
     const nextRow = range.e.r + 1;

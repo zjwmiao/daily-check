@@ -319,11 +319,13 @@ async function runProject(project, { dryRun }) {
     log(`=== ${name} 检查完成, 问题统计: ${dimStr} ===`);
 
     // 提 issue
+    let issueUrl = '';
     if (allFindings.length > 0 && !dryRun && process.env.ATOMGIT_TOKEN) {
-      await createOrUpdateIssue(project, allFindings);
+      const issueRes = await createOrUpdateIssue(project, allFindings);
+      if (issueRes.success) issueUrl = issueRes.url;
     }
 
-    return { name, ok: true, findings: allFindings.length, byDim };
+    return { name, ok: true, findings: allFindings.length, byDim, issueUrl };
   }
 
   // 4. 等待构建完成
@@ -367,12 +369,15 @@ async function runProject(project, { dryRun }) {
   }
 
   // 7. 汇总 + 提issue
+  // 提 issue
+  let issueUrl = '';
   if (allFindings.length > 0 && !dryRun) {
     if (!process.env.ATOMGIT_TOKEN) {
       log(`⚠ 未设置 ATOMGIT_TOKEN, 跳过 issue 上报`);
     } else {
       log(`\n创建 issue 报告问题...`);
-      await createOrUpdateIssue(project, allFindings);
+      const issueRes = await createOrUpdateIssue(project, allFindings);
+      if (issueRes.success) issueUrl = issueRes.url;
     }
   }
 
@@ -382,7 +387,7 @@ async function runProject(project, { dryRun }) {
   const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
   log(`=== ${name} 检查完成, 问题统计: ${dimStr} ===`);
 
-  return { name, ok: true, findings: allFindings.length, byDim };
+  return { name, ok: true, findings: allFindings.length, byDim, issueUrl };
 }
 
 // ============ 入口 ============

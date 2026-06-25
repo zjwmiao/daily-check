@@ -28,7 +28,7 @@ import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
 import { parse as parseYaml } from 'yaml';
-import { createIssue, findIssueByTitlePrefix, updateIssue } from '../lib/atomgit-api.js';
+import { createIssue, findAllIssuesByTitlePrefix, updateIssue, closeIssue } from '../lib/atomgit-api.js';
 import { log, CHECK_DIMENSIONS } from './utils.js';
 import { checkRobotsTxt } from './checks/robots.js';
 import { checkSitemapAccessible, checkSitemapConfig } from './checks/sitemap.js';
@@ -165,16 +165,22 @@ function hasConfig(workDir, seoDir, key) {
 
 // ============ issue 上报 ============
 
-function buildIssueBody(findings, project) {
+function buildIssueBody(findings, project, batchInfo = null) {
   const { owner, repo, seo_config_dir: seo = {} } = project;
   const lines = [
     `**项目**: ${owner}/${repo}`,
     '',
-    '检测到以下页面/检查项存在问题:',
-    '',
-    '| Dimension | 页面路径 | 问题描述 |',
-    '| --- | --- | --- |',
   ];
+
+  if (batchInfo) {
+    lines.push(`> 📋 本批次包含第 ${batchInfo.startIndex}-${batchInfo.endIndex} 个问题，共 ${batchInfo.totalCount} 个问题（批次 ${batchInfo.current}/${batchInfo.total}）`);
+    lines.push('');
+  }
+
+  lines.push('检测到以下页面/检查项存在问题:');
+  lines.push('');
+  lines.push('| Dimension | 页面路径 | 问题描述 |');
+  lines.push('| --- | --- | --- |');
 
   for (const f of findings) {
     lines.push(`| ${f.check} | ${f.url} | ${f.message} |`);
@@ -206,22 +212,50 @@ function buildIssueBody(findings, project) {
   return lines.join('\n');
 }
 
+const MAX_ISSUE_FINDINGS = 300;
+
 async function createOrUpdateIssue(project, findings) {
   const { owner, repo } = project;
   const titlePrefix = '[GEO Daily Check]';
-  const title = `${titlePrefix} ${owner}/${repo}: ${findings.length} 项检查未通过`;
-  const body = buildIssueBody(findings, project);
 
-  log(`================== issue body (${project.name}) ==================`);
-  log(body + '\n\n');
+  const batches = [];
+  for (let i = 0; i < findings.length; i += MAX_ISSUE_FINDINGS) {
+    batches.push({
+      findings: findings.slice(i, i + MAX_ISSUE_FINDINGS),
+      batchIndex: Math.floor(i / MAX_ISSUE_FINDINGS) + 1,
+      totalBatches: Math.ceil(findings.length / MAX_ISSUE_FINDINGS),
+      startIndex: i + 1,
+      endIndex: Math.min(i + MAX_ISSUE_FINDINGS, findings.length),
+      totalCount: findings.length,
+    });
+  }
 
-  try {
-    log(`🔍 查找已存在的 issue: "${titlePrefix}" on ${owner}/${repo}`);
-    const existing = await findIssueByTitlePrefix({ owner, repo, prefix: titlePrefix });
+  const existingIssues = await findAllIssuesByTitlePrefix({ owner, repo, prefix: titlePrefix });
+
+  const sortedExisting = existingIssues.sort((a, b) => {
+    const getBatchNum = (title) => {
+      const m = title.match(/\((\d+)\/\d+\)/);
+      return m ? parseInt(m[1]) : 0;
+    };
+    return getBatchNum(a.title) - getBatchNum(b.title);
+  });
+
+  const results = [];
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const title = batches.length === 1
+      ? `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过`
+      : `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过 (${batch.batchIndex}/${batch.totalBatches})`;
+    const body = buildIssueBody(batch.findings, project, batches.length === 1 ? null : batch);
+
+    log(`================== issue body (${project.name}) 批次${batch.batchIndex}/${batch.totalBatches} ==================`);
+    log(body + '\n\n');
 
     let result, action;
-    if (existing) {
-      log(`♻️  找到已存在的 issue #${existing.number}, 更新内容`);
+    if (i < sortedExisting.length) {
+      const existing = sortedExisting[i];
+      log(`♻️  更新已存在的 issue #${existing.number}`);
       result = await updateIssue({ owner, repo, issue_number: existing.number, title, body });
       action = 'updated';
       if (!result) result = existing;
@@ -233,11 +267,20 @@ async function createOrUpdateIssue(project, findings) {
 
     const url = result.html_url || result.url || `https://atomgit.com/${owner}/${repo}/issues/${result.number}`;
     log(`✅ issue ${action}: ${url}`);
-    return { success: true, url, number: result.number, action };
-  } catch (err) {
-    log(`❌ 创建/更新 issue 失败: ${err.message}`);
-    return { success: false, error: err.message };
+    results.push({ success: true, url, number: result.number, action });
   }
+
+  for (let i = batches.length; i < sortedExisting.length; i++) {
+    const old = sortedExisting[i];
+    log(`🔒 关闭多余 issue #${old.number}`);
+    try {
+      await closeIssue({ owner, repo, issue_number: old.number });
+    } catch (err) {
+      log(`⚠️ 关闭 issue #${old.number} 失败: ${err.message}`);
+    }
+  }
+
+  return results[0] || { success: true, url: '', number: 0, action: 'none' };
 }
 
 // ============ 单项目流程 ============

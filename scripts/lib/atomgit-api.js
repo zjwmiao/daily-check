@@ -124,6 +124,24 @@ export async function findIssueByTitlePrefix({ owner, repo, prefix, state = 'all
   return list.find((i) => typeof i.title === 'string' && i.title.startsWith(prefix)) || null;
 }
 
+export async function findAllIssuesByTitlePrefix({ owner, repo, prefix, state = 'all' }) {
+  const list = await listIssues({ owner, repo, state });
+  return list.filter((i) => typeof i.title === 'string' && i.title.startsWith(prefix));
+}
+
+export async function closeIssue({ owner, repo, issue_number }) {
+  return retry(
+    async () => {
+      const res = await client().patch(`${API_PREFIX}/repos/${owner}/${repo}/issues/${issue_number}`, {
+        state: 'closed',
+      });
+      rejectOn4xx(res, 'closeIssue');
+      return res.data;
+    },
+    { label: `closeIssue(${owner}/${repo}#${issue_number})` }
+  );
+}
+
 export async function addIssueComment({ owner, repo, issue_number, body }) {
   return retry(
     async () => {

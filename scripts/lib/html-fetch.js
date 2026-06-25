@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
-export async function fetchHttp(url, { timeout = 30000 } = {}) {
+export async function fetchHttp(url, { timeout = 30000, followRedirects = false } = {}) {
   const res = await axios.get(url, {
     headers: {
       'User-Agent': UA,
@@ -12,14 +12,32 @@ export async function fetchHttp(url, { timeout = 30000 } = {}) {
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     },
     timeout,
-    maxRedirects: 10,
-    validateStatus: (s) => s < 400,
+    maxRedirects: followRedirects ? 10 : 0,
+    validateStatus: (s) => s === 200 || (followRedirects && s < 400),
     responseType: 'text',
   });
   return {
     html: res.data,
     finalUrl: res.request?.res?.responseUrl || url,
     status: res.status,
+  };
+}
+
+export async function fetchHead(url, { timeout = 20000 } = {}) {
+  const res = await axios.head(url, {
+    headers: {
+      'User-Agent': UA,
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    },
+    timeout,
+    maxRedirects: 0,
+    validateStatus: () => true,
+  });
+  return {
+    status: res.status,
+    location: res.headers?.location || null,
+    finalUrl: res.request?.res?.responseUrl || url,
   };
 }
 

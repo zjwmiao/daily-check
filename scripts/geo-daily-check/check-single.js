@@ -214,7 +214,7 @@ function buildIssueBody(findings, project, batchInfo = null) {
 
 const MAX_ISSUE_FINDINGS = 300;
 
-async function createOrUpdateIssue(project, findings) {
+async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
   const { owner, repo } = project;
   const titlePrefix = '[GEO Daily Check]';
 
@@ -230,6 +230,24 @@ async function createOrUpdateIssue(project, findings) {
     });
   }
 
+  // dryRun 模式只打印 body，不调用 API
+  if (dryRun) {
+    log(`[dryRun] 将提交 ${batches.length} 个 issue，共 ${findings.length} 个问题`);
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      const title = batches.length === 1
+        ? `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过`
+        : `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过 (${batch.batchIndex}/${batch.totalBatches})`;
+      const body = buildIssueBody(batch.findings, project, batches.length === 1 ? null : batch);
+
+      log(`================== issue body (${project.name}) 批次${batch.batchIndex}/${batch.totalBatches} ==================`);
+      log(`标题: ${title}`);
+      log(body + '\n\n');
+    }
+    return { success: true, url: '', number: 0, action: 'dryRun' };
+  }
+
+  // 正常模式：调用 API 提交
   const existingIssues = await findAllIssuesByTitlePrefix({ owner, repo, prefix: titlePrefix });
 
   const sortedExisting = existingIssues.sort((a, b) => {
@@ -363,9 +381,13 @@ async function runProject(project, { dryRun }) {
 
     // 提 issue
     let issueUrl = '';
-    if (allFindings.length > 0 && !dryRun && process.env.ATOMGIT_TOKEN) {
-      const issueRes = await createOrUpdateIssue(project, allFindings);
-      if (issueRes.success) issueUrl = issueRes.url;
+    if (allFindings.length > 0) {
+      if (!dryRun && !process.env.ATOMGIT_TOKEN) {
+        log(`⚠ 未设置 ATOMGIT_TOKEN, 跳过 issue 上报`);
+      } else {
+        const issueRes = await createOrUpdateIssue(project, allFindings, { dryRun });
+        if (issueRes.success) issueUrl = issueRes.url;
+      }
     }
 
     return { name, ok: true, findings: allFindings.length, byDim, issueUrl };
@@ -414,12 +436,11 @@ async function runProject(project, { dryRun }) {
   // 7. 汇总 + 提issue
   // 提 issue
   let issueUrl = '';
-  if (allFindings.length > 0 && !dryRun) {
-    if (!process.env.ATOMGIT_TOKEN) {
+  if (allFindings.length > 0) {
+    if (!dryRun && !process.env.ATOMGIT_TOKEN) {
       log(`⚠ 未设置 ATOMGIT_TOKEN, 跳过 issue 上报`);
     } else {
-      log(`\n创建 issue 报告问题...`);
-      const issueRes = await createOrUpdateIssue(project, allFindings);
+      const issueRes = await createOrUpdateIssue(project, allFindings, { dryRun });
       if (issueRes.success) issueUrl = issueRes.url;
     }
   }

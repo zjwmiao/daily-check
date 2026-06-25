@@ -377,10 +377,10 @@ async function handleNoProblems(issue, result, dryRun = false) {
     };
   }
   
-  // const alreadyProcessed = await checkAlreadyProcessed(owner, repo, number);
-  // if (alreadyProcessed) {
-  //   return { status: 'skipped', reason: 'already_processed' };
-  // }
+  const alreadyProcessed = await checkAlreadyProcessed(owner, repo, number);
+  if (alreadyProcessed) {
+    return { status: 'skipped', reason: 'already_processed' };
+  }
   
   const commentBody = buildNoProblemComment(result);
   

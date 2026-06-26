@@ -199,9 +199,6 @@ export async function checkTdkSchemaSemantic(project, workDir, buildDir, { skip 
     return { findings: [], skipped: true };
   }
 
-  // 3. 执行语义检查
-  log(`${project.name} TDK/Schema 语义检查: ${htmlFiles.length} 个 HTML 文件`);
-
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 
   const inputFile = path.join(CACHE_DIR, `semantic-input-${project.name}-${Date.now()}.txt`);
@@ -211,15 +208,25 @@ export async function checkTdkSchemaSemantic(project, workDir, buildDir, { skip 
 
   fs.writeFileSync(inputFile, prompt, 'utf-8');
 
+  const opencodeArgs = [
+    'run',
+    '-',
+    '--thinking',
+    '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
+    '--dangerously-skip-permissions'
+  ];
+
+  // 3. 执行语义检查
+  log(`${project.name} TDK/Schema 语义检查: ${htmlFiles.length} 个 HTML 文件`);
+  log(`     bin: opencode, args: ${JSON.stringify(opencodeArgs)}`);
+
+  const bashCmd = `opencode ${opencodeArgs.map(a => (/[\s'"]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(' ')} < "${inputFile}"`;
+
   return new Promise((resolve) => {
-    const proc = spawn('opencode', [
-      'run', inputFile,
-      '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
-      '--dangerously-skip-permissions'
-    ], {
-      stdio: ['ignore', 'inherit', 'inherit'],
-      cwd: buildDir,
-      env: { ...process.env }
+    const proc = spawn('bash', ['-c', bashCmd], {
+      stdio: ['ignore', 'inherit', 'ignore'],
+      cwd: workDir,
+      detached: true,
     });
 
     proc.on('close', code => {

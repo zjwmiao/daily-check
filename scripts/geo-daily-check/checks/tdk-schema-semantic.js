@@ -76,7 +76,7 @@ async function runRenderChangeAnalysis(workDir, project) {
 
   return new Promise((resolve) => {
     const proc = spawn('bash', ['-c', bashCmd], {
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['ignore', 'inherit', 'ignore'],
       cwd: workDir,
       detached: true,
     });

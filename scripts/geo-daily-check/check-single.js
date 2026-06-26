@@ -174,7 +174,7 @@ function buildIssueBody(findings, project, batchInfo = null) {
   ];
 
   if (batchInfo) {
-    lines.push(`> 📋 本批次包含第 ${batchInfo.startIndex}-${batchInfo.endIndex} 个问题，共 ${batchInfo.totalCount} 个问题（批次 ${batchInfo.current}/${batchInfo.total}）`);
+    lines.push(`> 📋 本批次包含第 ${batchInfo.startIndex}-${batchInfo.endIndex} 个问题，共 ${batchInfo.totalCount} 个问题（批次 ${batchInfo.batchIndex}/${batchInfo.totalBatches}）`);
     lines.push('');
   }
 

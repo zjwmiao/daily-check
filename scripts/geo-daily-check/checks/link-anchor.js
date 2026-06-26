@@ -100,18 +100,24 @@ ${workDir}
 
   fs.writeFileSync(inputFile, prompt, 'utf-8');
 
+  const opencodeArgs = [
+    'run',
+    '-',
+    '--thinking',
+    '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
+    '--dangerously-skip-permissions'
+  ];
+
   log(`${project.name} link-anchor 分析开始`);
+  log(`     bin: opencode, args: ${JSON.stringify(opencodeArgs)}`);
+
+  const bashCmd = `opencode ${opencodeArgs.map(a => (/[\s'"]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(' ')} < "${inputFile}"`;
 
   return new Promise((resolve) => {
-    const proc = spawn('opencode', [
-      'run', inputFile,
-      '--thinking',
-      '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
-      '--dangerously-skip-permissions'
-    ], {
-      stdio: ['ignore', 'inherit', 'inherit'],
+    const proc = spawn('bash', ['-c', bashCmd], {
+      stdio: ['ignore', 'pipe', 'ignore'],
       cwd: workDir,
-      env: { ...process.env }
+      detached: true,
     });
 
     proc.on('close', code => {

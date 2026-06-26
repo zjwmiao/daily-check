@@ -105,6 +105,7 @@ ${workDir}
   return new Promise((resolve) => {
     const proc = spawn('opencode', [
       'run', inputFile,
+      '--thinking',
       '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
       '--dangerously-skip-permissions'
     ], {

@@ -38,6 +38,7 @@ import { checkBuildSitemapCoverage } from './checks/coverage.js';
 import { checkSsrRendering } from './checks/ssr.js';
 import { checkRenderChange } from './checks/render-change.js';
 import { checkTdkSchemaSemantic } from './checks/tdk-schema-semantic.js';
+import { checkLinkAnchor } from './checks/link-anchor.js';
 import { exportToExcel, pushHistoryFile } from './history-export.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -331,6 +332,38 @@ async function runProject(project, { dryRun }) {
     return { name, ok: false, error: err.message };
   }
 
+  // 1.5. codegraph init/sync + link-anchor-check（构建前，docs 项目跳过）
+  const needsCodegraph = project.enable_render_change_analysis || project.enable_link_anchor_check;
+  let linkAnchorFindings = [];
+
+  if (needsCodegraph && !isDocsProject) {
+    const codegraphDir = path.join(workDir, '.codegraph');
+
+    if (fs.existsSync(codegraphDir)) {
+      log('codegraph sync...');
+      try {
+        runCmd('codegraph sync', workDir, { silent: true });
+        log('✅ codegraph sync 完成');
+      } catch (err) {
+        log(`⚠ codegraph sync 失败: ${err.message}`);
+      }
+    } else {
+      log('codegraph init...');
+      try {
+        runCmd('codegraph init', workDir);
+        log('✅ codegraph init 完成');
+      } catch (err) {
+        log(`⚠ codegraph init 失败: ${err.message}`);
+      }
+    }
+  }
+
+  // link-anchor-check（构建前检查）
+  if (!isDocsProject && project.enable_link_anchor_check && !skip.includes('link-anchor-check')) {
+    const linkAnchorRes = await checkLinkAnchor(project, workDir, { skip });
+    linkAnchorFindings = linkAnchorRes.findings;
+  }
+
   // 2. 启动构建子进程（非阻塞） - docs 类型跳过构建
   let buildPromise = null;
   if (!isDocsProject) {
@@ -371,7 +404,7 @@ async function runProject(project, { dryRun }) {
   // docs 类型项目：跳过构建，直接汇总线上检查结果
   if (isDocsProject) {
     log(`📖 docs 项目，跳过构建和构建产物检查`);
-    const allFindings = [...onlineFindings];
+    const allFindings = [...onlineFindings, ...linkAnchorFindings];
 
     // 统计
     const byDim = {};
@@ -397,7 +430,7 @@ async function runProject(project, { dryRun }) {
   log(`等待构建完成...`);
   const buildResult = await buildPromise;
 
-  const allFindings = [...onlineFindings];
+  const allFindings = [...onlineFindings, ...linkAnchorFindings];
 
   if (!buildResult.ok) {
     log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过构建产物检查`);

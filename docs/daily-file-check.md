@@ -73,6 +73,7 @@ flowchart TB
 | `home` | 可选 | 线上站点 URL 数组，供 robots/sitemap 检查使用 |
 | `enable_render_change_analysis` | 可选 | 启用 render-change 分析，默认 `false`；启用后检测代码变更并分析受影响页面 |
 | `render_change_commits_count` | 可选 | 分析最近 N 个 commits，默认 `5` |
+| `enable_link_anchor_check` | 可选 | 启用 link-anchor 检查，默认 `false`；启用后检测 JS 跳转而非 `<a href>` 的导航链接 |
 
 示例：
 
@@ -202,6 +203,7 @@ const CHECKS = {
 | `checkSsrRendering` | ✅ 已实现 | 检测首页 + sitemap 抽样 URL 是否为 SSR/SSG 渲染，识别 CSR 空壳页面 |
 | `checkRenderChange` | ✅ 已实现 | 分析代码变更，识别受渲染影响的页面（需要 `enable_render_change_analysis`） |
 | `checkTdkSchemaSemantic` | ✅ 已实现 | 对受影响页面进行 TDK/Schema 语义检查，验证内容一致性 |
+| `checkLinkAnchor` | ✅ 已实现 | 检测导航链接使用 JS 跳转而非 `<a href>`（需要 `enable_link_anchor_check`） |
 
 **checkRobotsTxt 细节**：
 
@@ -256,6 +258,21 @@ const CHECKS = {
    - 验证与页面实际内容的一致性
    - 检查是否包含无关关键词/其他社区名称
 4. 发现语义问题 → 记一条 `tdk-schema-semantic` finding
+
+**checkLinkAnchor 细节**（需要 `enable_link_anchor_check: true`）：
+
+1. 在构建前执行，使用 codegraph 分析源码
+2. 检查以下 JS 跳转模式：
+   - `onClick + router.push/navigate`（Vue Router/Nuxt/React Router）
+   - `window.location.href/window.open`
+   - 自定义点击事件处理跳转
+3. 跳过以下场景：
+   - 需要确认对话框的跳转
+   - 需要携带 state/query 参数的跳转
+   - 非导航元素（表单提交、modal触发）
+4. 调用 `opencode` agent + `link-anchor-analyzer` skill 进行分析
+5. 输出问题列表 JSON（文件路径、行号、问题描述）
+6. 转换为 findings 并加入问题集
 
 > 新增检查项：实现 `checkXxx(ctx)` 函数并在 `CHECKS` 注册即可；若依赖线上站点设 `needsBuild: false`，若依赖构建产物设 `needsBuild: true`。
 

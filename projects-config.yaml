@@ -16,6 +16,7 @@
 # seo_config_dir:                       geo/seo元数据配置目录
 #   tdk: .geo/tdks
 #   schema: .geo/jsonld
+# enable_link_anchor_check:             启用 link-anchor 检查，检测 JS 跳转而非 <a href> 的导航链接，默认 false
 # home:                                 首页地址
 #   - https://www.openeuler.org/
 #   - https://www.openeuler.openatom.cn
@@ -33,6 +34,7 @@
 # sitemap-coverage:          构建页面未被sitemap收录
 # ssr-rendering:             页面疑似客户端渲染(CSR)，不利于SEO/GEO
 # tdk-schema-semantic:       TDK/Schema 语义不一致，内容与页面实际内容不符
+# link-anchor-check:         导航链接使用 JS 跳转而非 <a href>，不利于 SEO/GEO 爬虫发现
 
 projects:
   - name: openEuler

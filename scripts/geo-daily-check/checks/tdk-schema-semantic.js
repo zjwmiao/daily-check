@@ -39,6 +39,8 @@ async function runRenderChangeAnalysis(workDir, project) {
   const inputFile = path.join(CACHE_DIR, `render-input-${project.name}-${Date.now()}.txt`);
   const outputFile = path.join(CACHE_DIR, `render-output-${project.name}-${Date.now()}.md`);
 
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+
   const prompt = `使用 render-change-analyzer skill 分析哪些页面的内容渲染被最近的git commits所影响
 
 ## 输出要求

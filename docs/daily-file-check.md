@@ -71,15 +71,15 @@ flowchart TB
 | `seo_config_dir.schema` | schema 检查必填 | JSON-LD 配置根目录（如 `.geo/jsonld`） |
 | `skip_check` | 可选 | 跳过的检查项数组，如 `[sitemap-tdk, sitemap-schema]` |
 | `home` | 可选 | 线上站点 URL 数组，供 robots/sitemap 检查使用 |
-| `enable_render_change_analysis` | 可选 | 启用 render-change 分析，默认 `false`；启用后检测代码变更并分析受影响页面 |
-| `render_change_commits_count` | 可选 | 分析最近 N 个 commits，默认 `5` |
+| `enable_tdk_schema_semantic` | 可选 | 启用 TDK/Schema 语义检查（包含 render-change 分析），默认 `false` |
+| `semantic_analysis_commits_count` | 可选 | 语义检查分析最近 N 个 commits，默认 `5` |
 | `enable_link_anchor_check` | 可选 | 启用 link-anchor 检查，默认 `false`；启用后检测 JS 跳转而非 `<a href>` 的导航链接 |
 
 示例：
 
 ```yaml
 projects:
-  # portal 类型项目（默认）- 需要构建，启用 render-change 分析
+  # portal 类型项目（默认）- 需要构建，启用 TDK/Schema 语义检查
   - name: openEuler
     owner: openeuler
     repo: openEuler-portal
@@ -93,8 +93,8 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.openeuler.org/
-    enable_render_change_analysis: true
-    render_change_commits_count: 10
+    enable_tdk_schema_semantic: true
+    semantic_analysis_commits_count: 10
 
   # docs 类型项目 - 跳过构建
   - name: openEuler-docs
@@ -201,8 +201,7 @@ const CHECKS = {
 | `checkLlmsTxt` | ✅ 已实现 | 检查 llms.txt/llms-full.txt 是否存在且非空 |
 | `checkBuildSitemapCoverage` | ✅ 已实现 | 检查构建产物页面是否被 sitemap 收录 |
 | `checkSsrRendering` | ✅ 已实现 | 检测首页 + sitemap 抽样 URL 是否为 SSR/SSG 渲染，识别 CSR 空壳页面 |
-| `checkRenderChange` | ✅ 已实现 | 分析代码变更，识别受渲染影响的页面（需要 `enable_render_change_analysis`） |
-| `checkTdkSchemaSemantic` | ✅ 已实现 | 对受影响页面进行 TDK/Schema 语义检查，验证内容一致性 |
+| `checkTdkSchemaSemantic` | ✅ 已实现 | TDK/Schema 语义检查（内部包含 render-change 分析，需要 `enable_tdk_schema_semantic`） |
 | `checkLinkAnchor` | ✅ 已实现 | 检测导航链接使用 JS 跳转而非 `<a href>`（需要 `enable_link_anchor_check`） |
 
 **checkRobotsTxt 细节**：
@@ -242,20 +241,17 @@ const CHECKS = {
    - `<div id="__nuxt"></div>`（Nuxt CSR 模式）
 5. 判定为 CSR → 记一条 finding，建议改用 SSR/SSG 提升搜索引擎可发现性
 
-**checkRenderChange 细节**（需要 `enable_render_change_analysis: true`）：
+**checkTdkSchemaSemantic 细节**（需要 `enable_tdk_schema_semantic: true`）：
 
-1. 检测 git pull 是否有新 commits → 无变更则跳过
-2. 调用 `opencode` agent + `render-change-analyzer` skill 分析最近 N 个 commits
-3. 输出受影响页面 pathname 列表（JSON 数组）
-4. 不产生 findings，仅产出页面列表供后续检查
-
-**checkTdkSchemaSemantic 细节**（依赖 `checkRenderChange` 输出）：
-
-1. 接收受影响页面 pathname 列表
-2. 转换为构建产物 HTML 文件路径
-3. 调用 `opencode` agent 对每个 HTML 文件进行语义检查：
-   - 提取 TDK 和 JSON-LD 内容
-   - 验证与页面实际内容的一致性
+1. 触发条件：`hasNewCommits`（有新提交时才执行，避免重复分析）
+2. 内部执行 render-change 分析：
+   - 调用 `opencode` agent + `render-change-analyzer` skill
+   - 分析最近 N 个 commits（由 `semantic_analysis_commits_count` 配置）
+   - 输出受影响页面 pathname 列表
+3. 对受影响页面执行语义检查：
+   - 转换 pathname 为构建产物 HTML 文件路径
+   - 调用 `opencode` agent 对每个 HTML 文件进行语义检查
+   - 验证 TDK/Schema 内容与页面实际内容的一致性
    - 检查是否包含无关关键词/其他社区名称
 4. 发现语义问题 → 记一条 `tdk-schema-semantic` finding
 

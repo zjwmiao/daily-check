@@ -36,7 +36,6 @@ import { checkUrlAccessibility } from './checks/url-access.js';
 import { checkLlmsTxt } from './checks/llms-txt.js';
 import { checkBuildSitemapCoverage } from './checks/coverage.js';
 import { checkSsrRendering } from './checks/ssr.js';
-import { checkRenderChange } from './checks/render-change.js';
 import { checkTdkSchemaSemantic } from './checks/tdk-schema-semantic.js';
 import { checkLinkAnchor } from './checks/link-anchor.js';
 import { exportToExcel, pushHistoryFile } from './history-export.js';
@@ -333,7 +332,7 @@ async function runProject(project, { dryRun }) {
   }
 
   // 1.5. codegraph init/sync + link-anchor-check（构建前，docs 项目跳过）
-  const needsCodegraph = project.enable_render_change_analysis || project.enable_link_anchor_check;
+  const needsCodegraph = project.enable_tdk_schema_semantic || project.enable_link_anchor_check;
   let linkAnchorFindings = [];
 
   if (needsCodegraph && !isDocsProject) {
@@ -451,19 +450,11 @@ async function runProject(project, { dryRun }) {
     allFindings.push(...coverageRes.findings);
   }
 
-  // 6. render-change 分析 + TDK/Schema 语义检查
-  if (hasNewCommits && project.enable_render_change_analysis) {
-    log(`${name} 检测到代码变更，运行 render-change 分析...`);
-    const renderChangeRes = await checkRenderChange(project, workDir, { skip });
-    const affectedPages = renderChangeRes.affectedPages;
-    
-    if (affectedPages.length > 0) {
-      log(`render-change 分析完成: ${affectedPages.length} 个受影响页面`);
-      const semanticRes = await checkTdkSchemaSemantic(project, buildDir, affectedPages, { skip });
-      allFindings.push(...semanticRes.findings);
-    } else {
-      log(`render-change 分析完成: 无受影响页面`);
-    }
+  // 6. TDK/Schema 语义检查（内部包含 render-change 分析）
+  if (hasNewCommits && project.enable_tdk_schema_semantic) {
+    log(`${name} 检测到代码变更，运行 TDK/Schema 语义检查...`);
+    const semanticRes = await checkTdkSchemaSemantic(project, workDir, buildDir, { skip });
+    allFindings.push(...semanticRes.findings);
   }
 
   // 7. 汇总 + 提issue

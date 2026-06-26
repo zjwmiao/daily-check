@@ -6,6 +6,16 @@ import { log } from '../utils.js';
 
 const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot', 'semantic-check');
 
+function parseRenderChangeResult(content) {
+  const match = content.match(/```json\s*\n<!-- RENDER_CHANGE_RESULT -->\s*\n([\s\S]*?)\n```/);
+  if (!match) return [];
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return [];
+  }
+}
+
 function parseSemanticResult(content) {
   const match = content.match(/```json\s*\n<!-- ANALYZE_RESULT -->\s*\n([\s\S]*?)\n```/);
   if (!match) return [];
@@ -22,6 +32,69 @@ function parseSemanticResult(content) {
   } catch {
     return [];
   }
+}
+
+async function runRenderChangeAnalysis(workDir, project) {
+  const commitsCount = project.semantic_analysis_commits_count || 5;
+  const inputFile = path.join(CACHE_DIR, `render-input-${project.name}-${Date.now()}.txt`);
+  const outputFile = path.join(CACHE_DIR, `render-output-${project.name}-${Date.now()}.md`);
+
+  const prompt = `使用 render-change-analyzer skill 分析哪些页面的内容渲染被最近的git commits所影响
+
+## 输出要求
+
+分析完成后，将结果写入文件：${outputFile}
+
+文件末尾必须包含以下 JSON block：
+
+\`\`\`json
+<!-- RENDER_CHANGE_RESULT -->
+["/about", "/docs/intro", "/"]
+\`\`\`
+
+- 数组元素为页面 pathname（不含 .html 扩展名）
+- 根页面使用 "/" 或空字符串
+- 如果无受影响页面，输出空数组 []
+
+如果存在被排除的文件（blog 内容页、全局组件），请在 JSON block 前简要说明。
+`;
+
+  fs.writeFileSync(inputFile, prompt, 'utf-8');
+
+  log(`${project.name} render-change 分析: ${commitsCount} commits`);
+
+  return new Promise((resolve) => {
+    const proc = spawn('opencode', [
+      'run', inputFile,
+      '--model', process.env.AI_MODEL || 'alibaba-cn/glm-5',
+      '--dangerously-skip-permissions'
+    ], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+      cwd: workDir,
+      env: { ...process.env }
+    });
+
+    proc.on('close', code => {
+      if (code !== 0) {
+        log(`render-change agent 失败: exit code ${code}`);
+        resolve([]);
+      } else {
+        if (fs.existsSync(outputFile)) {
+          const content = fs.readFileSync(outputFile, 'utf-8');
+          const affectedPages = parseRenderChangeResult(content);
+          resolve(affectedPages);
+        } else {
+          log(`render-change 输出文件不存在`);
+          resolve([]);
+        }
+      }
+    });
+
+    proc.on('error', err => {
+      log(`render-change agent 错误: ${err.message}`);
+      resolve([]);
+    });
+  });
 }
 
 function buildSemanticCheckPrompt(htmlFiles, buildDir, project, outputFile) {
@@ -88,14 +161,22 @@ ${fileList}
 `;
 }
 
-export async function checkTdkSchemaSemantic(project, buildDir, affectedPages, { skip }) {
+export async function checkTdkSchemaSemantic(project, workDir, buildDir, { skip }) {
   if (skip.includes('tdk-schema-semantic')) return { findings: [], skipped: true };
-  
-  if (!affectedPages?.length) return { findings: [], skipped: true };
+  if (!project.enable_tdk_schema_semantic) return { findings: [], skipped: true };
 
-  log(`${project.name} TDK/Schema 语义检查: ${affectedPages.length} 个受影响页面`);
+  // 1. 执行 render-change 分析
+  log(`${project.name} TDK/Schema 语义检查: 开始 render-change 分析`);
+  const affectedPages = await runRenderChangeAnalysis(workDir, project);
 
-  // 将 pathname 转换为 HTML 文件路径
+  if (!affectedPages.length) {
+    log(`render-change 分析完成: 无受影响页面`);
+    return { findings: [] };
+  }
+
+  log(`render-change 分析完成: ${affectedPages.length} 个受影响页面`);
+
+  // 2. 将 pathname 转换为 HTML 文件路径
   const htmlFiles = affectedPages.map(page => {
     const pathname = page.replace(/^\//, '').replace(/\/$/, '');
     if (pathname === '' || pathname === '/') {
@@ -109,13 +190,16 @@ export async function checkTdkSchemaSemantic(project, buildDir, affectedPages, {
     return { findings: [], skipped: true };
   }
 
+  // 3. 执行语义检查
+  log(`${project.name} TDK/Schema 语义检查: ${htmlFiles.length} 个 HTML 文件`);
+
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  
-  const inputFile = path.join(CACHE_DIR, `input-${project.name}-${Date.now()}.txt`);
-  const outputFile = path.join(CACHE_DIR, `output-${project.name}-${Date.now()}.md`);
-  
+
+  const inputFile = path.join(CACHE_DIR, `semantic-input-${project.name}-${Date.now()}.txt`);
+  const outputFile = path.join(CACHE_DIR, `semantic-output-${project.name}-${Date.now()}.md`);
+
   const prompt = buildSemanticCheckPrompt(htmlFiles, buildDir, project, outputFile);
-  
+
   fs.writeFileSync(inputFile, prompt, 'utf-8');
 
   return new Promise((resolve) => {
@@ -145,7 +229,7 @@ export async function checkTdkSchemaSemantic(project, buildDir, affectedPages, {
         }
       }
     });
-    
+
     proc.on('error', err => {
       log(`semantic-check agent 错误: ${err.message}`);
       resolve({ findings: [] });

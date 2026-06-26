@@ -17,9 +17,29 @@
 #   tdk: .geo/tdks
 #   schema: .geo/jsonld
 # enable_link_anchor_check:             启用 link-anchor 检查，检测 JS 跳转而非 <a href> 的导航链接，默认 false
+# enable_tdk_schema_semantic:           启用 TDK/Schema 语义检查（包含 render-change 分析），默认 false
+# semantic_analysis_commits_count:      语义检查分析最近 N 个 commits，默认 5
 # home:                                 首页地址
 #   - https://www.openeuler.org/
 #   - https://www.openeuler.openatom.cn
+
+
+# 检查项控制说明：
+#
+# 1. 低成本检查项（默认启用）：
+#    通过 skip_check 跳过，如：skip_check: ['sitemap-tdk', 'sitemap-schema']
+#    取值：robots-txt, sitemap-access, sitemap-tdk, sitemap-schema, sitemap-priority,
+#          url-access, llms-txt, sitemap-coverage, ssr-rendering
+#
+# 2. 高成本检查项（默认不启用，需显式开启）：
+#    需设置 enable_* 配置项，同时可通过 skip_check 跳过
+#    - link-anchor-check：需设置 enable_link_anchor_check: true
+#    - tdk-schema-semantic：需设置 enable_tdk_schema_semantic: true（内部包含 render-change 分析）
+#
+#    示例：启用 tdk-schema-semantic
+#      enable_tdk_schema_semantic: true
+#      semantic_analysis_commits_count: 10
+#      # 若要跳过，可加到 skip_check: ['tdk-schema-semantic']
 
 
 # skip_check取值：
@@ -79,6 +99,9 @@ projects:
       - sitemap-schema
       - sitemap-coverage
       - sitemap-priority
+      - link-anchor-check
+      - tdk-schema-semantic
+      - url-access
     home:
       - https://docs.openeuler.org/
       - https://docs.openeuler.openatom.cn/
@@ -115,6 +138,9 @@ projects:
       - sitemap-schema
       - sitemap-coverage
       - sitemap-priority
+      - link-anchor-check
+      - tdk-schema-semantic
+      - url-access
     home:
       - https://docs.opengauss.org/
   - name: openGauss-docs

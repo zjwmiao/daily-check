@@ -490,6 +490,11 @@ function loadConfig(configPath) {
   if (projects.length === 0) {
     throw new Error(`配置文件未包含 projects: ${configPath}`);
   }
+  projects.forEach(p => {
+    if (p.ignore_routes) {
+      p.ignore_routes = p.ignore_routes.map((r) => new RegExp(r));
+    }
+  });
   return projects;
 }
 

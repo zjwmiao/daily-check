@@ -17,7 +17,13 @@ export function log(msg) {
 export function shouldIgnore(pathname, ignorePatterns) {
   if (!ignorePatterns?.length) return false;
   for (const pattern of ignorePatterns) {
-    try { if (new RegExp(pattern).test(pathname)) return true; } catch {}
+    if (pattern instanceof RegExp) {
+      if (pattern.test(pathname)) {
+        return true
+      }
+    } else if (typeof pattern === 'string') {
+      try { if (new RegExp(pattern).test(pathname)) return true; } catch {}
+    }
   }
   return false;
 }

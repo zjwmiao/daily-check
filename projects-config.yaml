@@ -173,18 +173,7 @@ projects:
       - /
     ignore_routes:
       - /?(technology-blogs|search|online-showroom)/?(zh|en)
-      - ^/docs/
-      - ^/mindformers/
-      - ^/vllm_mindspore/
-      - ^/mindelec/
-      - ^/mindsponge/
-      - ^/mindflow/
-      - ^/mindearth/
-      - ^/mindchemistry/
-      - ^/mindquantum/
-      - ^/mindstudio/
-      - ^/golden_stick/
-      - ^/mindinsight/
+      - ^/(?:api|doc|docs|golden_stick|install|lite|mindarmour|mindchemistry|mindearth|mindelec|mindflow|mindformers|mindinsight|mindquantum|mindscience|mindsponge|mindstudio|more|msadapter|pic|sciai|tutorial|tutorials|vllm_mindspore)/.+
     seo_config_dir:
       tdk: .geo/tdk
       schema: .geo/jsonld

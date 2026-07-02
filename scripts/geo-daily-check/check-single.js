@@ -273,9 +273,15 @@ async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
     let result, action;
     if (i < sortedExisting.length) {
       const existing = sortedExisting[i];
-      log(`♻️  更新已存在的 issue #${existing.number}`);
-      result = await updateIssue({ owner, repo, issue_number: existing.number, title, body });
-      action = 'updated';
+      if (existing.state === 'closed') {
+        log(`✨ 创建新 issue (已有关闭的 issue #${existing.number})`);
+        result = await createIssue({ owner, repo, title, body });
+        action = 'created';
+      } else {
+        log(`♻️  更新已存在的 issue #${existing.number}`);
+        result = await updateIssue({ owner, repo, issue_number: existing.number, title, body });
+        action = 'updated';
+      }
       if (!result) result = existing;
     } else {
       log(`✨ 创建新 issue`);

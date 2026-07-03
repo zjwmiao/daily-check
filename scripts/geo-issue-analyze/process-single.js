@@ -274,19 +274,60 @@ async function runOpencodeAnalyze(issue, urlsToAnalyze, projects) {
   });
 }
 
-function buildNoProblemComment(result) {
+function buildCheckItemsTable(checkResults, llmResult) {
+  const checkItems = [];
+
+  const sitemapPassed = checkResults.some(r => r.checks.sitemap?.covered === true);
+  checkItems.push({
+    name: 'sitemap收录',
+    passed: sitemapPassed,
+    description: '页面已被 sitemap.xml 收录，搜索引擎可发现'
+  });
+
+  const llmsPassed = checkResults.some(r => r.checks.llmsTxt?.covered === true);
+  const llmsExists = checkResults.some(r => r.checks.llmsTxt?.llmsFullTxtExists === true);
+  checkItems.push({
+    name: 'llms-full.txt',
+    passed: llmsPassed || llmsExists,
+    description: '页面已在 /llms-full.txt 中列出，AI系统可引用'
+  });
+
+  const isDocsProject = checkResults.every(r => r.isDocs === true);
+  if (!isDocsProject) {
+    const tdkPassed = llmResult?.has_problems === false || !llmResult;
+    checkItems.push({
+      name: 'TDK/Schema语义',
+      passed: tdkPassed,
+      description: 'TDK 和 JSON-LD 内容与页面内容一致'
+    });
+  }
+
+  return checkItems.map(item =>
+    `| ${item.name} | ${item.passed ? '✅ 通过' : '⚠️ 需关注'} | ${item.description} |`
+  ).join('\n');
+}
+
+function buildNoProblemComment(result, checkResults, llmResult) {
   const urls = result.analyzed_urls || [];
   const urlList = urls.map(u => `- ${u}`).join('\n');
   const warnings = result.warnings || [];
   const warningList = warnings.length > 0 ? warnings.map(w => `- ${w.url}: ${w.message}`).join('\n') : '';
-  
+
+  const checkTable = buildCheckItemsTable(checkResults, llmResult);
+
   return `## GEO 分析结果
 
 经分析，此 issue **不涉及GEO基础配置问题**（sitemap/llms.txt/TDK/Schema）。
 
 **分析详情**:
 
-${result.message || '所有检查项均通过'}
+所有检查项均已通过
+
+**检查项说明**:
+
+| 检查项 | 结果 | 说明 |
+| --- | --- | --- |
+${checkTable}
 
 **涉及页面**:
 ${urlList || '未识别到具体页面'}
@@ -363,9 +404,9 @@ async function checkAlreadyProcessed(owner, repo, issueNumber) {
   );
 }
 
-async function handleNoProblems(issue, result, dryRun = false) {
+async function handleNoProblems(issue, result, checkResults, llmResult, dryRun = false) {
   const { owner, repo, number } = issue;
-  
+
   if (dryRun) {
     return {
       status: 'dry_run',
@@ -376,20 +417,20 @@ async function handleNoProblems(issue, result, dryRun = false) {
       warnings: result.warnings || []
     };
   }
-  
+
   const alreadyProcessed = await checkAlreadyProcessed(owner, repo, number);
   if (alreadyProcessed) {
     return { status: 'skipped', reason: 'already_processed' };
   }
-  
-  const commentBody = buildNoProblemComment(result);
-  
-  const comment = await addIssueComment({ 
-    owner, repo, 
-    issue_number: number, 
-    body: commentBody 
+
+  const commentBody = buildNoProblemComment(result, checkResults, llmResult);
+
+  const comment = await addIssueComment({
+    owner, repo,
+    issue_number: number,
+    body: commentBody
   });
-  
+
   return { status: 'commented', comment_url: comment.html_url };
 }
 
@@ -505,8 +546,8 @@ async function main() {
         message: 'issue 中未包含可识别的 URL'
       };
       
-      const outcome = await handleNoProblems(issue, result, dryRun);
-      const commentBody = buildNoProblemComment(result);
+      const outcome = await handleNoProblems(issue, result, [], null, dryRun);
+      const commentBody = buildNoProblemComment(result, [], null);
       saveAndPrintGeneratedBody(issue, commentBody, 'comment');
       console.log(JSON.stringify({
         issue: `${issue.owner}/${issue.repo} #${issue.number}`,
@@ -570,7 +611,7 @@ async function main() {
     if (finalResult.has_problems) {
       outcome = await handleHasProblems(issue, finalResult, dryRun);
     } else {
-      outcome = await handleNoProblems(issue, finalResult, dryRun);
+      outcome = await handleNoProblems(issue, finalResult, checkResults, llmResult, dryRun);
     }
     
     if (dryRun) {
@@ -593,7 +634,7 @@ async function main() {
       generatedBody = buildProblemIssueBody(finalResult, issue);
       bodyType = 'issue';
     } else {
-      generatedBody = buildNoProblemComment(finalResult);
+      generatedBody = buildNoProblemComment(finalResult, checkResults, llmResult);
       bodyType = 'comment';
     }
     saveAndPrintGeneratedBody(issue, generatedBody, bodyType);

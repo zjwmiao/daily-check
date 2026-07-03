@@ -47,6 +47,27 @@ Do NOT report:
   - Dropdown toggles
   - Delete/action buttons (not navigation)
 
+## Functional Module Classification
+
+**Required**: For each issue found, determine the **functional module** the component belongs to based on its file path, component name, and usage context. Fill the `module` field with the Chinese name of the module.
+
+Common modules (not limited to — infer from context):
+
+| module | Description |
+|--------|-------------|
+| 导航栏 | Top navigation, main menu |
+| 页脚 | Footer links, copyright area |
+| 侧边栏 | Side navigation, article TOC |
+| 面包屑 | Breadcrumb navigation |
+| 卡片列表 | Article cards, product cards, list items |
+| 轮播图 | Carousel, slider |
+| 标签页 | Tab switching |
+| 搜索 | Search box, search results |
+| 按钮组 | Action buttons, CTA |
+| 其他 | Anything not above |
+
+When a component's module is ambiguous, use `其他`.
+
 ## Output Format
 
 The agent MUST output a JSON array at the end of the response:
@@ -59,7 +80,8 @@ The agent MUST output a JSON array at the end of the response:
     "line": 45,
     "code": "onClick={() => router.push('/about')}",
     "description": "导航链接使用 JS 跳转，应改为 <a href='/about'>",
-    "severity": "high"
+    "severity": "high",
+    "module": "导航栏"
   }
 ]
 ```
@@ -70,6 +92,7 @@ The agent MUST output a JSON array at the end of the response:
 - `code`: Snippet of problematic code (simplified)
 - `description`: Problem description + fix suggestion
 - `severity`: `high` (main navigation), `medium` (secondary links), `low` (edge cases)
+- `module`: Functional module classification (Chinese name, e.g. `导航栏`, `页脚`, `侧边栏`)
 
 If no issues, output empty array:
 

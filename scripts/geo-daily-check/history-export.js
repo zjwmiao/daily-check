@@ -20,6 +20,7 @@ const DIMENSIONS = [
   'sitemap-coverage',
   'ssr-rendering',
   'tdk-schema-semantic',
+  'link-anchor-check',
 ];
 
 function sanitizeSheetName(name) {

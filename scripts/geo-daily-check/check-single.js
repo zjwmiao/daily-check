@@ -29,7 +29,7 @@ import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
 import { parse as parseYaml } from 'yaml';
 import { createIssue, findAllIssuesByTitlePrefix, updateIssue, closeIssue } from '../lib/atomgit-api.js';
-import { log, CHECK_DIMENSIONS } from './utils.js';
+import { log, DIMENSION_DESCRIPTIONS } from './utils.js';
 import { checkRobotsTxt } from './checks/robots.js';
 import { checkSitemapAccessible, checkSitemapConfig } from './checks/sitemap.js';
 import { checkUrlAccessibility } from './checks/url-access.js';
@@ -165,12 +165,66 @@ function hasConfig(workDir, seoDir, key) {
 
 // ============ issue 上报 ============
 
-function buildIssueBody(findings, project, batchInfo = null) {
+const MAX_ISSUE_FINDINGS = 300;
+
+/**
+ * 计算单个 finding 所属的 issue 分组 key。
+ * - link-anchor-check 维度: 按 functional module 分组 → `link-anchor-check::{module}`
+ * - 其他维度: 按 check 字段分组 → check 值本身
+ */
+function getFindingGroupKey(f) {
+  if (f.check === 'link-anchor-check' && f.module) {
+    return `link-anchor-check::${f.module}`;
+  }
+  return f.check;
+}
+
+/**
+ * 将分组 key 转换为可读信息 { label, dimension, module }
+ */
+function getGroupInfo(groupKey) {
+  if (groupKey.startsWith('link-anchor-check::')) {
+    const module = groupKey.slice('link-anchor-check::'.length);
+    return { key: groupKey, label: `link-anchor-check / ${module}`, dimension: 'link-anchor-check', module };
+  }
+  return { key: groupKey, label: groupKey, dimension: groupKey, module: null };
+}
+
+/**
+ * 从已有 issue 标题中解析分组 label。
+ * 标题格式: [GEO Daily Check] owner/repo: [label] N项检查未通过 ...
+ */
+function parseGroupLabelFromTitle(title) {
+  const m = title.match(/: \[([^\]]+)\] \d+项/);
+  return m ? m[1] : null;
+}
+
+function getBatchNum(title) {
+  const m = title.match(/\((\d+)\/\d+\)/);
+  return m ? parseInt(m[1]) : 0;
+}
+
+function buildIssueTitle(owner, repo, batch) {
+  const count = batch.totalCount;
+  const base = `[GEO Daily Check] ${owner}/${repo}: [${batch.label}] ${count}项检查未通过`;
+  if (batch.totalBatches === 1) return base;
+  return `${base} (${batch.batchIndex}/${batch.totalBatches})`;
+}
+
+function buildIssueBody(findings, project, groupInfo, batchInfo = null) {
   const { owner, repo, seo_config_dir: seo = {} } = project;
   const lines = [
     `**项目**: ${owner}/${repo}`,
-    '',
   ];
+
+  if (groupInfo) {
+    lines.push(`**检查维度**: ${groupInfo.dimension}`);
+    if (groupInfo.module) {
+      lines.push(`**功能模块**: ${groupInfo.module}`);
+    }
+  }
+
+  lines.push('');
 
   if (batchInfo) {
     lines.push(`> 📋 本批次包含第 ${batchInfo.startIndex}-${batchInfo.endIndex} 个问题，共 ${batchInfo.totalCount} 个问题（批次 ${batchInfo.batchIndex}/${batchInfo.totalBatches}）`);
@@ -189,16 +243,16 @@ function buildIssueBody(findings, project, batchInfo = null) {
   lines.push('');
   lines.push('### 维度说明');
   lines.push('');
-  lines.push('- **robots-txt**: robots.txt 不存在、全站封禁爬虫或未声明 Sitemap');
-  lines.push('- **sitemap-access**: sitemap 无法访问或无有效内容');
-  lines.push('- **sitemap-tdk**: sitemap条目缺少TDK配置文件');
-  lines.push('- **sitemap-schema**: sitemap条目缺少Schema配置文件');
-  lines.push('- **sitemap-priority**: sitemap条目缺少priority属性');
-  lines.push('- **url-access**: URL无法访问');
-  lines.push('- **llms-txt**: llms.txt/llms-full.txt缺失或为空');
-  lines.push('- **sitemap-coverage**: 构建页面未被sitemap收录');
-  lines.push('- **ssr-rendering**: 页面疑似客户端渲染(CSR)，不利于SEO/GEO');
-  lines.push('- **tdk-schema-semantic**: TDK/Schema 语义不一致，内容与页面实际内容不符');
+  const dim = groupInfo?.dimension || findings[0]?.check;
+  const desc = DIMENSION_DESCRIPTIONS[dim];
+  if (desc) {
+    lines.push(`- **${dim}**: ${desc}`);
+  }
+  if (groupInfo?.module) {
+    lines.push('');
+    lines.push(`> 本 issue 汇总了 **${groupInfo.module}** 功能模块下的问题组件，便于统一修复。`);
+  }
+
   lines.push('');
   lines.push('### 建议操作');
   lines.push('');
@@ -212,67 +266,86 @@ function buildIssueBody(findings, project, batchInfo = null) {
   return lines.join('\n');
 }
 
-const MAX_ISSUE_FINDINGS = 300;
-
 async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
   const { owner, repo } = project;
   const titlePrefix = '[GEO Daily Check]';
 
-  const batches = [];
-  for (let i = 0; i < findings.length; i += MAX_ISSUE_FINDINGS) {
-    batches.push({
-      findings: findings.slice(i, i + MAX_ISSUE_FINDINGS),
-      batchIndex: Math.floor(i / MAX_ISSUE_FINDINGS) + 1,
-      totalBatches: Math.ceil(findings.length / MAX_ISSUE_FINDINGS),
-      startIndex: i + 1,
-      endIndex: Math.min(i + MAX_ISSUE_FINDINGS, findings.length),
-      totalCount: findings.length,
-    });
+  // 1. 按维度/模块分组 (相同维度的问题提一个 issue; link-anchor 按功能模块再细分)
+  const groupMap = new Map();
+  for (const f of findings) {
+    const key = getFindingGroupKey(f);
+    if (!groupMap.has(key)) groupMap.set(key, []);
+    groupMap.get(key).push(f);
   }
 
-  // dryRun 模式只打印 body，不调用 API
-  if (dryRun) {
-    log(`[dryRun] 将提交 ${batches.length} 个 issue，共 ${findings.length} 个问题`);
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      const title = batches.length === 1
-        ? `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过`
-        : `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过 (${batch.batchIndex}/${batch.totalBatches})`;
-      const body = buildIssueBody(batch.findings, project, batches.length === 1 ? null : batch);
+  // 2. 每组按 MAX_ISSUE_FINDINGS 拆批次
+  const groupBatches = [];
+  for (const [groupKey, groupFindings] of groupMap) {
+    const info = getGroupInfo(groupKey);
+    const totalBatches = Math.ceil(groupFindings.length / MAX_ISSUE_FINDINGS);
+    for (let i = 0; i < groupFindings.length; i += MAX_ISSUE_FINDINGS) {
+      const batchIndex = Math.floor(i / MAX_ISSUE_FINDINGS) + 1;
+      groupBatches.push({
+        groupKey,
+        label: info.label,
+        dimension: info.dimension,
+        module: info.module,
+        findings: groupFindings.slice(i, i + MAX_ISSUE_FINDINGS),
+        batchIndex,
+        totalBatches,
+        startIndex: i + 1,
+        endIndex: Math.min(i + MAX_ISSUE_FINDINGS, groupFindings.length),
+        totalCount: groupFindings.length,
+      });
+    }
+  }
 
-      log(`================== issue body (${project.name}) 批次${batch.batchIndex}/${batch.totalBatches} ==================`);
+  // 3. dryRun 模式只打印 body，不调用 API
+  if (dryRun) {
+    log(`[dryRun] 将提交 ${groupBatches.length} 个 issue，共 ${findings.length} 个问题，分 ${groupMap.size} 个维度/模块`);
+    for (const batch of groupBatches) {
+      const title = buildIssueTitle(owner, repo, batch);
+      const body = buildIssueBody(batch.findings, project, batch, batch.totalBatches === 1 ? null : batch);
+      log(`================== issue body (${project.name}) [${batch.label}] 批次${batch.batchIndex}/${batch.totalBatches} ==================`);
       log(`标题: ${title}`);
       log(body + '\n\n');
     }
-    return { success: true, url: '', number: 0, action: 'dryRun' };
+    return { success: true, url: '', urls: [], number: 0, action: 'dryRun' };
   }
 
-  // 正常模式：调用 API 提交
+  // 4. 拉取已有 issue，按 label 分组
   const existingIssues = await findAllIssuesByTitlePrefix({ owner, repo, prefix: titlePrefix });
 
-  const sortedExisting = existingIssues.sort((a, b) => {
-    const getBatchNum = (title) => {
-      const m = title.match(/\((\d+)\/\d+\)/);
-      return m ? parseInt(m[1]) : 0;
-    };
-    return getBatchNum(a.title) - getBatchNum(b.title);
-  });
+  const existingByLabel = new Map();
+  for (const ex of existingIssues) {
+    const label = parseGroupLabelFromTitle(ex.title);
+    if (label) {
+      if (!existingByLabel.has(label)) existingByLabel.set(label, []);
+      existingByLabel.get(label).push(ex);
+    }
+  }
+  for (const [, arr] of existingByLabel) {
+    arr.sort((a, b) => getBatchNum(a.title) - getBatchNum(b.title));
+  }
 
+  // 5. 逐批次 create/update
+  const usedIssueNumbers = new Set();
   const results = [];
 
-  for (let i = 0; i < batches.length; i++) {
-    const batch = batches[i];
-    const title = batches.length === 1
-      ? `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过`
-      : `${titlePrefix} ${owner}/${repo}: ${batch.totalCount}项检查未通过 (${batch.batchIndex}/${batch.totalBatches})`;
-    const body = buildIssueBody(batch.findings, project, batches.length === 1 ? null : batch);
+  for (const batch of groupBatches) {
+    const title = buildIssueTitle(owner, repo, batch);
+    const body = buildIssueBody(batch.findings, project, batch, batch.totalBatches === 1 ? null : batch);
 
-    log(`================== issue body (${project.name}) 批次${batch.batchIndex}/${batch.totalBatches} ==================`);
+    log(`================== issue body (${project.name}) [${batch.label}] 批次${batch.batchIndex}/${batch.totalBatches} ==================`);
     log(body + '\n\n');
 
+    const candidates = existingByLabel.get(batch.label) || [];
+    const idx = batch.batchIndex - 1;
     let result, action;
-    if (i < sortedExisting.length) {
-      const existing = sortedExisting[i];
+
+    if (idx < candidates.length) {
+      const existing = candidates[idx];
+      usedIssueNumbers.add(existing.number);
       if (existing.state === 'closed') {
         log(`✨ 创建新 issue (已有关闭的 issue #${existing.number})`);
         result = await createIssue({ owner, repo, title, body });
@@ -294,17 +367,26 @@ async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
     results.push({ success: true, url, number: result.number, action });
   }
 
-  for (let i = batches.length; i < sortedExisting.length; i++) {
-    const old = sortedExisting[i];
-    log(`🔒 关闭多余 issue #${old.number}`);
-    try {
-      await closeIssue({ owner, repo, issue_number: old.number });
-    } catch (err) {
-      log(`⚠️ 关闭 issue #${old.number} 失败: ${err.message}`);
+  // 6. 关闭多余的 issue（旧格式无 label，或该维度/模块已无问题）
+  for (const ex of existingIssues) {
+    if (!usedIssueNumbers.has(ex.number) && ex.state !== 'closed') {
+      log(`🔒 关闭多余 issue #${ex.number}`);
+      try {
+        await closeIssue({ owner, repo, issue_number: ex.number });
+      } catch (err) {
+        log(`⚠️ 关闭 issue #${ex.number} 失败: ${err.message}`);
+      }
     }
   }
 
-  return results[0] || { success: true, url: '', number: 0, action: 'none' };
+  const urls = results.map(r => r.url);
+  return {
+    success: true,
+    url: urls.join('\n'),
+    urls,
+    number: results[0]?.number || 0,
+    action: 'done',
+  };
 }
 
 // ============ 单项目流程 ============

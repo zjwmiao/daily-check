@@ -64,6 +64,32 @@ ${workDir}
 - **已有正确实现**：
   - 已经使用 \`<a href>\` 且无问题的导航链接
 
+## 功能模块分类
+
+**重要**：对每个发现的问题，必须根据组件在网站中所处的功能区域判断其所属的**功能模块**，填写到 \`module\` 字段。
+
+判断依据（综合以下信息）：
+- 组件文件路径（如 \`Header.vue\`、\`Footer.vue\`、\`Sidebar.vue\`）
+- 组件名 / 组件用途
+- 组件被使用的位置和上下文
+
+常见功能模块参考（不限于以下，可根据实际情况判断）：
+
+| module 值 | 说明 |
+|-----------|------|
+| 导航栏 | 顶部导航、主导航菜单 |
+| 页脚 | 底部链接、版权区域 |
+| 侧边栏 | 侧边导航、文章目录 |
+| 面包屑 | 面包屑导航 |
+| 卡片列表 | 文章卡片、产品卡片、列表项 |
+| 轮播图 | 轮播、滑块 |
+| 标签页 | Tab 切换 |
+| 搜索 | 搜索框、搜索结果 |
+| 按钮组 | 操作按钮、CTA |
+| 其他 | 不属于以上分类的组件 |
+
+\`module\` 字段填写功能模块的**中文名称**。无法明确归类时填写 \`其他\`。
+
 ## 输出要求
 
 分析完成后，将结果写入文件：${outputFile}
@@ -78,7 +104,8 @@ ${workDir}
     "line": 45,
     "code": "onClick={() => router.push('/about')}",
     "description": "导航链接使用 JS 跳转，应改为 <a href='/about'>",
-    "severity": "high"
+    "severity": "high",
+    "module": "导航栏"
   }
 ]
 \`\`\`
@@ -96,6 +123,7 @@ ${workDir}
 - \`code\`: 问题代码片段（精简版）
 - \`description\`: 问题描述和修复建议
 - \`severity\`: \`high\`（导航链接）、\`medium\`（次要链接）、\`low\`（边缘场景）
+- \`module\`: 功能模块分类（中文名称，如 \`导航栏\`、\`页脚\`、\`侧边栏\`）
 `;
 
   fs.writeFileSync(inputFile, prompt, 'utf-8');
@@ -140,7 +168,8 @@ ${workDir}
         url: issue.file,
         check: 'link-anchor-check',
         message: `${issue.description} (${issue.file}:${issue.line})`,
-        severity: issue.severity
+        severity: issue.severity,
+        module: issue.module || '其他'
       }));
 
       log(`link-anchor 分析完成: ${findings.length} 个问题`);

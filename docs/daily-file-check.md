@@ -267,28 +267,44 @@ const CHECKS = {
    - 需要携带 state/query 参数的跳转
    - 非导航元素（表单提交、modal触发）
 4. 调用 `opencode` agent + `link-anchor-analyzer` skill 进行分析
-5. 输出问题列表 JSON（文件路径、行号、问题描述）
-6. 转换为 findings 并加入问题集
+5. agent 根据组件文件路径、组件名、用途等上下文判断每个问题所属的**功能模块**（如导航栏、页脚、侧边栏、面包屑、卡片列表等），填写 `module` 字段
+6. 输出问题列表 JSON（文件路径、行号、问题描述、功能模块分类）
+7. 转换为 findings 并加入问题集；提 issue 时按功能模块分组，每个模块各提一个 issue
 
 > 新增检查项：实现 `checkXxx(ctx)` 函数并在 `CHECKS` 注册即可；若依赖线上站点设 `needsBuild: false`，若依赖构建产物设 `needsBuild: true`。
 
 ## Issue 上报
 
-复用 [`scripts/lib/atomgit-api.js`](../scripts/lib/atomgit-api.js)。所有 findings 汇总成一个 issue：
+复用 [`scripts/lib/atomgit-api.js`](../scripts/lib/atomgit-api.js)。所有 findings **按维度/模块分组**，每组提一个 issue：
 
-- **标题**: `[GEO配置缺失] {owner}/{repo}: {N} 项检查未通过`
-- **去重**: 按 `[GEO配置缺失]` 前缀查找已有 issue，存在则 `updateIssue` 否则 `createIssue`
-- **正文**: 按维度列表
+- **普通维度**（tdk / schema / robots-txt / ...）：按 `check` 字段分组，相同维度的问题汇总到一个 issue
+- **link-anchor-check 维度**：按 agent 输出的 `module`（功能模块）再细分，每个功能模块各提一个 issue
+
+- **标题**: `[GEO Daily Check] {owner}/{repo}: [{label}] {N}项检查未通过`
+  - `label` 为维度名（如 `tdk`）或 `link-anchor-check / {module}`（如 `link-anchor-check / 导航栏`）
+  - 超过 300 个问题时追加 `(batchIndex/totalBatches)` 批次后缀
+- **去重**: 按 `[GEO Daily Check]` 前缀拉取已有 issue，解析标题中的 `[label]` 匹配同组 issue，存在则 `updateIssue` 否则 `createIssue`；旧格式（无 label）或已无问题的维度/模块的 issue 自动关闭
+- **正文**: 仅包含该组的问题表格 + 对应维度说明
 
 ```markdown
 **项目**: openeuler/openEuler-portal
+**检查维度**: tdk
 
 检测到以下页面/检查项存在问题:
 
 | Dimension | 页面路径 | 问题描述 |
 | --- | --- | --- |
 | tdk | /about | 缺少 TDK (title, description, keywords) 配置 |
-| schema | / | 缺少 JSON-LD 结构化数据配置 |
+```
+
+link-anchor-check 的 issue 正文额外标注功能模块：
+
+```markdown
+**项目**: openeuler/openEuler-portal
+**检查维度**: link-anchor-check
+**功能模块**: 导航栏
+
+> 本 issue 汇总了 **导航栏** 功能模块下的问题组件，便于统一修复。
 ```
 
 无 finding 或未设 `ATOMGIT_TOKEN`（或 `--dryRun`）时不提 issue。
@@ -360,7 +376,7 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 | C | 问题总数 | findings 数量 |
 | D | 错误信息 | error（失败时） |
 | E | Issue链接 | 提交 issue 时记录 URL |
-| F-O | 各维度 | robots-txt/sitemap-access/sitemap-tdk/sitemap-schema/sitemap-priority/url-access/llms-txt/sitemap-coverage/ssr-rendering/tdk-schema-semantic |
+| F-P | 各维度 | robots-txt/sitemap-access/sitemap-tdk/sitemap-schema/sitemap-priority/url-access/llms-txt/sitemap-coverage/ssr-rendering/tdk-schema-semantic/link-anchor-check |
 
 **实现文件**：`scripts/geo-daily-check/history-export.js`
 
@@ -369,6 +385,7 @@ node scripts/geo-daily-check/check-single.js --config=/path/to/cfg.yaml --dryRun
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | 2.9.2 | 2026-06-22 | 修复已有 Excel sheet 无表头问题：检测首行是否为表头，若无则插入表头行 |
+| 2.10.0 | 2026-07-03 | Issue 按维度/模块分组：相同维度的问题提一个 issue；link-anchor-check 按 agent 判断的功能模块（导航栏/页脚/侧边栏等）再细分，每个模块各提一个 issue；标题格式改为 `[GEO Daily Check] owner/repo: [label] N项检查未通过`；history-export 新增 link-anchor-check 列 |
 | 2.9.1 | 2026-06-22 | 修复 Excel sheet 表头丢失问题；新增 Issue链接 列记录提交的 issue URL |
 | 2.9.0 | 2026-06-22 | 新增检查历史导出：每次运行后导出到 `daily-check-history.xlsx`（按项目分 sheet），推送到仓库证明 workflow 实际运行；依赖新增 `xlsx` |
 | 2.8.0 | 2026-06-22 | 新增 sitemap-priority 检查：随机抽样 10 个条目，检查 `<priority>` 属性是否存在；修改 `getSitemapUrls` 返回完整条目对象（包含 lastmod/changefreq/priority）；支持 `skip_check: ['all']` 跳过整个项目 |

@@ -314,7 +314,7 @@ async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
   }
 
   // 4. 拉取已有 issue，按 label 分组
-  const existingIssues = await findAllIssuesByTitlePrefix({ owner, repo, prefix: titlePrefix });
+  const existingIssues = await findAllIssuesByTitlePrefix({ owner, repo, prefix: titlePrefix, state: 'open' });
 
   const existingByLabel = new Map();
   for (const ex of existingIssues) {
@@ -346,15 +346,9 @@ async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
     if (idx < candidates.length) {
       const existing = candidates[idx];
       usedIssueNumbers.add(existing.number);
-      if (existing.state === 'closed') {
-        log(`✨ 创建新 issue (已有关闭的 issue #${existing.number})`);
-        result = await createIssue({ owner, repo, title, body });
-        action = 'created';
-      } else {
-        log(`♻️  更新已存在的 issue #${existing.number}`);
-        result = await updateIssue({ owner, repo, issue_number: existing.number, title, body });
-        action = 'updated';
-      }
+      log(`♻️  更新已存在的 issue #${existing.number}`);
+      result = await updateIssue({ owner, repo, issue_number: existing.number, title, body });
+      action = 'updated';
       if (!result) result = existing;
     } else {
       log(`✨ 创建新 issue`);
@@ -369,7 +363,7 @@ async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
 
   // 6. 关闭多余的 issue（旧格式无 label，或该维度/模块已无问题）
   for (const ex of existingIssues) {
-    if (!usedIssueNumbers.has(ex.number) && ex.state !== 'closed') {
+    if (!usedIssueNumbers.has(ex.number)) {
       log(`🔒 关闭多余 issue #${ex.number}`);
       try {
         await closeIssue({ owner, repo, issue_number: ex.number });

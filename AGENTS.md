@@ -1,92 +1,121 @@
-# GEO Auto Fix Workflow
+# GEO Workflows
 
-本仓库提供 `geo-auto-fix` 自动化 workflow，用于扫描 AtomGit portal 仓库的 `[GEO]` issue 并自动执行 SEO/GEO 可发现性修复。
+本仓库托管两个独立的 SEO/GEO 自动化 workflow，均运行于 GitHub Actions（runner: `portal-x86`），扫描 AtomGit portal 仓库标题以 `[GEO]` 开头的 issue：
 
-## Workflow 触发
+| Workflow | 用途 | 入口脚本 | 详细文档 |
+|---|---|---|---|
+| GEO Issue Analyze | 程序化检查 + LLM 语义分析 `[GEO]` issue，评论或创建分析 issue | `scripts/geo-issue-analyze/scan-issues.js` | [docs/geo-issue-analyze.md](docs/geo-issue-analyze.md) |
+| Daily File Check | 逐项目 clone→构建→可插拔检查项，按维度提 issue | `scripts/geo-daily-check/check-single.js` | [docs/daily-file-check.md](docs/daily-file-check.md) |
 
-- **定时**: 每4小时自动运行
-- **手动**: GitHub Actions workflow_dispatch，指定 `owner/repo/community` 参数
-
-## 核心流程
-
-```
-scan-geo-issues.js → build-fix-tasks.js → execute-fix-runs.js → comment-geo-result.js
-```
-
-管道式处理：扫描issue → 获取questions.json → opencode修复 → 评论结果
+两个 workflow 共享 `scripts/lib/` 公共库与 `scripts/checks/sitemap-inclusion.js`。
 
 ## GEO Issue Analyze Workflow
 
-另有一个定时分析流程 `geo-issue-analyze.yml`，扫描各项目的 `[GEO]` issues 并分析：
+- **触发**: schedule `0 3 * * *`（每日 03:00 UTC）或 workflow_dispatch（参数 `project` / `dry_run`）
+- **配置**: 项目列表在 [`projects-config.yaml`](projects-config.yaml)
+- **Workflow**: `.github/workflows/geo-issue-analyze.yml`
 
-- **触发**: 每天凌晨 3:00，或手动触发
-- **流程**: `scan-issues.js → process-single.js (opencode + issue-analyze skill)`
-- **结果处理**:
-  - `has_problems: false` → 评论到原 issue
-  - `has_problems: true` → 创建 `[GEO-ANALYZE]` issue
-- **Dry Run**: `dry_run: true` 时只分析不提 issue，结果保存到文件
+**流程**: `scan-issues.js` → 逐 issue `process-single.js`
 
-## 详细文档
+1. **Phase 1 程序化检查**（`url-checks.js`）：提取 issue 内 URL → 按 URL 域名匹配 `projects-config.yaml` 项目 → 检查 sitemap / llms-full.txt 覆盖 → 判断 `ignore_routes`
+2. **Phase 2 LLM 语义分析**（`runOpencodeAnalyze`）：`buildLLMPrompt` 生成提示词写入文件 → 执行 `opencode run <file> --model <AI_MODEL> --dangerously-skip-permissions` → 抓取页面 HTML → 分析 TDK/Schema 语义
+3. **结果路由**（按 `has_problems`）：
+   - `false` → 评论到原 issue（不涉及 GEO 基础配置问题）
+   - `true` → 在目标仓库创建 `[GEO-ISSUE-ANALYZE]` issue 并评论溯源链接
 
-完整流程说明、脚本接口、配置参数见: [docs/design.md](docs/design.md)
+- **去重标记**（issue 评论 HTML 注释）：`<!-- geo-analyze-skip -->` / `<!-- geo-analyze-result -->` / `<!-- geo-analyze-ignored -->`
+- **Dry Run**: `--dryRun` 只分析、不调 AtomGit API，结果存 `dryrun-results/`
+
+### 关键文件
+
+| 文件 | 用途 |
+|---|---|
+| `scripts/geo-issue-analyze/scan-issues.js` | 扫描各项目 `[GEO]` issues，跳过已标记 |
+| `scripts/geo-issue-analyze/process-single.js` | 两阶段分析 + 结果路由 |
+| `scripts/geo-issue-analyze/url-checks.js` | URL 程序化检查（sitemap / llms 覆盖） |
+| `projects-config.yaml` | 待分析项目列表 |
 
 ## Daily File Check Workflow
 
-另有一个**配置驱动**的定时巡检流程 `daily-file-check`，检查前端 portal 项目页面的 SEO/GEO 配置完整性（TDK、JSON-LD Schema，预留 robots/sitemap）。
+- **触发**: schedule `0 2 * * *`（每日 02:00 UTC）或 workflow_dispatch（参数 `project` / `dry_run`）
+- **配置**: 项目列表在 [`daily-check-config.yaml`](daily-check-config.yaml)
+- **Workflow**: `.github/workflows/daily-file-check.yml`
 
-- 待检项目集中维护在 [daily-check-config.yaml](daily-check-config.yaml)
-- 入口脚本 `scripts/geo-daily-check/check-single.js`，逐项目 clone → 构建 → 跑可插拔检查项 → 提 issue
-- 完整设计、配置字段、检查项扩展方式见: [docs/daily-file-check.md](docs/daily-file-check.md)
+**流程**: `check-single.js` 逐项目 → clone/pull →（`needsBuild`? 构建产物）→ 跑 `CHECKS` → 汇总 findings → 按维度/模块提 issue
 
-## 关键文件
+**可插拔检查项**（注册在 `CHECKS`，`skip_check` 可剔除）：
+`tdk` / `schema` / `robots` / `sitemap` / `url-access` / `llms-txt` / `coverage` / `ssr` / `tdk-schema-semantic`（需 `enable_tdk_schema_semantic`）/ `link-anchor`（需 `enable_link_anchor_check`）
+
+- `tdk-schema-semantic`：有新提交时调 `opencode` + `render-change-analyzer` skill 分析受影响页面，再对构建产物 HTML 做语义一致性检查
+- `link-anchor`：构建前用 codegraph 分析源码，检测 JS 跳转而非 `<a href>` 的导航；按 agent 判断的功能模块分组提 issue
+
+**Issue 上报**：
+
+- 标题 `[GEO Daily Check] {owner}/{repo}: [{label}] {N}项检查未通过`
+- 普通维度按 `check` 分组；`link-anchor` 再按功能模块细分，每模块一个 issue
+- 按 `[GEO Daily Check]` 前缀去重（createOrUpdate），无问题的维度/模块自动关闭旧 issue
+- 无 finding / 未设 `ATOMGIT_TOKEN` / `--dryRun` 时不提 issue
+
+- **历史记录**: 每次运行（非 dryRun）导出 `daily-check-history.xlsx`（按项目分 sheet）并推送
+- **Dry Run**: `--dryRun` 仅检查不提 issue
+
+### 关键文件
 
 | 文件 | 用途 |
-|------|------|
-| `.github/workflows/geo-auto-fix.yml` | 修复 workflow |
-| `.github/workflows/geo-issue-analyze.yml` | 分析 workflow |
-| `scripts/scan-geo-issues.js` | 扫描[GEO] issues (修复) |
-| `scripts/geo-issue-analyze/scan-issues.js` | 扫描所有项目 issues (分析) |
-| `scripts/geo-issue-analyze/process-single.js` | AI分析处理 |
-| `.opencode/skills/issue-analyze/SKILL.md` | issue分析skill |
-| `scripts/lib/atomgit-api.js` | AtomGit API封装 |
-| `scripts/lib/utils.js` | 公共工具(parseArgs/log/readInput) |
+|---|---|
+| `scripts/geo-daily-check/check-single.js` | 入口（配置驱动逐项目） |
+| `scripts/geo-daily-check/utils.js` | 共享工具（log / shouldIgnore / pathnameToKey / ...） |
+| `scripts/geo-daily-check/history-export.js` | 历史记录导出 |
+| `scripts/geo-daily-check/checks/*.js` | 各检查项模块 |
+| `daily-check-config.yaml` | 待检项目配置 |
 
-## Issue 格式要求
+## 共享库
 
-标题以 `[GEO]` 开头，body 包含 `## 涉及问题` 表格:
+### scripts/lib/
 
-```markdown
-## 涉及问题
-| 问题ID | 问题 | 引用率 | 已引用平台 |
-| q_074 | ... | 15% | ChatGPT |
-```
+| 文件 | 用途 |
+|---|---|
+| `atomgit-api.js` | AtomGit REST 客户端（自动重试 + issue / PR API） |
+| `html-fetch.js` | HTTP 抓取 / `parseHtml` / `fetchBrowser` |
+| `utils.js` | 公共工具（`parseArgs` / `log` / `readInput`） |
 
-## 运行示例
+### scripts/checks/
 
-```bash
-# 本地调试扫描 (修复流程)
-node scripts/scan-geo-issues.js --owner=openeuler --repo=openEuler-portal
+| 文件 | 用途 |
+|---|---|
+| `sitemap-inclusion.js` | sitemap 收录检查（`getSitemapUrls`），被两个 workflow 共享 |
 
-# 管道式处理单个issue (修复流程)
-cat issue.json | node scripts/build-fix-tasks.js | node scripts/execute-fix-runs.js
+### .opencode/skills/
 
-# 本地调试分析流程
-node scripts/geo-issue-analyze/scan-issues.js --project=openEuler
+| Skill | 用于 |
+|---|---|
+| `render-change-analyzer` | daily-file-check 的 `tdk-schema-semantic` 检查项 |
+| `link-anchor-analyzer` | daily-file-check 的 `link-anchor` 检查项 |
 
-# Dry run 分析 (只分析不提issue)
-node scripts/geo-issue-analyze/process-single.js --dryRun --input=issue.json
-```
-
-## 包管理器
-
-本仓库使用 **pnpm** 作为包管理器。安装依赖：
+## 本地运行
 
 ```bash
 pnpm install
+export ATOMGIT_TOKEN=xxx
+
+# GEO Issue Analyze
+node scripts/geo-issue-analyze/scan-issues.js --project=openEuler
+node scripts/geo-issue-analyze/process-single.js --dryRun --input=issue.json
+
+# Daily File Check
+node scripts/geo-daily-check/check-single.js --dryRun
+node scripts/geo-daily-check/check-single.js --project=openEuler --dryRun
 ```
 
-添加新依赖：
+> Windows 本地完整 checkout 大型 portal 仓库可能因 260 字符路径限制失败，属系统限制；Linux runner 不受影响。
 
-```bash
-pnpm add <package-name>
-```
+## 配置 (repo secrets / variables)
+
+| 名称 | 类型 | 用途 |
+|---|---|---|
+| `ATOMGIT_TOKEN` | repo secret | AtomGit API 认证（提 issue / 评论 / 克隆私有仓库） |
+| `AI_MODEL` | repo variable | opencode 模型 id，默认 `alibaba-cn/glm-5` |
+
+## 包管理器
+
+本仓库使用 **pnpm**。安装依赖：`pnpm install`；添加依赖：`pnpm add <package-name>`。

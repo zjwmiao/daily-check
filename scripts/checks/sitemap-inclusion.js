@@ -1,5 +1,4 @@
 import { fetchHttp } from '../lib/html-fetch.js';
-import { normalizeUrlForSitemap } from '../lib/url-normalize.js';
 
 const SITEMAP_CACHE = new Map();
 
@@ -95,61 +94,4 @@ export async function getSitemapUrls(sitemapUrl) {
   const result = { urls: [...urls], entries, failedUrls };
   SITEMAP_CACHE.set(sitemapUrl, result);
   return result;
-}
-
-export async function checkSitemapInclusion(targetUrl, sitemapUrl, community) {
-  if (!sitemapUrl) {
-    return {
-      dimension: 'sitemap_inclusion',
-      problems: [
-        { category: 'sitemap.config', description: '未配置 sitemap URL' },
-      ],
-      pass: false,
-    };
-  }
-
-  let result;
-  try {
-    result = await getSitemapUrls(sitemapUrl);
-  } catch (err) {
-    return {
-      dimension: 'sitemap_inclusion',
-      sitemap_url: sitemapUrl,
-      error: err.message,
-      problems: [
-        {
-          category: 'sitemap.fetch',
-          description: `sitemap 拉取失败: ${err.message}`,
-        },
-      ],
-      pass: false,
-    };
-  }
-
-  const urls = result.urls;
-
-  const target = normalizeUrlForSitemap(targetUrl, community);
-  const normalizedSet = new Set(urls.map((u) => normalizeUrlForSitemap(u, community)));
-  const included = normalizedSet.has(target);
-
-  const problems = included
-    ? []
-    : [
-        {
-          category: 'sitemap.not_included',
-          description: 'URL 未被 sitemap 收录',
-          suggestion: '将该 URL 加入 sitemap.xml,并填写合理 priority/lastmod',
-          target_url: target,
-        },
-      ];
-
-  return {
-    dimension: 'sitemap_inclusion',
-    sitemap_url: sitemapUrl,
-    sitemap_total_urls: urls.length,
-    target_url: target,
-    included,
-    problems,
-    pass: included,
-  };
 }

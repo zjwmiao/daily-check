@@ -1,15 +1,12 @@
 {
   "name": "geo-develop",
   "version": "2.0.0",
-  "description": "GEO Auto Fix workflow for AtomGit portal repositories",
-  "main": "index.js",
+  "description": "GEO/SEO automation workflows for AtomGit portal repositories (issue-analyze + daily-file-check)",
+  "type": "module",
   "scripts": {
-    "analyze": "node scripts/analyze-discoverability.js",
-    "build-tasks": "node scripts/build-fix-tasks.js",
-    "comment-result": "node scripts/comment-geo-result.js",
-    "execute-fix": "node scripts/execute-fix-runs.js",
-    "scan": "node scripts/scan-geo-issues.js",
-    "poll": "node scripts/poll-portal-status.js"
+    "daily-check": "node scripts/geo-daily-check/check-single.js",
+    "analyze-scan": "node scripts/geo-issue-analyze/scan-issues.js",
+    "analyze-single": "node scripts/geo-issue-analyze/process-single.js"
   },
   "keywords": [
     "geo",
@@ -17,7 +14,6 @@
     "automation"
   ],
   "author": "",
-  "type": "module",
   "license": "ISC",
   "dependencies": {
     "axios": "^1.13.6",

@@ -69,7 +69,7 @@ docs/
   daily-file-check.md          Daily File Check 设计文档
 
 projects-config.yaml           待分析项目列表 (Issue Analyze)
-daily-check-config.yaml        待检项目配置 (Daily File Check)
+  projects-config.yaml          待检项目配置 (与 geo-issue-analyze 共享)
 ```
 
 ## 配置 (repo secrets / variables)

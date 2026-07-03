@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       project:
-        description: '只检查指定项目 (daily-check-config.yaml 里的 name, 留空则全部)'
+        description: '只检查指定项目 (projects-config.yaml 里的 name, 留空则全部)'
         required: false
         default: ''
       dry_run:

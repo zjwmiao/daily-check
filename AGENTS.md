@@ -38,21 +38,21 @@
 ## Daily File Check Workflow
 
 - **触发**: schedule `0 2 * * *`（每日 02:00 UTC）或 workflow_dispatch（参数 `project` / `dry_run`）
-- **配置**: 项目列表在 [`daily-check-config.yaml`](daily-check-config.yaml)
+- **配置**: 项目列表在 [`projects-config.yaml`](projects-config.yaml)（与 geo-issue-analyze 共享）
 - **Workflow**: `.github/workflows/daily-file-check.yml`
 
-**流程**: `check-single.js` 逐项目 → clone/pull →（`needsBuild`? 构建产物）→ 跑 `CHECKS` → 汇总 findings → 按维度/模块提 issue
+**流程**: `check-single.js` 逐项目 → clone/pull → codegraph init（若需）→ checkLinkAnchor（构建前）→ spawnBuild（非阻塞）→ 并行线上检查 → 等待构建 → 构建产物检查 → 汇总 findings → 按维度/模块提 issue
 
-**可插拔检查项**（注册在 `CHECKS`，`skip_check` 可剔除）：
-`tdk` / `schema` / `robots` / `sitemap` / `url-access` / `llms-txt` / `coverage` / `ssr` / `tdk-schema-semantic`（需 `enable_tdk_schema_semantic`）/ `link-anchor`（需 `enable_link_anchor_check`）
+**检查项**（在 `runProject()` 中按顺序调用，`skip_check` 可剔除）：
+`robots-txt` / `sitemap-access` / `sitemap-tdk` / `sitemap-schema` / `sitemap-priority` / `url-access` / `llms-txt` / `ssr-rendering` / `sitemap-coverage` / `tdk-schema-semantic`（需 `enable_tdk_schema_semantic`）/ `link-anchor-check`（需 `enable_link_anchor_check`）
 
 - `tdk-schema-semantic`：有新提交时调 `opencode` + `render-change-analyzer` skill 分析受影响页面，再对构建产物 HTML 做语义一致性检查
-- `link-anchor`：构建前用 codegraph 分析源码，检测 JS 跳转而非 `<a href>` 的导航；按 agent 判断的功能模块分组提 issue
+- `link-anchor-check`：构建前用 codegraph 分析源码，检测 JS 跳转而非 `<a href>` 的导航；按 agent 判断的功能模块分组提 issue
 
 **Issue 上报**：
 
 - 标题 `[GEO Daily Check] {owner}/{repo}: [{label}] {N}项检查未通过`
-- 普通维度按 `check` 分组；`link-anchor` 再按功能模块细分，每模块一个 issue
+- 普通维度按 `check` 分组；`link-anchor-check` 再按功能模块细分，每模块一个 issue
 - 按 `[GEO Daily Check]` 前缀去重（createOrUpdate），无问题的维度/模块自动关闭旧 issue
 - 无 finding / 未设 `ATOMGIT_TOKEN` / `--dryRun` 时不提 issue
 
@@ -67,7 +67,7 @@
 | `scripts/geo-daily-check/utils.js` | 共享工具（log / shouldIgnore / pathnameToKey / ...） |
 | `scripts/geo-daily-check/history-export.js` | 历史记录导出 |
 | `scripts/geo-daily-check/checks/*.js` | 各检查项模块 |
-| `daily-check-config.yaml` | 待检项目配置 |
+| `projects-config.yaml` | 待检项目配置（与 geo-issue-analyze 共享） |
 
 ## 共享库
 

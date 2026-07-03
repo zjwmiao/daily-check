@@ -40,7 +40,7 @@ flowchart TB
     subgraph output["输出"]
         direction TB
         O1["评论到原 issue"]
-        O2["创建新 [GEO-ANALYZE] issue"]
+        O2["创建新 [GEO-ISSUE-ANALYZE] issue"]
         O3["打印生成的 body"]
         O4["保存到本地文件"]
     end
@@ -95,9 +95,11 @@ flowchart TB
 
 #### 2.1 URL 提取
 
-从 issue body 中用正则提取所有 URL：
+从 issue body 中按固定格式提取 URL（匹配 `### 根本原因分析` 区块中的 `[官方页面: URL]`）：
 ```js
-const urlPattern = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi;
+const urlPattern = /###.*?根本原因分析.*?```.*?\[官方页面:.*?(https:\/\/.+)\]/;
+const urls = body.match(urlPattern)?.[1];
+return [urls];
 ```
 
 #### 2.2 项目匹配
@@ -182,8 +184,10 @@ flowchart LR
 #### 4.2 opencode 调用
 
 ```bash
-opencode run input.txt --model glm-5 --dangerously-skip-permissions
+opencode run <input-file> --model "$AI_MODEL" --dangerously-skip-permissions
 ```
+
+> `AI_MODEL` 环境变量默认 `alibaba-cn/glm-5`（代码 fallback）。geo-issue-analyze.yml workflow 未注入此变量，使用代码默认值。
 
 #### 4.3 LLM 分析内容
 
@@ -235,7 +239,7 @@ allProblems = [...programProblems, ...llmProblems]
 | 场景 | 操作 | Body 类型 |
 |------|------|----------|
 | 无问题 | 评论到原 issue | `buildNoProblemComment` → comment |
-| 有问题 | 1. 创建新 `[GEO-ANALYZE]` issue | `buildProblemIssueBody` → issue |
+| 有问题 | 1. 创建新 `[GEO-ISSUE-ANALYZE]` issue | `buildProblemIssueBody` → issue |
 | 有问题 | 2. 回评原 issue（告知结论+新issue链接） | `buildHasProblemsComment` → comment |
 
 #### 5.3 回评原 issue

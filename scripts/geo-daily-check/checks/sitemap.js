@@ -87,7 +87,7 @@ export async function checkSitemapConfig(project, workDir, sitemapIndexUrls, { s
     let pathname;
     try { pathname = new URL(entry.loc).pathname; } catch { continue; }
 
-    const key = pathnameToKey(pathname);
+    const key = decodeURIComponent(pathnameToKey(pathname));
 
     if (!skip.includes('sitemap-tdk') && project.seo_config_dir?.tdk) {
       const tdkPath = path.join(workDir, project.seo_config_dir.tdk, key, 'index.json');

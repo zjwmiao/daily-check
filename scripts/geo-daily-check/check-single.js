@@ -87,7 +87,7 @@ function spawnBuild(workDir, buildScript, outputDirRel) {
     const fullScript = `${installCmd} && ${buildCmd}`;
     
     log(`启动构建子进程: ${fullScript}`);
-    const child = spawn(fullScript, [], { cwd: workDir, shell: true, stdio: 'ignore' });
+    const child = spawn(fullScript, [], { cwd: workDir, shell: true, stdio: ['ignore', 'inherit', 'inherit'] });
     child.on('close', (code) => {
       const buildDir = outputDirRel ? path.join(workDir, outputDirRel) : null;
       if (code === 0 && buildDir && fs.existsSync(buildDir)) {

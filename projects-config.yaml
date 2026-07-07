@@ -122,9 +122,9 @@ projects:
       - /zh/**/*
       - /en/**/*
     ignore_routes:
-      - /(zh|en)/(blogs|search|notification)
-      - /en/user-practice
-    build_script: build
+      - /(zh|en)/(search|notification)
+      - /(zh|en)/(blogs|news|events|user-practice)/.+
+    build_script: build:geo
     seo_config_dir:
       tdk: .geo/tdks
       schema: .geo/jsonld

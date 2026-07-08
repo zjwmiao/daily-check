@@ -46,7 +46,14 @@ GEO 场景下，多数 AI 抓取器**不执行 JavaScript**，CSR 页面被抓�
 
 ### 实现方式
 
-各社区官网均使用Vitepress或Nuxt，两个框架本身具备SSG构建能力
+各社区官网均使用Vitepress或Nuxt构建
+
+**VitePress**: 所有内容均为SSG构建
+
+**Nuxt**:
+
+1. 在 `nuxt.config.ts` 中设置 `ssr: true` (https://nuxt.com/docs/3.x/api/nuxt-config#ssr)
+2. 执行构建时用 `pnpm nuxt generate` 命令 (https://nuxt.com/docs/3.x/getting-started/prerendering#crawl-based-pre-rendering)
 
 ---
 
@@ -73,7 +80,7 @@ GEO 场景下的关键风险：很多站点为防爬会对 `User-agent: *` 设�
 
 ### 实现方式
 
-各社区官网前端项目各自维护着符合标准的 `robots.txt` 文件
+各社区官网前端项目各自在 `public` 目录中手动维护着符合标准的 `robots.txt` 文件，构建时会被自动复制到产物目录中
 
 ---
 
@@ -146,11 +153,10 @@ TDK 指页面 `<head>` 中的三个 meta 元素：
 
 ### 实现方式
 
-官网站各页面的TDK以json格式归档于项目根目录的 `.geo/tdks/` 和 `.geo/jsonld` 下，文件路径与现网页面url的路径相对应，在构建时利用框架功能自动为每个页面填充
-
-**Vitepress**: 在 `.vitepress/config.ts` 的 `transformPageData` 钩子函数中从归档目录下获取对应路径的TDK数据注入
-
-**Nuxt**: 通过 prerender 阶段的全局 middleware 从 `.geo/` 目录读取并注入。
+1. 使用AI agent批量为页面生成合适的TDK，启用subagent对生成结果进行检查，确保TDK的信息均来自页面可见内容
+2. 官网站各页面的TDK以json格式归档于项目根目录的 `.geo/tdks/` 下，文件路径与现网页面url的路径相对应，在构建时利用框架功能自动为每个页面填充
+   - **Vitepress**: 在 `.vitepress/config.ts` 的 `transformPageData` 钩子函数中从归档目录下获取对应路径的TDK数据注入
+   - **Nuxt**: 通过 prerender 阶段的全局 middleware 从 `.geo/` 目录读取并注入。
 
 ---
 
@@ -180,7 +186,10 @@ JSON-LD（JSON for Linked Data）以 `<script type="application/ld+json">` 形�
 
 ### 实现方式
 
-与TDK实现方式相同
+1. 使用AI agent批量为页面生成合适的JSON-LD，启用subagent对生成结果进行检查，确保JSON-LD的信息均来自页面可见内容
+2. 官网站各页面的JSON-LD以json格式归档于项目根目录的 `.geo/jsonld/` 下，文件路径与现网页面url的路径相对应，在构建时利用框架功能自动为每个页面填充
+   - **Vitepress**: 在 `.vitepress/config.ts` 的 `transformPageData` 钩子函数中从归档目录下获取对应路径的TDK数据注入
+   - **Nuxt**: 通过 prerender 阶段的全局 middleware 从 `.geo/` 目录读取并注入。
 
 ---
 
@@ -211,7 +220,9 @@ GEO 场景下，这两个文件让站点**主动**为生成式引擎提供结构
 
 ### 实现方式
 
-llms.txt / llms-full.txt均使用脚本在构建时遍历页面获取信息生成
+**llms.txt**: 脚本在构建后遍历所有页面，获取页面的title、description信息后生成
+
+**llms-full.txt**: 脚本在构建后遍历所有页面，提取页面主要内容，使用 turndown 库将HTML转换成markdown格式然后输出到文件
 
 ---
 

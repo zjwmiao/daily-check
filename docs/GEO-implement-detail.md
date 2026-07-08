@@ -158,6 +158,14 @@ TDK 指页面 `<head>` 中的三个 meta 元素：
    - **Vitepress**: 在 `.vitepress/config.ts` 的 `transformPageData` 钩子函数中从归档目录下获取对应路径的TDK数据注入
    - **Nuxt**: 通过 prerender 阶段的全局 middleware 从 `.geo/` 目录读取并注入。
 
+Agent提示词:
+
+```markdown
+1. 生成: 用 \`meta-tags-optimizer\` skill 来为这个HTML内容生成TDK: https://..., **确保TDK信息完全由页面内容得来，不要创造任何不存在于页面内容中的信息**，且将生成的TDK保存到 **.geo/tdks/.../index.json** 文件中，除此之外不要输出其他信息。
+2. 检查: 生成完成之后，启动一个subagent，单独对生成的内容做检查，subagent的工作是：**确保TDK的信息完全由页面内容得来，不要出现任何不存在于页面内容中的信息**，例如该项目名为openEuler，TDK中不要出现openGauss等其他社区名称，**除非与页面内容相关**，如果有问题，把问题和修改建议输出。
+3. 复盘检查结果: 根据subagent输出的问题结果来优化刚才生成的内容，注意**只修改 `.geo/` 下配置的json文件**，如果涉及到其他地方文件的修改，不要应用，且**严格依据你读到的修改建议来应用，不要有自我发挥**。
+```
+
 ---
 
 ## 5. Schema（结构化数据）
@@ -190,6 +198,14 @@ JSON-LD（JSON for Linked Data）以 `<script type="application/ld+json">` 形�
 2. 官网站各页面的JSON-LD以json格式归档于项目根目录的 `.geo/jsonld/` 下，文件路径与现网页面url的路径相对应，在构建时利用框架功能自动为每个页面填充
    - **Vitepress**: 在 `.vitepress/config.ts` 的 `transformPageData` 钩子函数中从归档目录下获取对应路径的TDK数据注入
    - **Nuxt**: 通过 prerender 阶段的全局 middleware 从 `.geo/` 目录读取并注入。
+
+Agent提示词：
+
+```markdown
+1. 生成: 用 `schema-markup-generator` skill 来为这个HTML内容生成JSON-LD: https://..., **确保JSON-LD信息完全由页面内容得来，不要创造任何不存在于页面内容中的信息**，且将生成的JSON-LD保存到 **.geo/jsonld/.../index.json** 文件中，除此之外不要输出其他信息。
+2. 检查: 生成完成之后，启动一个subagent，单独对生成的内容做检查，subagent的工作是：**确保JSON-LD的信息完全由页面内容得来，不要出现任何不存在于页面内容中的信息**，例如该项目名为openEuler，JSON-LD中不要出现openGauss等其他社区名称，**除非与页面内容相关**，如果有问题，把问题和修改建议输出。
+3. 复盘检查结果: 根据subagent输出的问题结果来优化刚才生成的内容，注意**只修改 `.geo/` 下配置的json文件**，如果涉及到其他地方文件的修改，不要应用，且**严格依据你读到的修改建议来应用，不要有自我发挥**，没问题就不用改
+```
 
 ---
 

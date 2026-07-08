@@ -6,11 +6,11 @@
 
 | 维度 | 检查项 | 核心目标 |
 |---|---|---|
+| 静态化页面 | `ssr-rendering` | 首屏 HTML 含足够可索引文本 |
 | TDK | `sitemap-tdk` / `tdk-schema-semantic` | 每页标题/描述/关键词完整且与内容一致 |
-| JSON-LD | `sitemap-schema` / `tdk-schema-semantic` | 结构化数据类型合适、与页面内容一致 |
+| Schema | `sitemap-schema` / `tdk-schema-semantic` | 结构化数据类型合适、与页面内容一致 |
 | sitemap | `sitemap-access` / `sitemap-priority` / `sitemap-coverage` | 全部应收录页面可被发现 |
 | robots.txt | `robots-txt` | 不误封 AI 爬虫，声明 sitemap |
-| SSR/SSG | `ssr-rendering` | 首屏 HTML 含足够可索引文本 |
 | llms.txt | `llms-txt` | 主动为 LLM 提供可消费的站点内容 |
 
 ---
@@ -227,3 +227,27 @@ llms.txt / llms-full.txt（主动提供清洗后的可消费文本）
 ## llms.txt/llms-full.txt
 
 - 由脚本在构建时自动生成
+
+# 下一步措施
+
+**HTML结构语义化优化**
+
+在已实现 SSG/SSR 保证首屏 HTML 含正文的前提下，进一步让 HTML 结构对生成式引擎“可读、可分块、可引用”。以下为可落地的优化项：
+
+- **语义化标签替代 div 堆砌**：用 `<header>` / `<nav>` / `<main>` / `<article>` / `<section>` / `<aside>` / `<footer>` / `<figure>` / `<figcaption>` 划分页面区块，使 LLM 能按语义块切分内容，而非依赖 class 名猜测区块含义。
+- **标题层级规范**：每页一个 `<h1>`（与页面主题一致），`<h2>`–`<h6>` 不跳级、不滥用作样式。标题层级是 LLM 提取内容大纲的主要依据。
+- **图片 `alt` 属性**：所有 `<img>` 提供描述性 `alt`；装饰性图片用 `alt=""`。图表/示意图的 alt 应概括图意，便于无视觉能力的引擎理解图示内容。
+- **链接锚文本可读**：锚文本需描述目标内容（如“openEuler 24.03 LTS 安装指南”），避免“点击这里”“了解更多”等无语义文本，便于引擎判断链接价值与主题。
+- **列表语义化**：枚举内容用 `<ul>` / `<ol>`，术语-定义用 `<dl>` / `<dt>` / `<dd>`，而非用 div + 符号模拟，保证列表项可被结构化提取。
+- **面包屑导航结构化**：用 `<nav aria-label="面包屑">` 包裹，并配合 `BreadcrumbList` JSON-LD，帮助引擎定位页面在站点层级中的位置。
+- **引用与来源标注**：引文用 `<blockquote cite="URL">` / `<q>`，来源用 `<cite>`，便于生成式引擎追溯与归属引用源，提升被引用可信度。
+- **时间语义化**：发布/更新时间用 `<time datetime="ISO8601">`，让引擎稳定解析绝对时间，而非从自由文本推断。
+- **代码块规范**：`<pre><code class="language-xxx">` 标注语言，便于引擎区分代码与正文、按语言提取示例。
+- **语言标注**：`<html lang="zh-CN">` 根级语言声明，跨语言片段用 `lang` 属性局部标注，帮助多语言内容正确分词与归属。
+- **内容分区锚点**：长文档为各 `<section>` 配 `id` 与 `aria-labelledby` 指向其标题，支持引擎生成可定位的章节引用链接。
+- **避免语义错位**：交互元素用对应标签（`<button>` / `<a>`），不用 `<div onclick>` 模拟；表单用 `<label for>` 关联控件，防止语义信号丢失。
+- **隐藏内容处理**：仅对辅助技术需隐藏的内容用 `aria-hidden="true"`，避免对正文内容误隐藏导致引擎漏读。
+
+**过时文档标记**
+
+对停止维护版本的文档页面，加上 `canonical` 标签，指向最新版本的文档页面

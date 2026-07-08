@@ -7,11 +7,11 @@
 | 维度 | 检查项 | 核心目标 |
 |---|---|---|
 | 静态化页面 | `ssr-rendering` | 首屏 HTML 含足够可索引文本 |
+| robots.txt | `robots-txt` | 不误封 AI 爬虫，声明 sitemap |
+| Sitemap | `sitemap-access` / `sitemap-priority` / `sitemap-coverage` | 全部应收录页面可被发现 |
 | TDK | `sitemap-tdk` / `tdk-schema-semantic` | 每页标题/描述/关键词完整且与内容一致 |
 | Schema | `sitemap-schema` / `tdk-schema-semantic` | 结构化数据类型合适、与页面内容一致 |
-| sitemap | `sitemap-access` / `sitemap-priority` / `sitemap-coverage` | 全部应收录页面可被发现 |
-| robots.txt | `robots-txt` | 不误封 AI 爬虫，声明 sitemap |
-| llms.txt | `llms-txt` | 主动为 LLM 提供可消费的站点内容 |
+| llms.txt / llms-full.txt | `llms-txt` | 主动为 LLM 提供可消费的站点内容 |
 
 ---
 
@@ -44,6 +44,10 @@ GEO 场景下，多数 AI 抓取器**不执行 JavaScript**，CSR 页面被抓�
   - 命中 CSR 特征（`<div id="app">` 空、`<div id="root">` 空、`<div id="__nuxt">` 空）→ 非 SSR
   - 无 body 标签或纯文本 < 500 字符 → 非 SSR
 
+### 实现方式
+
+各社区官网均使用Vitepress或Nuxt，两个框架本身具备SSG构建能力
+
 ---
 
 ## 2. robots.txt
@@ -66,6 +70,10 @@ GEO 场景下的关键风险：很多站点为防爬会对 `User-agent: *` 设�
 - robots.txt 可正常抓取（无网络错误）
 - **未**对 `User-agent: *` 设置 `Disallow: /`（或同时有 `Allow: /` 解除）
 - 至少包含一行 `Sitemap:` 指令
+
+### 实现方式
+
+各社区官网前端项目各自维护着符合标准的 `robots.txt` 文件
 
 ---
 
@@ -92,6 +100,12 @@ GEO 场景下，sitemap 是 AI 抓取器发现页面的主要入口——多数�
 - 对 Sitemap 中列出的每个 **页面URL** 发起 HEAD 请求，HTTP 状态码为 **200**
 - 检查每个 Sitemap 条目是否定义了 `lastmod`、`changefreq`、`priority` 属性，以及属性值的是否准确
 
+### 实现方式
+
+**Vitepress**: 利用Vitepress框架自带的Sitemap生成能力， [sitemap-generation](https://vitepress.dev/guide/sitemap-generation)
+
+**Nuxt**: 使用脚本在构建时遍历所有HTML，记录路径、修改时间等生成
+
 ---
 
 ## 4. TDK（Title / Description / Keywords）
@@ -114,6 +128,14 @@ TDK 指页面 `<head>` 中的三个 meta 元素：
 - **keywords**：传统搜索引擎已基本忽略，但对部分 AI 抓取器仍可提供语义线索；可保留少量精准词，禁止堆砌无关词。
 - **语义一致性**：TDK 内容需与页面自身内容相关。
 
+> title可以分段显示，例如 `openEuler | 开源社区 | openEuler社区官网` ，体现页面标题、页面所属模块以及品牌关键词，可提高可读性、保证品牌曝光
+> 
+> 主要关键词放在前面：例如文章标题或核心主题。
+> 
+> 品牌或网站名放在后面：通过管道符分隔，保证品牌曝光。
+> 
+> 避免过度堆砌：不要在标题里重复过多关键词，保持简洁。
+
 ### 检查标准
 
 - **配置覆盖**： 遍历sitemap所有页面url，检查是否在 `.geo/tdks/` 中有对应的归档文件
@@ -122,13 +144,13 @@ TDK 指页面 `<head>` 中的三个 meta 元素：
    2. 是否包含不存在于页面中的信息（如其他社区名称、无关关键词）
    3. `description` 长度是否合理（建议 100–200 字符）
 
-> title可以分段显示，例如 `openEuler | 开源社区 | openEuler社区官网` ，体现页面标题、页面所属模块以及品牌关键词，可提高可读性、保证品牌曝光
-> 
-> 主要关键词放在前面：例如文章标题或核心主题。
-> 
-> 品牌或网站名放在后面：通过管道符分隔，保证品牌曝光。
-> 
-> 避免过度堆砌：不要在标题里重复过多关键词，保持简洁。
+### 实现方式
+
+官网站各页面的TDK以json格式归档于项目根目录的 `.geo/tdks/` 和 `.geo/jsonld` 下，文件路径与现网页面url的路径相对应，在构建时利用框架功能自动为每个页面填充
+
+**Vitepress**: 在 `.vitepress/config.ts` 的 `transformPageData` 钩子函数中从归档目录下获取对应路径的TDK数据注入
+
+**Nuxt**: 通过 prerender 阶段的全局 middleware 从 `.geo/` 目录读取并注入。
 
 ---
 
@@ -156,6 +178,10 @@ JSON-LD（JSON for Linked Data）以 `<script type="application/ld+json">` 形�
    2. 是否包含不存在于页面中的信息（如其他社区名称、无关关键词）
    4. JSON-LD schema 类型是否合适
 
+### 实现方式
+
+与TDK实现方式相同
+
 ---
 
 ## 6. llms.txt 与 llms-full.txt
@@ -178,10 +204,14 @@ GEO 场景下，这两个文件让站点**主动**为生成式引擎提供结构
 - **路径可发现**：放在站点根目录，文件名严格为 `llms.txt` / `llms-full.txt`（小写）。
 - **内容一致**：`llms-full.txt` 中的内容应与线上页面正文一致，避免“AI 看到的版本”与“用户看到的版本”分叉。
 
-## 检查标准
+### 检查标准
 
 - 抓取 `{home}/llms.txt` 和 `{home}/llms-full.txt` 两个文件（超时 15s）
 - 两个文件均可访问，且 `trim()` 后内容非空
+
+### 实现方式
+
+llms.txt / llms-full.txt均使用脚本在构建时遍历页面获取信息生成
 
 ---
 

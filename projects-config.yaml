@@ -125,7 +125,7 @@ projects:
       - /(zh|en)/(search|notification)
       - /(zh|en)/(blogs|news|user-practice)/.+
       - /(zh|en)/events/(?!list)[^/]+
-    build_script: build:geo
+    build_script: build
     seo_config_dir:
       tdk: .geo/tdks
       schema: .geo/jsonld

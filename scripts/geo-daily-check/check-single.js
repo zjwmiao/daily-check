@@ -256,10 +256,13 @@ function buildIssueBody(findings, project, groupInfo, batchInfo = null) {
   lines.push('');
   lines.push('### 建议操作');
   lines.push('');
-  lines.push('1. 为缺失配置的页面补齐对应配置文件');
-  lines.push('2. 配置文件存放路径:');
-  if (seo.tdk) lines.push(`   - TDK: \`${seo.tdk}/{页面路径}/index.json\``);
-  if (seo.schema) lines.push(`   - JSON-LD: \`${seo.schema}/{页面路径}/index.json\``);
+  lines.push('1. 为存在问题的页面在 HTML `<head>` 中配置页面专属的 `<title>` / `<meta name="description">`，并补充 `<script type="application/ld+json">` 结构化数据');
+  lines.push('2. TDK 不应与同语言首页完全一致，每页应有与内容相关的独立标题与描述');
+  if (seo.tdk || seo.schema) {
+    lines.push('3. 若项目通过配置文件生成 TDK/JSON-LD，配置目录：');
+    if (seo.tdk) lines.push(`   - TDK: \`${seo.tdk}/{页面路径}/index.json\``);
+    if (seo.schema) lines.push(`   - JSON-LD: \`${seo.schema}/{页面路径}/index.json\``);
+  }
   lines.push('');
   lines.push(`<sub>由 geo-develop 自动检测生成 · 配置完成后将自动关闭本 issue。</sub>`);
 

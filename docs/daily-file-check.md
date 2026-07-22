@@ -69,12 +69,13 @@ flowchart TB
 | `framework` | 可选 | 框架标识（VitePress / Nuxt），SSR 检测按此判断 |
 | `build_script` | portal 类型必填 | 构建用的 npm script（如 `build:geo` / `generate:geo`） |
 | `build_dir` | portal 类型必填 | 构建产物目录（相对仓库根，如 `app/.vitepress/dist`） |
-| `seo_config_dir.tdk` | sitemap-tdk 检查必填 | TDK 配置根目录（如 `.geo/tdks`） |
-| `seo_config_dir.schema` | sitemap-schema 检查必填 | JSON-LD 配置根目录（如 `.geo/jsonld`） |
+| `seo_config_dir.tdk` | 可选 | TDK 配置根目录（如 `.geo/tdks`），仅用于 issue 正文参考提示（不再作为 sitemap-tdk 检查依据） |
+| `seo_config_dir.schema` | 可选 | JSON-LD 配置根目录（如 `.geo/jsonld`），仅用于 issue 正文参考提示（不再作为 sitemap-schema 检查依据） |
 | `accessible_routes` | sitemap-coverage 必填 | 页面路由 glob 数组（如 `/zh/**/*`），用于比对构建产物收录 |
 | `skip_check` | 可选 | 跳过的检查项数组，支持 `['all']` 跳过整个项目 |
 | `ignore_routes` | 可选 | 跳过检查的页面路由正则数组（如 `/(zh\|en)/(blog\|news)`） |
 | `home` | 可选 | 线上站点 URL 数组，供 robots/sitemap/llms-txt/ssr 检查使用 |
+| `home_pages` | sitemap-tdk 必填 | 各语言首页 URL 列表（`[{lang, url}]`），作为 sitemap-tdk 检查的 TDK 比对基线；按路径段匹配 `lang`（覆盖 `/zh/foo` 前缀与 `/foo/en` 后缀两种结构）+ origin 作用域 + 根路径(`/`)catch-all |
 | `enable_tdk_schema_semantic` | 可选 | 启用 TDK/Schema 语义检查（含 render-change 分析），默认 `false` |
 | `semantic_analysis_commits_count` | 可选 | 语义检查分析最近 N 个 commits，默认 `5` |
 | `enable_link_anchor_check` | 可选 | 启用 link-anchor 检查，默认 `false`；检测 JS 跳转而非 `<a href>` 的导航链接 |
@@ -106,6 +107,11 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.openeuler.org/
+    home_pages:
+      - lang: zh
+        url: https://www.openeuler.org/zh/
+      - lang: en
+        url: https://www.openeuler.org/en/
 
   # docs-website 类型 - 跳过构建，仅线上检查
   - name: openEuler-docs-website
@@ -259,10 +265,14 @@ scripts/geo-daily-check/
 
 **checkSitemapConfig**（`checks/sitemap.js`）：
 
-1. 遍历 sitemap 条目 URL，归一化 pathname 得到 `key`
-2. 检查 `{seo_config_dir.tdk}/{key}/index.json` 是否存在 → 不存在记一条 `sitemap-tdk` finding
-3. 检查 `{seo_config_dir.schema}/{key}/index.json` 是否存在 → 不存在记一条 `sitemap-schema` finding
-4. 随机抽样 10 个 sitemap 条目，检查 `<priority>` 属性是否存在 → 缺失记一条 `sitemap-priority` finding
+1. 遍历 sitemap 条目，按 `home_pages` 推断每页所属同语言首页：任一路径段匹配配置的 `lang`（覆盖前缀 `/zh/foo` 与后缀 `/foo/en`），同 origin 优先；无 lang 段则根路径(`/`)作默认语言 catch-all
+2. `sitemap-tdk`：在线获取页面 HTML，提取 `<title>` / `<meta name="description">` / `<meta name="keywords">`：
+   - `title` 或 `description` 为空 → 记一条 `sitemap-tdk` finding（未配置 TDK）
+   - 任一字段（非空）与同语言首页对应字段完全相等 → 记一条 `sitemap-tdk` finding（与首页一致，未配置页面专属 TDK）
+   - 首页自身跳过"与首页比对"，但仍做空 TDK 检查；页面无法获取时记一条 finding
+3. `sitemap-schema`：在线获取页面 HTML，检测 `<script type="application/ld+json">` 是否存在 → 不存在记一条 `sitemap-schema` finding
+4. 并发度 10；同语言首页 TDK 带缓存预取，避免重复请求
+5. 随机抽样 10 个 sitemap 条目，检查 `<priority>` 属性是否存在 → 缺失记一条 `sitemap-priority` finding
 
 **checkSsrRendering**（`checks/ssr.js`，仅需线上站点）：
 

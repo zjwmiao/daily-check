@@ -13,7 +13,7 @@
 # ignore_routes:                        跳过检查的页面路由
 #   - /(zh|en)/(other/)?(blog|news)
 # build_script:                         package.json构建脚本
-# seo_config_dir:                       geo/seo元数据配置目录
+# seo_config_dir:                       geo/seo元数据配置目录（可选，仅用于 issue 正文参考提示，不再作为 sitemap-tdk/sitemap-schema 的检查依据）
 #   tdk: .geo/tdks
 #   schema: .geo/jsonld
 # enable_link_anchor_check:             启用 link-anchor 检查，检测 JS 跳转而非 <a href> 的导航链接，默认 false
@@ -22,6 +22,9 @@
 # home:                                 首页地址
 #   - https://www.openeuler.org/
 #   - https://www.openeuler.openatom.cn
+# home_pages:                           各语言首页 URL（sitemap-tdk 检查的 TDK 比对基线）
+#   - lang: zh                          语言标识；匹配页面任一路径段（覆盖 /zh/foo 前缀与 /foo/en 后缀）
+#     url: https://www.openeuler.org/zh/
 
 
 # 检查项控制说明：
@@ -46,8 +49,8 @@
 # all:                       跳过所有
 # robots-txt:                robots.txt 不存在、全站封禁爬虫或未声明 Sitemap
 # sitemap-access:            sitemap 无法访问或无有效内容
-# sitemap-tdk:               sitemap条目缺少TDK配置文件
-# sitemap-schema:            sitemap条目缺少Schema配置文件
+# sitemap-tdk:               页面TDK为空或与同语言首页一致，未配置页面专属TDK
+# sitemap-schema:            页面HTML缺少JSON-LD结构化数据script
 # sitemap-priority:          sitemap条目是否存在priority属性
 # url-access:                URL无法访问
 # llms-txt:                  llms.txt/llms-full.txt缺失或为空
@@ -79,6 +82,15 @@ projects:
     home:
       - https://www.openeuler.org/
       - https://www.openeuler.openatom.cn/
+    home_pages:
+      - lang: zh
+        url: https://www.openeuler.org/zh/
+      - lang: zh
+        url: https://www.openeuler.openatom.cn/zh/
+      - lang: en
+        url: https://www.openeuler.org/en/
+      - lang: en
+        url: https://www.openeuler.openatom.cn/en/
 
   - name: openEuler-docs
     owner: openeuler
@@ -131,6 +143,11 @@ projects:
       schema: .geo/jsonld
     home:
       - https://opengauss.org/
+    home_pages:
+      - lang: zh
+        url: https://opengauss.org/zh/
+      - lang: en
+        url: https://opengauss.org/en/
 
   - name: openGauss-docs-website
     owner: opengauss
@@ -180,6 +197,11 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.mindspore.cn/
+    home_pages:
+      - lang: zh
+        url: https://www.mindspore.cn
+      - lang: en
+        url: https://www.mindspore.cn/en
 
   - name: openUBMC
     owner: openUBMC
@@ -202,6 +224,11 @@ projects:
       schema: .geo/jsonld
     home:
       - https://www.openubmc.cn/
+    home_pages:
+      - lang: zh
+        url: https://www.openubmc.cn/zh
+      - lang: en
+        url: https://www.openubmc.cn/en
 
   - name: HiFloat
     owner: hifloat
@@ -223,3 +250,8 @@ projects:
       schema: .geo/jsonld
     home:
       - https://hifloat.gccorg.com/
+    home_pages:
+      - lang: zh
+        url: https://hifloat.gccorg.com/zh
+      - lang: en
+        url: https://hifloat.gccorg.com/en

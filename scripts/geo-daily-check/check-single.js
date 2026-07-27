@@ -28,7 +28,7 @@ import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
 import { parse as parseYaml } from 'yaml';
-import { createIssue, findAllIssuesByTitlePrefix, updateIssue, closeIssue } from '../lib/atomgit-api.js';
+import { createIssue, findAllIssuesByTitlePrefix, updateIssue, addIssueComment } from '../lib/atomgit-api.js';
 import { log, DIMENSION_DESCRIPTIONS } from './utils.js';
 import { checkRobotsTxt } from './checks/robots.js';
 import { checkSitemapAccessible, checkSitemapConfig } from './checks/sitemap.js';
@@ -365,13 +365,14 @@ async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
   }
 
   // 6. 关闭多余的 issue（旧格式无 label，或该维度/模块已无问题）
+  //    改为评论 /close 斜杠命令，即便平台未自动关闭，issue 历史中也能看到关闭意图
   for (const ex of existingIssues) {
     if (!usedIssueNumbers.has(ex.number)) {
-      log(`🔒 关闭多余 issue #${ex.number}`);
+      log(`🔒 关闭多余 issue #${ex.number} (评论 /close)`);
       try {
-        await closeIssue({ owner, repo, issue_number: ex.number });
+        await addIssueComment({ owner, repo, issue_number: ex.number, body: '/close' });
       } catch (err) {
-        log(`⚠️ 关闭 issue #${ex.number} 失败: ${err.message}`);
+        log(`⚠️ 评论关闭 issue #${ex.number} 失败: ${err.message}`);
       }
     }
   }

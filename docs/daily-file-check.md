@@ -67,7 +67,7 @@ flowchart TB
 | `project_type` | 可选 | `portal`（默认，需构建）/ `docs-website`（跳过构建，部分检查）/ `docs`（纯文档存档，`skip_check: ['all']`） |
 | `branch` | 可选 | 目标分支（当前用 `git pull --rebase` 跟随默认分支） |
 | `framework` | 可选 | 框架标识（VitePress / Nuxt），SSR 检测按此判断 |
-| `build_script` | portal 类型必填 | 构建用的 npm script（如 `build:geo` / `generate:geo`） |
+| `build_cmd` | portal 类型必填 | 构建用的 npm script（如 `build:geo` / `generate:geo`） |
 | `build_dir` | portal 类型必填 | 构建产物目录（相对仓库根，如 `app/.vitepress/dist`） |
 | `seo_config_dir.tdk` | 可选 | TDK 配置根目录（如 `.geo/tdks`），仅用于 issue 正文参考提示（不再作为 sitemap-tdk 检查依据） |
 | `seo_config_dir.schema` | 可选 | JSON-LD 配置根目录（如 `.geo/jsonld`），仅用于 issue 正文参考提示（不再作为 sitemap-schema 检查依据） |
@@ -93,7 +93,7 @@ projects:
     branch: master
     framework: VitePress
     build_dir: app/.vitepress/dist
-    build_script: build:geo
+    build_cmd: build:geo
     enable_link_anchor_check: true
     enable_tdk_schema_semantic: true
     semantic_analysis_commits_count: 10
@@ -207,7 +207,7 @@ scripts/geo-daily-check/
 
 1. `detectPm(workDir)` — 检测包管理器（pnpm-lock.yaml → pnpm，yarn.lock → yarn，否则 npm）
 2. 安装依赖：`pnpm install --frozen-lockfile` / `yarn install --immutable` / `npm ci`
-3. 构建：`buildScript`（来自 `project.build_script`，如 `pnpm build:geo`）或回退 `npm run build`
+3. 构建：`buildScript`（来自 `project.build_cmd`，如 `pnpm build:geo`）或回退 `npm run build`
 4. 校验：`outputDirRel`（来自 `build_dir`）存在 → 返回 `{ ok: true, buildDir }`，否则 `{ ok: false, error }`
 
 构建子进程与线上检查**并行**执行（非阻塞 spawn），完成后才跑构建产物检查（coverage / tdk-schema-semantic）。

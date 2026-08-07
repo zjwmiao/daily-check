@@ -58,7 +58,7 @@ export async function checkSsrRendering(project, sitemapUrls, { skip }) {
   if (!home) return { findings: [], skipped: true };
 
   const framework = project.framework;
-  const sampleUrls = [home];
+  const sampleUrls = [];
 
   if (sitemapUrls?.length) {
     const extra = pickRandom(

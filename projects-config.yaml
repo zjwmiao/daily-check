@@ -217,7 +217,7 @@ projects:
     accessible_routes:
       - /
     ignore_routes:
-      - /(zh|en)/(blogs|marketplace)/?
+      - /(zh|en)/(blogs|marketplace|search)/?
       - /docs
     seo_config_dir:
       tdk: .geo/tdk

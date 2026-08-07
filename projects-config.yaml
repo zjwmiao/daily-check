@@ -137,7 +137,7 @@ projects:
       - /(zh|en)/(search|notification)
       - /(zh|en)/(blogs|news|user-practice)/.+
       - /(zh|en)/events/(?!list)[^/]+
-    build_cmd: build
+    build_cmd: pnpm build
     seo_config_dir:
       tdk: .geo/tdks
       schema: .geo/jsonld
@@ -186,7 +186,7 @@ projects:
     build_dir: packages/website/.output/public
     enable_link_anchor_check: true
     enable_tdk_schema_semantic: true
-    build_cmd: generate:geo
+    build_cmd: pnpm generate:geo
     accessible_routes:
       - /
     ignore_routes:
@@ -238,7 +238,7 @@ projects:
     branch: main
     framework: Nuxt
     build_dir: .output/public
-    build_cmd: generate
+    build_cmd: pnpm generate
     enable_link_anchor_check: true
     enable_tdk_schema_semantic: true
     accessible_routes:

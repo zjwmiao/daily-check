@@ -452,7 +452,7 @@ async function runProject(project, { dryRun }) {
   // 2. 启动构建子进程（非阻塞） - docs 类型跳过构建
   let buildPromise = null;
   if (!isDocsProject) {
-    buildPromise = spawnBuild(workDir, `pnpm ${project.build_cmd}`, project.build_dir);
+    buildPromise = spawnBuild(workDir, project.build_cmd, project.build_dir);
   }
 
   // 3. 并行执行线上检查

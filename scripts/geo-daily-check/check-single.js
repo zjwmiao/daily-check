@@ -211,7 +211,7 @@ function buildIssueTitle(owner, repo, batch) {
   return `${base} (${batch.batchIndex}/${batch.totalBatches})`;
 }
 
-function buildIssueBody(findings, project, groupInfo, batchInfo = null) {
+function buildIssueBody(findings, project, groupInfo, batchInfo = null, { buildFailed = false } = {}) {
   const { owner, repo, seo_config_dir: seo = {} } = project;
   const lines = [
     `**项目**: ${owner}/${repo}`,
@@ -225,6 +225,11 @@ function buildIssueBody(findings, project, groupInfo, batchInfo = null) {
   }
 
   lines.push('');
+
+  if (buildFailed) {
+    lines.push('> ⚠️ **项目构建失败，构建产物检查（sitemap-coverage / tdk-schema-semantic）已跳过**。本 issue 仅包含构建前/线上检查发现的问题，构建相关检查待构建修复后补充。');
+    lines.push('');
+  }
 
   if (batchInfo) {
     lines.push(`> 📋 本批次包含第 ${batchInfo.startIndex}-${batchInfo.endIndex} 个问题，共 ${batchInfo.totalCount} 个问题（批次 ${batchInfo.batchIndex}/${batchInfo.totalBatches}）`);
@@ -269,7 +274,7 @@ function buildIssueBody(findings, project, groupInfo, batchInfo = null) {
   return lines.join('\n');
 }
 
-async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
+async function createOrUpdateIssue(project, findings, { dryRun = false, buildFailed = false } = {}) {
   const { owner, repo } = project;
   const titlePrefix = '[GEO Daily Check]';
 
@@ -308,7 +313,7 @@ async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
     log(`[dryRun] 将提交 ${groupBatches.length} 个 issue，共 ${findings.length} 个问题，分 ${groupMap.size} 个维度/模块`);
     for (const batch of groupBatches) {
       const title = buildIssueTitle(owner, repo, batch);
-      const body = buildIssueBody(batch.findings, project, batch, batch.totalBatches === 1 ? null : batch);
+      const body = buildIssueBody(batch.findings, project, batch, batch.totalBatches === 1 ? null : batch, { buildFailed });
       log(`================== issue body (${project.name}) [${batch.label}] 批次${batch.batchIndex}/${batch.totalBatches} ==================`);
       log(`标题: ${title}`);
       log(body + '\n\n');
@@ -518,13 +523,22 @@ async function runProject(project, { dryRun }) {
   const allFindings = [...onlineFindings, ...linkAnchorFindings];
 
   if (!buildResult.ok) {
-    log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过构建产物检查`);
-    // 构建失败不提 issue，只打印警告，继续检查后续项目
+    log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过构建产物检查（sitemap-coverage / tdk-schema-semantic），仅提交当前已收集到的问题`);
+    // 构建失败仍提 issue（仅当前已收集到的问题），跳过构建产物检查
+    let issueUrl = '';
+    if (allFindings.length > 0) {
+      if (!dryRun && !process.env.ATOMGIT_TOKEN) {
+        log(`⚠ 未设置 ATOMGIT_TOKEN, 跳过 issue 上报`);
+      } else {
+        const issueRes = await createOrUpdateIssue(project, allFindings, { dryRun, buildFailed: true });
+        if (issueRes.success) issueUrl = issueRes.url;
+      }
+    }
     const byDim = {};
     for (const f of allFindings) byDim[f.check] = (byDim[f.check] || 0) + 1;
     const dimStr = Object.entries(byDim).map(([d, n]) => `${d}:${n}`).join(' ') || '无';
     log(`=== ${name} 线上检查完成, 问题统计: ${dimStr} ===`);
-    return { name, ok: true, findings: allFindings.length, byDim, buildFailed: true };
+    return { name, ok: true, findings: allFindings.length, byDim, issueUrl, buildFailed: true };
   }
 
   const buildDir = buildResult.buildDir;

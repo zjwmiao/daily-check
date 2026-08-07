@@ -1,5 +1,6 @@
+import * as cheerio from 'cheerio';
 import { getSitemapUrls } from '../../checks/sitemap-inclusion.js';
-import { fetchHttp, parseHtml } from '../../lib/html-fetch.js';
+import { fetchHttp } from '../../lib/html-fetch.js';
 import { log, shouldIgnore, pickRandom } from '../utils.js';
 
 export async function checkSitemapAccessible(project, robotsContent, { skip }) {
@@ -122,27 +123,29 @@ function getSameLangHomepage(pageUrl, project) {
   return project.home?.[0] || project.home;
 }
 
-function getMetaContent(doc, name) {
-  for (const m of doc.querySelectorAll('meta')) {
-    if ((m.getAttribute('name') || '').toLowerCase() === name) {
-      return (m.getAttribute('content') || '').trim();
+function getMetaContent($, name) {
+  let content = '';
+  $('meta').each((_, el) => {
+    if (($(el).attr('name') || '').toLowerCase() === name) {
+      content = ($(el).attr('content') || '').trim();
+      return false;
     }
-  }
-  return '';
+  });
+  return content;
 }
 
 function extractPageInfo(html, { needTdk, needSchema }) {
-  const doc = parseHtml(html);
+  const $ = cheerio.load(html);
   const info = {};
   if (needTdk) {
     info.tdk = {
-      title: (doc.querySelector('title')?.textContent || '').trim(),
-      description: getMetaContent(doc, 'description'),
-      keywords: getMetaContent(doc, 'keywords'),
+      title: $('title').first().text().trim(),
+      description: getMetaContent($, 'description'),
+      keywords: getMetaContent($, 'keywords'),
     };
   }
   if (needSchema) {
-    info.hasJsonLd = doc.querySelectorAll('script[type="application/ld+json"]').length > 0;
+    info.hasJsonLd = $('script[type="application/ld+json"]').length > 0;
   }
   return info;
 }

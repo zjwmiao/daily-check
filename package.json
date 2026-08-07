@@ -17,6 +17,7 @@
   "license": "ISC",
   "dependencies": {
     "axios": "^1.13.6",
+    "cheerio": "^1.2.0",
     "jsdom": "^28.1.0",
     "playwright-core": "^1.58.2",
     "xlsx": "^0.18.5",

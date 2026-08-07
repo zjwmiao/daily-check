@@ -1,6 +1,5 @@
 import axios from 'axios';
 import fs from 'fs';
-import { JSDOM } from 'jsdom';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
@@ -75,8 +74,4 @@ export async function fetchDual(url, opts = {}) {
   const http = await fetchHttp(url, opts);
   const browser = await fetchBrowser(url, opts);
   return { http, browser };
-}
-
-export function parseHtml(html) {
-  return new JSDOM(html).window.document;
 }

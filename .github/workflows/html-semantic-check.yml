@@ -1,8 +1,8 @@
 name: HTML Semantic Check
 
 on:
-  schedule:
-    - cron: '0 4 * * 0'
+  # schedule:
+  #   - cron: '0 4 * * 0'
   workflow_dispatch:
     inputs:
       project:
@@ -20,11 +20,13 @@ permissions:
 
 jobs:
   check:
-    runs-on: portal-x86
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - name: Checkout geo-develop
-        uses: actions/checkout@v4
+      # - name: Checkout geo-develop
+      #   uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
 
       - name: Install deps
         shell: bash

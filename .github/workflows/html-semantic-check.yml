@@ -26,7 +26,11 @@ jobs:
       # - name: Checkout geo-develop
       #   uses: actions/checkout@v4
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: pnpm/setup@v1
+        with:
+          version: 11
+          runtime: node@lts
+          cache: true
 
       - name: Install deps
         shell: bash

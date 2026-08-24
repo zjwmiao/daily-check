@@ -275,7 +275,7 @@ function buildIssueBody(findings, project) {
   return lines.join('\n');
 }
 
-async function createOrUpdateIssue(project, findings, { dryRun = false } = {}) {
+async function createOrUpdateIssue(project, findings, { dryRun = true } = {}) {
   const { owner, repo } = project;
 
   if (dryRun) {

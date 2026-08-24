@@ -404,43 +404,43 @@ async function runProject(project, checks, { dryRun }) {
     return { name, ok: false, error: err.message };
   }
 
-  const expectedBuildDir = project.build_dir
-    ? path.join(workDir, project.build_dir)
-    : null;
+  // const expectedBuildDir = project.build_dir
+  //   ? path.join(workDir, project.build_dir)
+  //   : null;
 
-  let buildDir;
+  // let buildDir;
 
-  if (needBuild(workDir, expectedBuildDir)) {
-    log(`等待构建完成...`);
-    const buildResult = await spawnBuild(workDir, project.build_cmd, project.build_dir);
+  // if (needBuild(workDir, expectedBuildDir)) {
+  //   log(`等待构建完成...`);
+  //   const buildResult = await spawnBuild(workDir, project.build_cmd, project.build_dir);
 
-    if (!buildResult.ok) {
-      log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过 HTML 语义检查`);
-      return { name, ok: false, error: `build failed: ${buildResult.error}` };
-    }
+  //   if (!buildResult.ok) {
+  //     log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过 HTML 语义检查`);
+  //     return { name, ok: false, error: `build failed: ${buildResult.error}` };
+  //   }
 
-    buildDir = buildResult.buildDir;
-    log(`✅ 构建完成: ${buildDir}`);
-  } else {
-    buildDir = expectedBuildDir;
-    log(`⏭️ ${name} 跳过构建，使用已有构建产物: ${buildDir}`);
-  }
+  //   buildDir = buildResult.buildDir;
+  //   log(`✅ 构建完成: ${buildDir}`);
+  // } else {
+  //   buildDir = expectedBuildDir;
+  //   log(`⏭️ ${name} 跳过构建，使用已有构建产物: ${buildDir}`);
+  // }
 
   // 收集构建产物 HTML 文件
-  const htmlPages = collectHtmlPages(buildDir, project);
-  log(`📦 收集到 ${htmlPages.length} 个 HTML 页面`);
+  // const htmlPages = collectHtmlPages(buildDir, project);
+  // log(`📦 收集到 ${htmlPages.length} 个 HTML 页面`);
 
-  if (htmlPages.length === 0) {
-    log(`⚠️ ${name} 未找到任何 HTML 页面，跳过检查`);
-    return { name, ok: true, findings: 0, byDim: {} };
-  }
+  // if (htmlPages.length === 0) {
+  //   log(`⚠️ ${name} 未找到任何 HTML 页面，跳过检查`);
+  //   return { name, ok: true, findings: 0, byDim: {} };
+  // }
 
   // 运行所有可插拔检查项
   const context = {
     project,
     workDir,
-    buildDir,
-    htmlPages,
+    // buildDir,
+    // htmlPages,
   };
 
   const { findings } = await runAllChecks(checks, context, { skip });

@@ -1,11 +1,8 @@
 import fs from 'fs';
-import path, { dirname } from 'path';
-import { fileURLToPath } from 'url';
+import path from 'path';
 import { spawn } from 'child_process';
-import { appendInfoToStream, log } from '../utils.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot', 'html-semantic');
+import { log } from '../utils.js';
+import { appendInfoToStream, CACHE_DIR } from '../../lib/utils.js';
 
 export const meta = {
   id: 'html-semantic',
@@ -77,10 +74,12 @@ export async function check(context) {
     return { findings: [] };
   }
 
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  const assetsDir = path.join(CACHE_DIR, 'html-semantic');
 
-  const promptFile = path.join(CACHE_DIR, `prompt-html-link-${project.name}-${Date.now()}.txt`);
-  const agentOutput = path.join(CACHE_DIR, `output-html-link-${project.name}-${Date.now()}.md`);
+  fs.mkdirSync(assetsDir, { recursive: true });
+
+  const promptFile = path.join(assetsDir, `prompt-html-link-${project.name}-${Date.now()}.txt`);
+  const agentOutput = path.join(assetsDir, `output-html-link-${project.name}-${Date.now()}.md`);
 
   fs.writeFileSync(promptFile, prompt, 'utf-8');
 

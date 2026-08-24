@@ -1,3 +1,8 @@
+import { createInterface } from 'readline';
+import { Readable } from 'stream';
+import path from 'node:path';
+import os from 'node:os';
+
 export function parseArgs(argv) {
   const out = { _: [] };
   for (const a of argv) {
@@ -41,3 +46,21 @@ export async function readInput(args) {
   
   throw new Error('需要通过stdin或--input提供输入');
 }
+
+
+export function appendInfoToStream(appendText) {
+  return (readStream) => Readable.from(
+    (async function* () {
+      const rl = createInterface({
+        input: readStream,
+        crlfDelay: Infinity
+      });
+
+      for await (const line of rl) {
+        yield `${appendText} ${line}`;
+      }
+    })()
+  );
+}
+
+export const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), '.cache', 'geo-bot');

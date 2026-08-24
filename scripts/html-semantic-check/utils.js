@@ -1,6 +1,3 @@
-import { createInterface } from "readline";
-import { Readable } from "stream";
-
 export const HTML_IGNORE = [
   /(200|404|error)\.html$/,
   /baidu_verify/,
@@ -50,19 +47,4 @@ export function matchGlob(pattern, pathname) {
     .replace(/\*/g, '[^/]*')
     .replace(/\?/g, '[^/]');
   return new RegExp(`^${re}$`).test(pathname);
-}
-
-export function appendInfoToStream(appendText) {
-  return (readStream) => Readable.from(
-    (async function* () {
-      const rl = createInterface({
-        input: readStream,
-        crlfDelay: Infinity
-      });
-
-      for await (const line of rl) {
-        yield `${appendText} ${line}`;
-      }
-    })()
-  );
 }

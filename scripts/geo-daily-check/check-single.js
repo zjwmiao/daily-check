@@ -39,6 +39,7 @@ import { checkSsrRendering } from './checks/ssr.js';
 import { checkTdkSchemaSemantic } from './checks/tdk-schema-semantic.js';
 import { checkLinkAnchor } from './checks/link-anchor.js';
 import { exportToExcel, pushHistoryFile } from './history-export.js';
+import { needBuild } from '../lib/build-skip.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -454,9 +455,12 @@ async function runProject(project, { dryRun }) {
     linkAnchorFindings = linkAnchorRes.findings;
   }
 
-  // 2. 启动构建子进程（非阻塞） - docs 类型跳过构建
+  // 2. 判断是否需要构建 + 启动构建子进程（非阻塞） - docs 类型跳过构建
+  const expectedBuildDir = project.build_dir ? path.join(workDir, project.build_dir) : null;
+  const shouldBuild = !isDocsProject && needBuild(workDir, expectedBuildDir);
+
   let buildPromise = null;
-  if (!isDocsProject) {
+  if (shouldBuild) {
     buildPromise = spawnBuild(workDir, project.build_cmd, project.build_dir);
   }
 
@@ -516,14 +520,28 @@ async function runProject(project, { dryRun }) {
     return { name, ok: true, findings: allFindings.length, byDim, issueUrl };
   }
 
-  // 4. 等待构建完成
-  log(`等待构建完成...`);
-  const buildResult = await buildPromise;
+  // 4. 等待构建完成 / 使用已有产物
+  let buildDir = null;
+  let buildFailed = false;
+
+  if (shouldBuild) {
+    log(`等待构建完成...`);
+    const buildResult = await buildPromise;
+    if (!buildResult.ok) {
+      log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过构建产物检查（sitemap-coverage / tdk-schema-semantic），仅提交当前已收集到的问题`);
+      buildFailed = true;
+    } else {
+      buildDir = buildResult.buildDir;
+      log(`✅ 构建完成: ${buildDir}`);
+    }
+  } else {
+    buildDir = expectedBuildDir;
+    log(`⏭️ ${name} 跳过构建，使用已有构建产物: ${buildDir}`);
+  }
 
   const allFindings = [...onlineFindings, ...linkAnchorFindings];
 
-  if (!buildResult.ok) {
-    log(`⚠️ ${name} 构建失败: ${buildResult.error}，跳过构建产物检查（sitemap-coverage / tdk-schema-semantic），仅提交当前已收集到的问题`);
+  if (buildFailed) {
     // 构建失败仍提 issue（仅当前已收集到的问题），跳过构建产物检查
     let issueUrl = '';
     if (allFindings.length > 0) {
@@ -540,9 +558,6 @@ async function runProject(project, { dryRun }) {
     log(`=== ${name} 线上检查完成, 问题统计: ${dimStr} ===`);
     return { name, ok: true, findings: allFindings.length, byDim, issueUrl, buildFailed: true };
   }
-
-  const buildDir = buildResult.buildDir;
-  log(`✅ 构建完成: ${buildDir}`);
 
   // 5. 构建产物sitemap覆盖检查
   if (project.accessible_routes?.length && sitemapUrls.length > 0) {

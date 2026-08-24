@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "daily-check": "node scripts/geo-daily-check/check-single.js",
+    "html-semantic-check": "node scripts/html-semantic-check/check-single.js",
     "analyze-scan": "node scripts/geo-issue-analyze/scan-issues.js",
     "analyze-single": "node scripts/geo-issue-analyze/process-single.js"
   },

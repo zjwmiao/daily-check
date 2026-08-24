@@ -45,7 +45,7 @@
 #      # 若要跳过，可加到 skip_check: ['tdk-schema-semantic']
 
 
-# skip_check取值：
+# skip_check取值（daily-file-check）：
 # all:                       跳过所有
 # robots-txt:                robots.txt 不存在、全站封禁爬虫或未声明 Sitemap
 # sitemap-access:            sitemap 无法访问或无有效内容
@@ -57,7 +57,10 @@
 # sitemap-coverage:          构建页面未被sitemap收录
 # ssr-rendering:             页面疑似客户端渲染(CSR)，不利于SEO/GEO
 # tdk-schema-semantic:       TDK/Schema 语义不一致，内容与页面实际内容不符
-# link-anchor-check:         导航链接使用 JS 跳转而非 <a href>，不利于 SEO/GEO 爬虫发现
+#   link-anchor-check:         导航链接使用 JS 跳转而非 <a href>，不利于 SEO/GEO 爬虫发现
+#
+# skip_check取值（html-semantic-check）：
+#   （检查项待补充，将在 scripts/html-semantic-check/checks/ 目录下逐步添加）
 
 projects:
   - name: openEuler

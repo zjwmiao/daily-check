@@ -1,13 +1,14 @@
 # GEO Workflows
 
-本仓库托管两个独立的 SEO/GEO 自动化 workflow，均运行于 GitHub Actions（runner: `portal-x86`），扫描 AtomGit portal 仓库标题以 `[GEO]` 开头的 issue：
+本仓库托管三个独立的 SEO/GEO 自动化 workflow，均运行于 GitHub Actions（runner: `portal-x86`），扫描 AtomGit portal 仓库标题以 `[GEO]` 开头的 issue：
 
 | Workflow | 用途 | 入口脚本 | 详细文档 |
 |---|---|---|---|
 | GEO Issue Analyze | 程序化检查 + LLM 语义分析 `[GEO]` issue，评论或创建分析 issue | `scripts/geo-issue-analyze/scan-issues.js` | [docs/geo-issue-analyze.md](docs/geo-issue-analyze.md) |
 | Daily File Check | 逐项目 clone→构建→可插拔检查项，按维度提 issue | `scripts/geo-daily-check/check-single.js` | [docs/daily-file-check.md](docs/daily-file-check.md) |
+| HTML Semantic Check | 逐项目 clone→构建→收集 HTML→12 维度语义化检查→提 issue | `scripts/html-semantic-check/check-single.js` | — |
 
-两个 workflow 共享 `scripts/lib/` 公共库与 `scripts/checks/sitemap-inclusion.js`。
+三个 workflow 共享 `scripts/lib/` 公共库与 `projects-config.yaml` 配置。
 
 ## GEO Issue Analyze Workflow
 
@@ -69,6 +70,37 @@
 | `scripts/geo-daily-check/checks/*.js` | 各检查项模块 |
 | `projects-config.yaml` | 待检项目配置（与 geo-issue-analyze 共享） |
 
+## HTML Semantic Check Workflow
+
+- **触发**: schedule `0 4 * * 0`（每周日 04:00 UTC）或 workflow_dispatch（参数 `project` / `dry_run`）
+- **配置**: 项目列表在 [`projects-config.yaml`](projects-config.yaml)（与其他两个 workflow 共享）
+- **Workflow**: `.github/workflows/html-semantic-check.yml`
+
+**流程**: `check-single.js` 逐项目 → clone/pull → 构建 → 收集构建产物 HTML 文件 → 通过 registry 自动发现并运行 `checks/` 下所有检查项 → 汇总 findings → 提 issue
+
+**检查项**：在 `checks/` 目录下自动发现，`skip_check` 可剔除。当前检查项待补充。
+
+**可插拔设计**: `registry.js` 自动扫描 `checks/` 目录下所有 `.js` 文件，每个文件导出 `meta`（id/dimension/name/description）+ `check`（async 函数）即可自动接入，无需修改其他文件。
+
+**Issue 上报**：
+
+- 标题 `[GEO html Semantic] {owner}/{repo}: {N}项HTML语义问题`
+- 按 `[GEO html Semantic]` 前缀去重（createOrUpdate），无问题自动关闭旧 issue
+- 无 finding / 未设 `ATOMGIT_TOKEN` / `--dryRun` 时不提 issue
+- docs 类型项目自动跳过
+
+- **Dry Run**: `--dryRun` 仅检查不提 issue
+
+### 关键文件
+
+| 文件 | 用途 |
+|---|---|
+| `scripts/html-semantic-check/check-single.js` | 入口（配置驱动逐项目） |
+| `scripts/html-semantic-check/registry.js` | 可插拔检查项注册器（自动发现 checks/ 目录） |
+| `scripts/html-semantic-check/utils.js` | 共享工具（log / DIMENSION_DESCRIPTIONS / iterateFiles / ...） |
+| `scripts/html-semantic-check/checks/*.js` | 各检查项模块（待补充） |
+| `projects-config.yaml` | 待检项目配置（共享） |
+
 ## 共享库
 
 ### scripts/lib/
@@ -105,6 +137,10 @@ node scripts/geo-issue-analyze/process-single.js --dryRun --input=issue.json
 # Daily File Check
 node scripts/geo-daily-check/check-single.js --dryRun
 node scripts/geo-daily-check/check-single.js --project=openEuler --dryRun
+
+# HTML Semantic Check
+node scripts/html-semantic-check/check-single.js --dryRun
+node scripts/html-semantic-check/check-single.js --project=openEuler --dryRun
 ```
 
 > Windows 本地完整 checkout 大型 portal 仓库可能因 260 字符路径限制失败，属系统限制；Linux runner 不受影响。

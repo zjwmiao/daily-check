@@ -1,0 +1,48 @@
+name: HTML Semantic Check
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      project:
+        description: '只检查指定项目 (projects-config.yaml 里的 name, 留空则全部)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run (仅检查，不提 issue)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: portal-x86
+    timeout-minutes: 90
+    steps:
+      - name: Checkout geo-develop
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Check HTML semantics
+        shell: bash
+        env:
+          PROJECT: ${{ inputs.project || '' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+        run: |
+          ARGS=""
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS="$ARGS --dryRun"
+          fi
+          if [ -n "$PROJECT" ]; then
+            ARGS="$ARGS --project=$PROJECT"
+          fi
+
+          node scripts/html-semantic-check/check-single.js $ARGS 2>&1 | tee /tmp/.cache/geo-bot/projects/html-semantic-output/output.log
